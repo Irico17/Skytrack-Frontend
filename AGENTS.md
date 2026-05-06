@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project
-Figma Make export — logistics dashboard UI (static React SPA). No tests, lint, or CI configured.
+SKYTRACK (static React SPA). No tests, lint, or CI configured.
 
 ## Commands
 ```
