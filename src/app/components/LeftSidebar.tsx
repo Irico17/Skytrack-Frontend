@@ -27,6 +27,7 @@ interface LeftSidebarProps {
   hasReplanned: boolean;
   daysElapsed: number;
   simulationComplete: boolean;
+  collapseComplete: boolean;
   onModeChange: (mode: SimulationMode) => void;
   onStartDateChange: (date: Date) => void;
   onFilterChange: (key: keyof Filters, value: string) => void;
@@ -37,7 +38,9 @@ interface LeftSidebarProps {
   onReplan: () => void;
   onAddShipment: () => void;
   onSkipToComplete: () => void;
+  onSkipToCollapseComplete: () => void;
   onViewResults: () => void;
+  onViewCollapseResults: () => void;
 }
 
 interface SectionProps {
@@ -111,10 +114,10 @@ function SelectField({ label, value, onChange, options }: {
 
 export function LeftSidebar({
   mode, startDate, filters, toggles, isRunning, hasReplanned,
-  daysElapsed, simulationComplete,
+  daysElapsed, simulationComplete, collapseComplete,
   onModeChange, onStartDateChange, onFilterChange, onToggleChange,
   onStart, onPause, onReset, onReplan, onAddShipment,
-  onSkipToComplete, onViewResults,
+  onSkipToComplete, onSkipToCollapseComplete, onViewResults, onViewCollapseResults,
 }: LeftSidebarProps) {
 
   const airlineOptions = [
@@ -274,9 +277,9 @@ export function LeftSidebar({
           {!isRunning ? (
             <button
               onClick={onStart}
-              disabled={simulationComplete}
+              disabled={simulationComplete || collapseComplete}
               className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs transition-colors
-                ${simulationComplete
+                ${simulationComplete || collapseComplete
                   ? 'bg-[#00FF9C]/5 border border-[#00FF9C]/15 text-[#00FF9C]/40 cursor-not-allowed'
                   : 'bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] hover:bg-[#00FF9C]/25'
                 }`}
@@ -305,6 +308,30 @@ export function LeftSidebar({
             >
               <FastForward className="w-3.5 h-3.5" />
               Completar y Ver Resultados
+            </button>
+          )}
+
+          {/* Skip to collapse complete — only in collapse mode */}
+          {mode === 'collapse' && !collapseComplete && (
+            <button
+              onClick={onSkipToCollapseComplete}
+              className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[#FF4D4D]/15 border border-[#FF4D4D]/40 text-[#FF4D4D] text-xs hover:bg-[#FF4D4D]/25 transition-colors"
+              style={{ fontWeight: 600 }}
+            >
+              <FastForward className="w-3.5 h-3.5" />
+              Simular Colapso Completo
+            </button>
+          )}
+
+          {/* View collapse results */}
+          {mode === 'collapse' && collapseComplete && (
+            <button
+              onClick={onViewCollapseResults}
+              className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#FF4D4D]/15 border border-[#FF4D4D]/50 text-[#FF4D4D] text-xs hover:bg-[#FF4D4D]/25 transition-colors animate-pulse"
+              style={{ fontWeight: 600 }}
+            >
+              <BarChart2 className="w-4 h-4" />
+              Ver Análisis de Colapso
             </button>
           )}
 

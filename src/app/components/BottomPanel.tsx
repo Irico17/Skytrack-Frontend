@@ -17,6 +17,7 @@ interface BottomPanelProps {
   flights: Flight[];
   shipments: Shipment[];
   onClearSelection: () => void;
+  onSelectShipment?: (id: string) => void;
   isRunning: boolean;
 }
 
@@ -283,7 +284,7 @@ function ShipmentListRow({ s, onClick }: { s: Shipment; onClick: () => void }) {
 }
 
 export function BottomPanel({
-  selectedEntity, airports, flights, shipments, onClearSelection
+  selectedEntity, airports, flights, shipments, onClearSelection, onSelectShipment
 }: BottomPanelProps) {
   const [activeTab, setActiveTab] = useState<'detail' | 'shipments' | 'active'>('detail');
 
@@ -384,7 +385,7 @@ export function BottomPanel({
               <span>PROGRESO</span>
             </div>
             {shipments.map(s => (
-              <ShipmentListRow key={s.id} s={s} onClick={() => { }} />
+              <ShipmentListRow key={s.id} s={s} onClick={() => onSelectShipment?.(s.id)} />
             ))}
           </div>
         )}

@@ -6,6 +6,8 @@ import { BottomPanel } from './components/BottomPanel';
 import { RightPanel } from './components/RightPanel';
 import { AddShipmentModal } from './components/AddShipmentModal';
 import { FiveDayResults } from './components/FiveDayResults';
+import { CollapseResults } from './components/CollapseResults';
+import { ShipmentDetailPanel } from './components/ShipmentDetailPanel';
 import { useSimulation } from './hooks/useSimulation';
 import { SimulationMode, Shipment } from './data/mockData';
 
@@ -38,6 +40,7 @@ export default function App() {
   });
   const [showAddShipment, setShowAddShipment] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [showCollapseResults, setShowCollapseResults] = useState(false);
 
   // Auto-show results when 5day simulation completes
   React.useEffect(() => {
@@ -46,6 +49,14 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [simulation.simulationComplete, simulation.mode]);
+
+  // Auto-show collapse results when collapse completes
+  React.useEffect(() => {
+    if (simulation.collapseComplete && simulation.mode === 'collapse') {
+      const timer = setTimeout(() => setShowCollapseResults(true), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [simulation.collapseComplete, simulation.mode]);
 
   const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -103,6 +114,7 @@ export default function App() {
   const handleReset = useCallback(() => {
     simulation.reset();
     setShowResults(false);
+    setShowCollapseResults(false);
   }, [simulation]);
 
   return (
@@ -135,6 +147,7 @@ export default function App() {
           hasReplanned={simulation.hasReplanned}
           daysElapsed={simulation.daysElapsed}
           simulationComplete={simulation.simulationComplete}
+          collapseComplete={simulation.collapseComplete}
           onModeChange={simulation.setMode}
           onStartDateChange={simulation.setStartDate}
           onFilterChange={handleFilterChange}
@@ -145,7 +158,9 @@ export default function App() {
           onReplan={simulation.replan}
           onAddShipment={() => setShowAddShipment(true)}
           onSkipToComplete={simulation.skipToComplete}
+          onSkipToCollapseComplete={simulation.skipToCollapseComplete}
           onViewResults={() => setShowResults(true)}
+          onViewCollapseResults={() => setShowCollapseResults(true)}
         />
 
         {/* Center: Map + Bottom Panel */}
@@ -183,7 +198,7 @@ export default function App() {
                 <div className="w-1.5 h-1.5 rounded-full bg-[#4DA6FF] animate-pulse" />
                 <span className="text-[11px] text-[#4DA6FF]">SIMULACIÓN 5 DÍAS</span>
                 <span className="text-[11px] font-mono text-[#4A6080]">
-                  Day {Math.min(Math.ceil(simulation.daysElapsed), 5)}/5
+                  Día {Math.min(Math.ceil(simulation.daysElapsed), 5)}/5
                 </span>
                 <div className="w-20 h-1 bg-[#1E3058] rounded-full overflow-hidden">
                   <div
@@ -191,6 +206,30 @@ export default function App() {
                     style={{ width: `${(simulation.daysElapsed / 5) * 100}%` }}
                   />
                 </div>
+              </div>
+            )}
+
+            {/* Collapse progress overlay on map */}
+            {simulation.mode === 'collapse' && simulation.isRunning && (
+              <div className="absolute top-3 left-3 flex items-center gap-3 px-3 py-1.5 rounded-lg bg-[#0D1E38]/90 border border-[#FF4D4D]/30 backdrop-blur-sm">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#FF4D4D] animate-pulse" />
+                <span className="text-[11px] text-[#FF4D4D]">ESCENARIO COLAPSADO</span>
+                <span className="text-[11px] font-mono text-[#4A6080]">Degradando red…</span>
+              </div>
+            )}
+
+            {/* Collapse complete banner */}
+            {simulation.collapseComplete && simulation.mode === 'collapse' && !showCollapseResults && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 rounded-xl bg-[#FF4D4D]/15 border border-[#FF4D4D]/50 backdrop-blur-sm">
+                <div className="w-2 h-2 rounded-full bg-[#FF4D4D]" />
+                <span className="text-xs text-[#FF4D4D]" style={{ fontWeight: 600 }}>Colapso completado — red comprometida</span>
+                <button
+                  onClick={() => setShowCollapseResults(true)}
+                  className="px-3 py-1 rounded-lg bg-[#FF4D4D]/20 text-[#FF4D4D] text-xs hover:bg-[#FF4D4D]/30 transition-colors"
+                  style={{ fontWeight: 600 }}
+                >
+                  Ver Análisis →
+                </button>
               </div>
             )}
 
@@ -238,6 +277,7 @@ export default function App() {
             flights={simulation.flights}
             shipments={simulation.shipments}
             onClearSelection={() => setSelectedEntity(null)}
+            onSelectShipment={handleSelectShipment}
             isRunning={simulation.isRunning}
           />
         </div>
@@ -271,6 +311,29 @@ export default function App() {
           airports={simulation.airports}
           onClose={() => setShowResults(false)}
           onReset={handleReset}
+        />
+      )}
+
+      {/* Collapse Results Screen */}
+      {showCollapseResults && simulation.collapseMetrics && (
+        <CollapseResults
+          collapseMetrics={simulation.collapseMetrics}
+          shipments={simulation.shipments}
+          events={simulation.events}
+          airports={simulation.airports}
+          onClose={() => setShowCollapseResults(false)}
+          onReset={handleReset}
+        />
+      )}
+
+      {/* Shipment Detail Side Panel */}
+      {selectedEntity?.type === 'shipment' && (
+        <ShipmentDetailPanel
+          shipment={simulation.shipments.find(s => s.id === selectedEntity.id)!}
+          flights={simulation.flights}
+          airports={simulation.airports}
+          onClose={() => setSelectedEntity(null)}
+          simulationTime={simulation.simulationTime}
         />
       )}
     </div>

@@ -20,6 +20,21 @@ export interface DaySnapshot {
   severity: 'normal' | 'warning' | 'critical';
 }
 
+export interface CollapseMetrics {
+  timeToCollapse: string;
+  resilienceScore: number;
+  affectedAirports: number;
+  totalAirports: number;
+  shipmentsDelayed: number;
+  shipmentsLost: number;
+  totalShipments: number;
+  peakCongestion: number;
+  peakAirport: string;
+  recoveryTime: string;
+  replannedRoutes: number;
+  cascadeEvents: number;
+}
+
 interface SimulationState {
   airports: Airport[];
   flights: Flight[];
@@ -32,6 +47,8 @@ interface SimulationState {
   daySnapshots: DaySnapshot[];
   simulationComplete: boolean;
   daysElapsed: number;
+  collapseComplete: boolean;
+  collapseMetrics: CollapseMetrics | null;
 }
 
 interface UseSimulationReturn extends SimulationState {
@@ -43,6 +60,7 @@ interface UseSimulationReturn extends SimulationState {
   reset: () => void;
   replan: () => void;
   skipToComplete: () => void;
+  skipToCollapseComplete: () => void;
   addShipment: (shipment: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => void;
   setAirports: Dispatch<SetStateAction<Airport[]>>;
   setFlights: Dispatch<SetStateAction<Flight[]>>;
@@ -103,10 +121,13 @@ export function useSimulation(): UseSimulationReturn {
   const [daySnapshots, setDaySnapshots] = useState<DaySnapshot[]>([]);
   const [simulationComplete, setSimulationComplete] = useState(false);
   const [daysElapsed, setDaysElapsed] = useState(0);
+  const [collapseComplete, setCollapseComplete] = useState(false);
+  const [collapseMetrics, setCollapseMetrics] = useState<CollapseMetrics | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickCountRef = useRef(0);
   const lastDayRef = useRef(0);
+  const collapseTickRef = useRef(0);
 
   // Sync simulationTime and events when startDate changes
   useEffect(() => {
@@ -177,6 +198,59 @@ export function useSimulation(): UseSimulationReturn {
           }
         }
 
+        // Collapse mode: progressive degradation
+        if (mode === 'collapse') {
+          collapseTickRef.current += 1;
+          const collapseDuration = 200;
+          const recoveryDuration = 150;
+          const totalDuration = collapseDuration + recoveryDuration;
+
+          if (collapseTickRef.current >= totalDuration) {
+            setCollapseComplete(true);
+            setIsRunning(false);
+
+            setAirports(ap => {
+              const criticalCount = ap.filter(a => a.status === 'critical').length;
+              const peakAirport = ap.reduce((max, a) => {
+                const pct = a.occupancy / a.capacity;
+                return pct > (max.occupancy / max.capacity) ? a : max;
+              }, ap[0]);
+              const peakPct = Math.round((peakAirport.occupancy / peakAirport.capacity) * 100);
+
+              setShipments(sp => {
+                const delayed = sp.filter(s => s.status === 'delayed').length;
+                const lost = sp.filter(s => s.progress < 0.3 && s.status === 'critical').length;
+                const resilienceScore = Math.round(
+                  ((sp.filter(s => s.status === 'on-time').length / sp.length) * 50) +
+                  (((ap.length - criticalCount) / ap.length) * 30) +
+                  (hasReplanned ? 20 : 5)
+                );
+
+                setCollapseMetrics({
+                  timeToCollapse: `${Math.round(collapseDuration * (timeStep / 100) / 60)} min`,
+                  resilienceScore,
+                  affectedAirports: criticalCount,
+                  totalAirports: ap.length,
+                  shipmentsDelayed: delayed,
+                  shipmentsLost: lost,
+                  totalShipments: sp.length,
+                  peakCongestion: peakPct,
+                  peakAirport: peakAirport.id,
+                  recoveryTime: `${Math.round(recoveryDuration * (timeStep / 100) / 60)} min`,
+                  replannedRoutes: hasReplanned ? Math.floor(sp.length * 0.6) : 0,
+                  cascadeEvents: Math.floor(criticalCount * 3 + delayed * 1.5),
+                });
+
+                return sp;
+              });
+
+              return ap;
+            });
+
+            return new Date(simStartMs + totalDuration * timeStep);
+          }
+        }
+
         return next;
       });
 
@@ -215,7 +289,10 @@ export function useSimulation(): UseSimulationReturn {
         setAirports(prev => {
           const idx = Math.floor(Math.random() * prev.length);
           const airport = prev[idx];
-          const delta = Math.floor(Math.random() * 30) - 10;
+          // Collapse mode: aggressive congestion
+          const delta = mode === 'collapse'
+            ? Math.floor(Math.random() * 50) + 5
+            : Math.floor(Math.random() * 30) - 10;
           const newOccupancy = Math.max(0, Math.min(airport.capacity, airport.occupancy + delta));
           const pct = newOccupancy / airport.capacity;
           const newStatus = pct >= 0.9 ? 'critical' : pct >= 0.7 ? 'warning' : 'normal';
@@ -266,8 +343,11 @@ export function useSimulation(): UseSimulationReturn {
     setDaySnapshots([]);
     setSimulationComplete(false);
     setDaysElapsed(0);
+    setCollapseComplete(false);
+    setCollapseMetrics(null);
     lastDayRef.current = 0;
     tickCountRef.current = 0;
+    collapseTickRef.current = 0;
     setEvents(buildInitEvents(now));
   }, []);
 
@@ -324,6 +404,73 @@ export function useSimulation(): UseSimulationReturn {
     }, ...prev.slice(0, 19)]);
   }, []);
 
+  const skipToCollapseComplete = useCallback(() => {
+    setIsRunning(false);
+    setCollapseComplete(true);
+    collapseTickRef.current = 350;
+
+    setAirports(ap => {
+      const updated = ap.map((a, i) => {
+        if (i < 6) return { ...a, occupancy: Math.floor(a.capacity * 0.96), status: 'critical' as const };
+        if (i < 12) return { ...a, occupancy: Math.floor(a.capacity * 0.85), status: 'warning' as const };
+        return a;
+      });
+
+      const criticalCount = updated.filter(a => a.status === 'critical').length;
+      const peakAirport = updated.reduce((max, a) => {
+        const pct = a.occupancy / a.capacity;
+        return pct > (max.occupancy / max.capacity) ? a : max;
+      }, updated[0]);
+      const peakPct = Math.round((peakAirport.occupancy / peakAirport.capacity) * 100);
+
+      setShipments(sp => {
+        const updatedShipments = sp.map((s, i) => {
+          if (i < 4) return { ...s, progress: 0.15, status: 'critical' as const };
+          if (i < 10) return { ...s, progress: 0.4, status: 'delayed' as const };
+          if (i < 16) return { ...s, progress: 0.7, status: 'on-time' as const, isReplanned: true };
+          return { ...s, progress: 0.9, status: 'on-time' as const };
+        });
+
+        const delayed = updatedShipments.filter(s => s.status === 'delayed').length;
+        const lost = updatedShipments.filter(s => s.status === 'critical').length;
+        const resilienceScore = 58;
+
+        setCollapseMetrics({
+          timeToCollapse: '12 min',
+          resilienceScore,
+          affectedAirports: criticalCount,
+          totalAirports: updated.length,
+          shipmentsDelayed: delayed,
+          shipmentsLost: lost,
+          totalShipments: updatedShipments.length,
+          peakCongestion: peakPct,
+          peakAirport: peakAirport.id,
+          recoveryTime: '9 min',
+          replannedRoutes: 12,
+          cascadeEvents: 24,
+        });
+
+        return updatedShipments;
+      });
+
+      return updated;
+    });
+
+    setFlights(prev => prev.map((f, i) => {
+      if (i < 5) return { ...f, load: Math.floor(f.capacity * 0.98), status: 'critical' as const };
+      if (i < 12) return { ...f, load: Math.floor(f.capacity * 0.9), status: 'warning' as const, isReplanned: true };
+      return f;
+    }));
+
+    setEvents(prev => [{
+      id: `collapse-${Date.now()}`,
+      type: 'alert',
+      message: 'Escenario de colapso completado — 6 aeropuertos en estado crítico, 12 rutas replanificadas',
+      time: new Date(),
+      severity: 'critical',
+    }, ...prev.slice(0, 19)]);
+  }, []);
+
   const addShipment = useCallback((data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
     const found = INITIAL_FLIGHTS.find(f => f.from === data.origin && f.to === data.destination) ||
       INITIAL_FLIGHTS.find(f => f.from === data.origin) ||
@@ -362,12 +509,15 @@ export function useSimulation(): UseSimulationReturn {
     daySnapshots,
     simulationComplete,
     daysElapsed,
+    collapseComplete,
+    collapseMetrics,
     setMode,
     start,
     pause,
     reset,
     replan,
     skipToComplete,
+    skipToCollapseComplete,
     addShipment,
     setAirports,
     setFlights,
