@@ -53,7 +53,7 @@ function GraticuleLines() {
     const [x1, y1] = project(lng, -90);
     lines.push(
       <line key={`lng${lng}`} x1={x0} y1={y0} x2={x1} y2={y1}
-        stroke="#0E1E35" strokeWidth={0.5} />
+        stroke="#0C1628" strokeWidth={0.5} />
     );
   }
   for (let lat = -60; lat <= 90; lat += 30) {
@@ -62,10 +62,48 @@ function GraticuleLines() {
     const [, y] = project(0, lat);
     lines.push(
       <line key={`lat${lat}`} x1={x0} y1={y} x2={x1} y2={y}
-        stroke="#0E1E35" strokeWidth={0.5} />
+        stroke="#0C1628" strokeWidth={0.5} />
     );
   }
+  // Highlight equator and prime meridian
+  const [eqX0] = project(-180, 0); const [eqX1] = project(180, 0);
+  const [, eqY] = project(0, 0);
+  lines.push(<line key="equator" x1={eqX0} y1={eqY} x2={eqX1} y2={eqY} stroke="#111D35" strokeWidth={0.8} />);
+  const [pmX, pmY0] = project(0, 90); const [, pmY1] = project(0, -90);
+  lines.push(<line key="meridian" x1={pmX} y1={pmY0} x2={pmX} y2={pmY1} stroke="#111D35" strokeWidth={0.8} />);
   return <>{lines}</>;
+}
+
+// ── Route Particle (animated dot along flight path) ──────────────────────────
+function RouteParticle({ pathD, color, delay, duration }: { pathD: string; color: string; delay: number; duration: number }) {
+  return (
+    <circle r={1.5} fill={color} opacity={0.7}>
+      <animateMotion dur={`${duration}s`} begin={`${delay}s`} repeatCount="indefinite" path={pathD} />
+      <animate attributeName="opacity" values="0;0.8;0.8;0" keyTimes="0;0.15;0.85;1" dur={`${duration}s`} begin={`${delay}s`} repeatCount="indefinite" />
+    </circle>
+  );
+}
+
+// ── Contrail Trail for shipment airplanes ────────────────────────────────────
+function ContrailTrail({ from, to, pathD, progress, color }: { from: [number, number]; to: [number, number]; pathD: string; progress: number; color: string }) {
+  // Compute the partial path from origin to current position
+  const [fx, fy] = from;
+  const [tx, ty] = to;
+  const mx = (fx + tx) / 2;
+  const my = (fy + ty) / 2;
+  const dx = tx - fx; const dy = ty - fy;
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+  const curve = dist * 0.12;
+  const cpx = mx - (dy / dist) * curve;
+  const cpy = my + (dx / dist) * curve;
+  const t = progress;
+  const cx = (1 - t) * (1 - t) * fx + 2 * (1 - t) * t * cpx + t * t * tx;
+  const cy = (1 - t) * (1 - t) * fy + 2 * (1 - t) * t * cpy + t * t * ty;
+  const trailD = `M ${fx} ${fy} Q ${cpx} ${cpy} ${cx.toFixed(1)} ${cy.toFixed(1)}`;
+
+  return (
+    <path d={trailD} stroke={color} strokeWidth={1.2} strokeOpacity={0.4} fill="none" style={{ pointerEvents: 'none' }} />
+  );
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -77,6 +115,7 @@ export function WorldMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   const [geoFeatures, setGeoFeatures] = useState<any[]>([]);
+  const [hoveredCountry, setHoveredCountry] = useState<string | null>(null);
 
   // Load world TopoJSON
   useEffect(() => {
@@ -169,7 +208,7 @@ export function WorldMap({
       const cpx = mx - (dy / dist) * curve;
       const cpy = my + (dx / dist) * curve;
       const pathD = `M ${fx} ${fy} Q ${cpx} ${cpy} ${tx} ${ty}`;
-      return { ...f, pathD, midX: cpx, midY: cpy };
+      return { ...f, pathD, midX: cpx, midY: cpy, origin, dest };
     }).filter((f): f is NonNullable<typeof f> => f !== null),
     [flights, airports]
   );
@@ -190,14 +229,12 @@ export function WorldMap({
       const cpx = mx - (dy / dist) * curve;
       const cpy = my + (dx / dist) * curve;
       const pathD = `M ${fx} ${fy} Q ${cpx} ${cpy} ${tx} ${ty}`;
-      // Current position along the curve
       const t = s.progress;
       const cx = (1 - t) * (1 - t) * fx + 2 * (1 - t) * t * cpx + t * t * tx;
       const cy = (1 - t) * (1 - t) * fy + 2 * (1 - t) * t * cpy + t * t * ty;
-      // Direction angle for the airplane
       const angle = Math.atan2(2 * (1 - t) * (cpy - fy) + 2 * t * (ty - cpy), 2 * (1 - t) * (cpx - fx) + 2 * t * (tx - cpx)) * (180 / Math.PI);
-      return { ...s, svgPos: [cx, cy] as [number, number], pathD, angle };
-    }).filter((s): s is (Shipment & { svgPos: [number, number]; pathD: string; angle: number }) => s !== null);
+      return { ...s, svgPos: [cx, cy] as [number, number], pathD, angle, originPos: [fx, fy] as [number, number], destPos: [tx, ty] as [number, number] };
+    }).filter((s): s is (Shipment & { svgPos: [number, number]; pathD: string; angle: number; originPos: [number, number]; destPos: [number, number] }) => s !== null);
   }, [shipments, airports]);
 
   // ── Tooltips ───────────────────────────────────────────────────────────
@@ -286,12 +323,14 @@ export function WorldMap({
 
   const viewBoxStr = `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`;
   const zoomLevel = BASE_W / viewBox.w;
+  const showLabels = zoomLevel > 1.2;
+  const showWarehouseBars = zoomLevel > 1.8;
 
   return (
     <div
       ref={containerRef}
       className="relative w-full h-full overflow-hidden select-none"
-      style={{ background: '#05091A', cursor: dragRef.current ? 'grabbing' : 'grab' }}
+      style={{ background: '#040814', cursor: dragRef.current ? 'grabbing' : 'grab' }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -303,8 +342,55 @@ export function WorldMap({
         style={{ width: '100%', height: '100%' }}
         preserveAspectRatio="xMidYMid meet"
       >
-        {/* Background */}
-        <rect data-map-bg="1" x="-5000" y="-5000" width="15000" height="15000" fill="#05091A" />
+        {/* Defs: gradients and filters */}
+        <defs>
+          {/* Ocean radial gradient */}
+          <radialGradient id="oceanGrad" cx="50%" cy="50%" r="70%">
+            <stop offset="0%" stopColor="#081428" />
+            <stop offset="50%" stopColor="#050A18" />
+            <stop offset="100%" stopColor="#020410" />
+          </radialGradient>
+
+          {/* Continent gradient */}
+          <linearGradient id="continentGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#122040" />
+            <stop offset="100%" stopColor="#0C1830" />
+          </linearGradient>
+
+          {/* Continent hover gradient */}
+          <linearGradient id="continentHoverGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#182E55" />
+            <stop offset="100%" stopColor="#101E3D" />
+          </linearGradient>
+
+          {/* Glow filter */}
+          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="2" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+
+          {/* Stronger glow for critical */}
+          <filter id="glowStrong" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* Ocean background with gradient */}
+        <rect data-map-bg="1" x="-5000" y="-5000" width="15000" height="15000" fill="url(#oceanGrad)" />
+
+        {/* Subtle dot pattern on ocean */}
+        <pattern id="oceanDots" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+          <circle cx="10" cy="10" r="0.3" fill="#0A1430" opacity="0.5" />
+        </pattern>
+        <rect data-map-bg="1" x="-5000" y="-5000" width="15000" height="15000" fill="url(#oceanDots)" />
 
         {/* Graticule */}
         <GraticuleLines />
@@ -315,9 +401,14 @@ export function WorldMap({
           const coords = geo.geometry.type === 'Polygon'
             ? [geo.geometry.coordinates]
             : geo.geometry.coordinates;
+          const isHovered = hoveredCountry === geo.id;
 
           return (
-            <g key={`${geo.id}-${i}`}>
+            <g
+              key={`${geo.id}-${i}`}
+              onMouseEnter={() => setHoveredCountry(geo.id)}
+              onMouseLeave={() => setHoveredCountry(null)}
+            >
               {coords.map((ringSet: any, ri: number) =>
                 ringSet.map((ring: number[][], ri2: number) => {
                   const d = ring
@@ -330,10 +421,11 @@ export function WorldMap({
                     <path
                       key={`${ri}-${ri2}`}
                       d={d}
-                      fill="#0E1C35"
-                      stroke="#162540"
-                      strokeWidth={0.6}
+                      fill={isHovered ? 'url(#continentHoverGrad)' : 'url(#continentGrad)'}
+                      stroke={isHovered ? '#1E3558' : '#13203A'}
+                      strokeWidth={isHovered ? 0.8 : 0.5}
                       strokeLinejoin="round"
+                      style={{ transition: 'fill 0.15s, stroke 0.15s' }}
                     />
                   );
                 })
@@ -346,14 +438,15 @@ export function WorldMap({
         {toggles.showRoutes && flightPaths.map(f => {
           const isSelected = selectedEntity?.type === 'flight' && selectedEntity.id === f.id;
           const color = getRouteColor(f.status, f.isReplanned);
-          const strokeDash = f.isReplanned ? '5,3' : undefined;
 
           return (
             <g key={f.id}>
+              {/* Glow layer */}
               {(isSelected || f.status === 'critical') && (
                 <path d={f.pathD} stroke={color} strokeWidth={isSelected ? 8 : 5}
-                  strokeOpacity={0.12} fill="none" style={{ pointerEvents: 'none' }} />
+                  strokeOpacity={0.12} fill="none" style={{ pointerEvents: 'none' }} filter="url(#glow)" />
               )}
+              {/* Hit area */}
               <path
                 d={f.pathD} stroke="transparent" strokeWidth={10} fill="none"
                 style={{ cursor: 'pointer' }}
@@ -366,11 +459,19 @@ export function WorldMap({
                 }}
                 onMouseLeave={() => setTooltip(null)}
               />
+              {/* Visible line */}
               <path d={f.pathD} stroke={color}
                 strokeWidth={isSelected ? 2 : 1}
                 strokeOpacity={isSelected ? 1 : 0.65}
-                strokeDasharray={strokeDash}
                 fill="none" style={{ pointerEvents: 'none' }} />
+
+              {/* Animated particles on the route */}
+              {f.status === 'warning' && <RouteParticle pathD={f.pathD} color="#FFC857" delay={0} duration={4} />}
+              {f.status === 'warning' && <RouteParticle pathD={f.pathD} color="#FFC857" delay={2} duration={4} />}
+              {f.status === 'critical' && <RouteParticle pathD={f.pathD} color="#FF4D4D" delay={0} duration={3} />}
+              {f.status === 'critical' && <RouteParticle pathD={f.pathD} color="#FF4D4D" delay={1.5} duration={3} />}
+              {f.status === 'critical' && <RouteParticle pathD={f.pathD} color="#FF4D4D" delay={3} duration={3} />}
+              {f.status === 'normal' && f.airlineId === 'EK' && <RouteParticle pathD={f.pathD} color="#4DA6FF" delay={0.5} duration={5} />}
             </g>
           );
         })}
@@ -399,41 +500,57 @@ export function WorldMap({
               }}
               onMouseLeave={() => setTooltip(null)}
             >
+              {/* Critical pulsing glow */}
               {isCritical && toggles.showCongestion && (
-                <circle r={9} fill={color} opacity={0.08}>
-                  <animate attributeName="r" values="6;16;6" dur="2.5s" repeatCount="indefinite" />
-                  <animate attributeName="opacity" values="0.15;0;0.15" dur="2.5s" repeatCount="indefinite" />
-                </circle>
+                <>
+                  <circle r={6} fill="none" stroke={color} strokeWidth={0.8} opacity={0.5} filter="url(#glowStrong)">
+                    <animate attributeName="r" values="6;18;6" dur="2s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" values="0.5;0;0.5" dur="2s" repeatCount="indefinite" />
+                  </circle>
+                  <circle r={4} fill={color} opacity={0.1}>
+                    <animate attributeName="r" values="4;12;4" dur="2s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" values="0.12;0;0.12" dur="2s" repeatCount="indefinite" />
+                  </circle>
+                </>
               )}
+              {/* Warning pulse */}
               {isWarning && toggles.showCongestion && (
                 <circle r={7} fill={color} opacity={0.08}>
                   <animate attributeName="r" values="5;11;5" dur="3s" repeatCount="indefinite" />
                   <animate attributeName="opacity" values="0.1;0;0.1" dur="3s" repeatCount="indefinite" />
                 </circle>
               )}
+              {/* Selected ring */}
               {isSelected && (
-                <circle r={r + 4} fill="none" stroke={color} strokeWidth={1.2} opacity={0.7} />
+                <circle r={r + 4} fill="none" stroke={color} strokeWidth={1.2} opacity={0.7} filter="url(#glow)" />
               )}
+              {/* Outer halo */}
               <circle r={r + 2} fill={color} opacity={0.18} />
-              <circle r={r} fill={color} stroke="#05091A" strokeWidth={1} />
-              <circle r={1.2} fill="#05091A" />
-              <text
-                textAnchor="middle"
-                y={-(r + 4)}
-                style={{
-                  fill: isSelected ? color : '#7090B8',
-                  fontSize: isSelected ? 6 : 5,
-                  fontFamily: 'monospace',
-                  fontWeight: isSelected ? 'bold' : 'normal',
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                }}
-              >
-                {a.id}
-              </text>
-              {toggles.showWarehouseCapacity && (
+              {/* Main dot */}
+              <circle r={r} fill={color} stroke="#040814" strokeWidth={1} />
+              {/* Center pinhole */}
+              <circle r={1.2} fill="#040814" />
+              {/* Airport label */}
+              {showLabels && (
+                <text
+                  textAnchor="middle"
+                  y={-(r + 4)}
+                  style={{
+                    fill: isSelected ? color : '#7090B8',
+                    fontSize: isSelected ? 6 : 5,
+                    fontFamily: 'monospace',
+                    fontWeight: isSelected ? 'bold' : 'normal',
+                    pointerEvents: 'none',
+                    userSelect: 'none',
+                  }}
+                >
+                  {a.id}
+                </text>
+              )}
+              {/* Warehouse capacity bar */}
+              {(showWarehouseBars || showWarehouseBars === false) && toggles.showWarehouseCapacity && showLabels && (
                 <g transform="translate(-8,5)">
-                  <rect width={16} height={2.5} rx={1} fill="#0D1A2E" />
+                  <rect width={16} height={2.5} rx={1} fill="#081225" />
                   <rect width={16 * Math.min(pct / 100, 1)} height={2.5} rx={1}
                     fill={color} opacity={0.85} />
                 </g>
@@ -462,12 +579,22 @@ export function WorldMap({
               }}
               onMouseLeave={() => setTooltip(null)}
             >
-              {isSelected && <circle r={10} fill={color} opacity={0.15} />}
+              {/* Glow for critical/delayed */}
+              {(s.status === 'critical' || isSelected) && (
+                <circle r={8} fill={color} opacity={0.12} filter="url(#glow)" />
+              )}
+              {/* Contrail trail behind the plane */}
+              {s.progress > 0.05 && (
+                <g transform={`translate(${-px},${-py})`}>
+                  <ContrailTrail from={s.originPos} to={s.destPos} pathD={s.pathD} progress={s.progress} color={color} />
+                </g>
+              )}
+              {/* Airplane icon */}
               <g transform="scale(0.35)">
                 <path
                   d="M21,16V14L13,9V3.5A1.5,1.5,0,0,0,10,3.5V9L2,14V16L10,13.5V19L8,20.5V22L11.5,21L15,22V20.5L13,19V13.5Z"
                   fill={color}
-                  stroke="#05091A"
+                  stroke="#040814"
                   strokeWidth={1.5}
                   opacity={0.9}
                 />
