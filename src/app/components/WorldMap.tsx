@@ -74,16 +74,6 @@ function GraticuleLines() {
   return <>{lines}</>;
 }
 
-// ── Route Particle (animated dot along flight path) ──────────────────────────
-function RouteParticle({ pathD, color, delay, duration }: { pathD: string; color: string; delay: number; duration: number }) {
-  return (
-    <circle r={1.5} fill={color} opacity={0.7}>
-      <animateMotion dur={`${duration}s`} begin={`${delay}s`} repeatCount="indefinite" path={pathD} />
-      <animate attributeName="opacity" values="0;0.8;0.8;0" keyTimes="0;0.15;0.85;1" dur={`${duration}s`} begin={`${delay}s`} repeatCount="indefinite" />
-    </circle>
-  );
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 export function WorldMap({
   airports, flights, shipments, selectedEntity,
@@ -442,14 +432,6 @@ export function WorldMap({
                 strokeWidth={isSelected ? 2 : 1}
                 strokeOpacity={isSelected ? 1 : 0.65}
                 fill="none" style={{ pointerEvents: 'none' }} />
-
-              {/* Animated particles on the route */}
-              {f.status === 'warning' && <RouteParticle pathD={f.pathD} color="#FFC857" delay={0} duration={4} />}
-              {f.status === 'warning' && <RouteParticle pathD={f.pathD} color="#FFC857" delay={2} duration={4} />}
-              {f.status === 'critical' && <RouteParticle pathD={f.pathD} color="#FF4D4D" delay={0} duration={3} />}
-              {f.status === 'critical' && <RouteParticle pathD={f.pathD} color="#FF4D4D" delay={1.5} duration={3} />}
-              {f.status === 'critical' && <RouteParticle pathD={f.pathD} color="#FF4D4D" delay={3} duration={3} />}
-              {f.status === 'normal' && f.airlineId === 'EK' && <RouteParticle pathD={f.pathD} color="#4DA6FF" delay={0.5} duration={5} />}
             </g>
           );
         })}
