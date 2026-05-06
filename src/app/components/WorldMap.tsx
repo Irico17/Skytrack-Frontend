@@ -84,28 +84,6 @@ function RouteParticle({ pathD, color, delay, duration }: { pathD: string; color
   );
 }
 
-// ── Contrail Trail for shipment airplanes ────────────────────────────────────
-function ContrailTrail({ from, to, pathD, progress, color }: { from: [number, number]; to: [number, number]; pathD: string; progress: number; color: string }) {
-  // Compute the partial path from origin to current position
-  const [fx, fy] = from;
-  const [tx, ty] = to;
-  const mx = (fx + tx) / 2;
-  const my = (fy + ty) / 2;
-  const dx = tx - fx; const dy = ty - fy;
-  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-  const curve = dist * 0.12;
-  const cpx = mx - (dy / dist) * curve;
-  const cpy = my + (dx / dist) * curve;
-  const t = progress;
-  const cx = (1 - t) * (1 - t) * fx + 2 * (1 - t) * t * cpx + t * t * tx;
-  const cy = (1 - t) * (1 - t) * fy + 2 * (1 - t) * t * cpy + t * t * ty;
-  const trailD = `M ${fx} ${fy} Q ${cpx} ${cpy} ${cx.toFixed(1)} ${cy.toFixed(1)}`;
-
-  return (
-    <path d={trailD} stroke={color} strokeWidth={1.2} strokeOpacity={0.4} fill="none" style={{ pointerEvents: 'none' }} />
-  );
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 export function WorldMap({
   airports, flights, shipments, selectedEntity,
@@ -582,12 +560,6 @@ export function WorldMap({
               {/* Glow for critical/delayed */}
               {(s.status === 'critical' || isSelected) && (
                 <circle r={8} fill={color} opacity={0.12} filter="url(#glow)" />
-              )}
-              {/* Contrail trail behind the plane */}
-              {s.progress > 0.05 && (
-                <g transform={`translate(${-px},${-py})`}>
-                  <ContrailTrail from={s.originPos} to={s.destPos} pathD={s.pathD} progress={s.progress} color={color} />
-                </g>
               )}
               {/* Airplane icon */}
               <g transform="scale(0.35)">
