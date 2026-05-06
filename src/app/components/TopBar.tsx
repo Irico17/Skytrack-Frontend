@@ -1,0 +1,214 @@
+import React from 'react';
+import {
+  Activity, AlertTriangle, Bell, Layers, Play, Pause,
+  RotateCcw, Globe, Wifi, Clock, Zap, ChevronDown
+} from 'lucide-react';
+import { SimulationMode, SimEvent } from '../data/mockData';
+
+interface TopBarProps {
+  isRunning: boolean;
+  mode: SimulationMode;
+  simulationTime: Date;
+  events: SimEvent[];
+  onStart: () => void;
+  onPause: () => void;
+  onReset: () => void;
+  onModeChange: (mode: SimulationMode) => void;
+  onReplan: () => void;
+  hasReplanned: boolean;
+  totalShipments: number;
+  criticalCount: number;
+}
+
+const MODE_LABELS: Record<SimulationMode, string> = {
+  realtime: 'Operaciones en Tiempo Real',
+  '5day': 'Simulación 5 Días',
+  collapse: 'Escenario de Colapso',
+};
+
+const MODE_ICONS: Record<SimulationMode, React.ReactNode> = {
+  realtime: <Activity className="w-3 h-3" />,
+  '5day': <Layers className="w-3 h-3" />,
+  collapse: <Zap className="w-3 h-3" />,
+};
+
+export function TopBar({
+  isRunning, mode, simulationTime, events, onStart, onPause, onReset,
+  onModeChange, onReplan, hasReplanned, totalShipments, criticalCount
+}: TopBarProps) {
+  const [showModeDropdown, setShowModeDropdown] = React.useState(false);
+  const [showAlerts, setShowAlerts] = React.useState(false);
+  const criticalEvents = events.filter(e => e.severity === 'critical').length;
+
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('es-ES', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  };
+  const formatDate = (date: Date) => {
+    return date.toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: '2-digit' });
+  };
+
+  return (
+    <div className="h-14 bg-[#0A1628] border-b border-[#1E3058] flex items-center px-4 gap-4 z-50 relative">
+      {/* Logo */}
+      <div className="flex items-center gap-2 mr-2">
+        <div className="w-8 h-8 rounded-lg bg-[#4DA6FF]/20 border border-[#4DA6FF]/40 flex items-center justify-center">
+          <Globe className="w-4 h-4 text-[#4DA6FF]" />
+        </div>
+        <div>
+          <div className="text-white text-sm" style={{ fontWeight: 700, letterSpacing: '0.05em' }}>SKYTRACK</div>
+          <div className="text-[#4DA6FF] text-[9px]" style={{ letterSpacing: '0.15em' }}>LOGISTICS CONTROL</div>
+        </div>
+      </div>
+
+      <div className="w-px h-8 bg-[#1E3058]" />
+
+      {/* Simulation Mode Selector */}
+      <div className="relative">
+        <button
+          onClick={() => setShowModeDropdown(!showModeDropdown)}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0D1E38] border border-[#1E3058] hover:border-[#4DA6FF]/50 transition-colors text-xs text-[#A8C0E0]"
+        >
+          {MODE_ICONS[mode]}
+          <span>{MODE_LABELS[mode]}</span>
+          <ChevronDown className="w-3 h-3" />
+        </button>
+        {showModeDropdown && (
+          <div className="absolute top-full mt-1 left-0 bg-[#0D1E38] border border-[#1E3058] rounded-lg overflow-hidden z-50 min-w-[180px]">
+            {(Object.keys(MODE_LABELS) as SimulationMode[]).map(m => (
+              <button
+                key={m}
+                onClick={() => { onModeChange(m); setShowModeDropdown(false); }}
+                className={`w-full flex items-center gap-2 px-4 py-2.5 text-xs hover:bg-[#1A2E4A] transition-colors text-left
+                  ${mode === m ? 'text-[#4DA6FF] bg-[#1A2E4A]' : 'text-[#A8C0E0]'}`}
+              >
+                {MODE_ICONS[m]}
+                <span>{MODE_LABELS[m]}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Simulation Controls */}
+      <div className="flex items-center gap-2">
+        {!isRunning ? (
+          <button
+            onClick={onStart}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors"
+          >
+            <Play className="w-3 h-3 fill-current" />
+            <span>Iniciar</span>
+          </button>
+        ) : (
+          <button
+            onClick={onPause}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FFC857]/15 border border-[#FFC857]/40 text-[#FFC857] text-xs hover:bg-[#FFC857]/25 transition-colors"
+          >
+            <Pause className="w-3 h-3 fill-current" />
+            <span>Pausar</span>
+          </button>
+        )}
+
+        <button
+          onClick={onReplan}
+          disabled={hasReplanned}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors
+            ${hasReplanned
+              ? 'bg-[#A855F7]/10 border border-[#A855F7]/30 text-[#A855F7]/60 cursor-not-allowed'
+              : 'bg-[#A855F7]/15 border border-[#A855F7]/40 text-[#A855F7] hover:bg-[#A855F7]/25'
+            }`}
+        >
+          <Zap className="w-3 h-3" />
+          <span>{hasReplanned ? 'Replanificado' : 'Replanificar Rutas'}</span>
+        </button>
+
+        <button
+          onClick={onReset}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1A2E4A] border border-[#1E3058] text-[#A8C0E0] text-xs hover:border-[#4DA6FF]/40 transition-colors"
+        >
+          <RotateCcw className="w-3 h-3" />
+          <span>Reiniciar</span>
+        </button>
+      </div>
+
+      <div className="w-px h-8 bg-[#1E3058]" />
+
+      {/* Status indicators */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-1.5">
+          <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-[#00FF9C] animate-pulse' : 'bg-[#4A5568]'}`} />
+          <span className={`text-xs ${isRunning ? 'text-[#00FF9C]' : 'text-[#4A5568]'}`}>
+            {isRunning ? 'EN VIVO' : 'PAUSADO'}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 text-xs text-[#A8C0E0]">
+          <Clock className="w-3 h-3" />
+          <span className="font-mono">{formatDate(simulationTime)} {formatTime(simulationTime)}</span>
+        </div>
+
+        <div className="flex items-center gap-1.5 text-xs">
+          <Wifi className="w-3 h-3 text-[#00FF9C]" />
+          <span className="text-[#A8C0E0]">{totalShipments} Envíos</span>
+        </div>
+
+        {criticalCount > 0 && (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-[#FF4D4D]/15 border border-[#FF4D4D]/30">
+            <AlertTriangle className="w-3 h-3 text-[#FF4D4D]" />
+            <span className="text-xs text-[#FF4D4D]">{criticalCount} Crítico</span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1" />
+
+      {/* Alert bell */}
+      <div className="relative">
+        <button
+          onClick={() => setShowAlerts(!showAlerts)}
+          className="relative w-8 h-8 rounded-lg bg-[#0D1E38] border border-[#1E3058] flex items-center justify-center hover:border-[#FFC857]/50 transition-colors"
+        >
+          <Bell className="w-4 h-4 text-[#A8C0E0]" />
+          {criticalEvents > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#FF4D4D] text-white text-[9px] flex items-center justify-center">
+              {Math.min(criticalEvents, 9)}
+            </span>
+          )}
+        </button>
+
+        {showAlerts && (
+          <div className="absolute top-full right-0 mt-2 w-80 bg-[#0D1E38] border border-[#1E3058] rounded-xl overflow-hidden z-50 shadow-2xl">
+            <div className="px-4 py-2.5 border-b border-[#1E3058] flex items-center justify-between">
+              <span className="text-xs text-white" style={{ fontWeight: 600 }}>Alertas del Sistema</span>
+              <span className="text-[10px] text-[#A8C0E0]">{events.length} eventos</span>
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {events.slice(0, 8).map(event => (
+                <div key={event.id} className="px-4 py-2.5 border-b border-[#1E3058]/50 hover:bg-[#1A2E4A]/50">
+                  <div className="flex items-start gap-2">
+                    <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0
+                      ${event.severity === 'critical' ? 'bg-[#FF4D4D]' :
+                        event.severity === 'warning' ? 'bg-[#FFC857]' : 'bg-[#4DA6FF]'}`} />
+                    <div>
+                      <p className="text-[11px] text-[#C8D8F0] leading-relaxed">{event.message}</p>
+                      <p className="text-[10px] text-[#4A6080] mt-0.5">
+                        {event.time.toLocaleTimeString('es-ES', { hour12: false })}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0D1E38] border border-[#1E3058]">
+        <div className="w-6 h-6 rounded-full bg-[#4DA6FF]/20 flex items-center justify-center">
+          <span className="text-[10px] text-[#4DA6FF]" style={{ fontWeight: 700 }}>OC</span>
+        </div>
+        <span className="text-xs text-[#A8C0E0]">Centro de Operaciones</span>
+      </div>
+    </div>
+  );
+}

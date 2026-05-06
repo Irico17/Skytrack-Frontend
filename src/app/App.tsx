@@ -1,0 +1,278 @@
+import React, { useState, useMemo, useCallback } from 'react';
+import { TopBar } from './components/TopBar';
+import { LeftSidebar } from './components/LeftSidebar';
+import { WorldMap } from './components/WorldMap';
+import { BottomPanel } from './components/BottomPanel';
+import { RightPanel } from './components/RightPanel';
+import { AddShipmentModal } from './components/AddShipmentModal';
+import { FiveDayResults } from './components/FiveDayResults';
+import { useSimulation } from './hooks/useSimulation';
+import { SimulationMode, Shipment } from './data/mockData';
+
+interface SelectedEntity {
+  type: 'airport' | 'flight' | 'shipment';
+  id: string;
+}
+
+interface Filters {
+  airline: string;
+  origin: string;
+  destination: string;
+}
+
+interface Toggles {
+  showRoutes: boolean;
+  showWarehouseCapacity: boolean;
+  showCongestion: boolean;
+}
+
+export default function App() {
+  const simulation = useSimulation();
+
+  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
+  const [filters, setFilters] = useState<Filters>({ airline: '', origin: '', destination: '' });
+  const [toggles, setToggles] = useState<Toggles>({
+    showRoutes: true,
+    showWarehouseCapacity: true,
+    showCongestion: true,
+  });
+  const [showAddShipment, setShowAddShipment] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+
+  // Auto-show results when 5day simulation completes
+  React.useEffect(() => {
+    if (simulation.simulationComplete && simulation.mode === '5day') {
+      const timer = setTimeout(() => setShowResults(true), 600);
+      return () => clearTimeout(timer);
+    }
+  }, [simulation.simulationComplete, simulation.mode]);
+
+  const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const handleToggleChange = useCallback((key: keyof Toggles) => {
+    setToggles(prev => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
+  const handleSelectAirport = useCallback((id: string) => {
+    setSelectedEntity(prev =>
+      prev?.type === 'airport' && prev.id === id ? null : { type: 'airport', id }
+    );
+  }, []);
+
+  const handleSelectFlight = useCallback((id: string) => {
+    setSelectedEntity(prev =>
+      prev?.type === 'flight' && prev.id === id ? null : { type: 'flight', id }
+    );
+  }, []);
+
+  const handleSelectShipment = useCallback((id: string) => {
+    setSelectedEntity(prev =>
+      prev?.type === 'shipment' && prev.id === id ? null : { type: 'shipment', id }
+    );
+  }, []);
+
+  const filteredShipments = useMemo(() => {
+    return simulation.shipments.filter(s => {
+      if (filters.airline && s.airlineId !== filters.airline) return false;
+      if (filters.origin && s.origin !== filters.origin) return false;
+      if (filters.destination && s.destination !== filters.destination) return false;
+      return true;
+    });
+  }, [simulation.shipments, filters]);
+
+  const filteredFlights = useMemo(() => {
+    return simulation.flights.filter(f => {
+      if (filters.airline && f.airlineId !== filters.airline) return false;
+      if (filters.origin && f.from !== filters.origin) return false;
+      if (filters.destination && f.to !== filters.destination) return false;
+      return true;
+    });
+  }, [simulation.flights, filters]);
+
+  const criticalCount = useMemo(() =>
+    simulation.shipments.filter(s => s.status === 'critical').length,
+    [simulation.shipments]
+  );
+
+  const handleAddShipment = useCallback((data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
+    simulation.addShipment(data);
+  }, [simulation]);
+
+  const handleReset = useCallback(() => {
+    simulation.reset();
+    setShowResults(false);
+  }, [simulation]);
+
+  return (
+    <div className="h-screen w-screen bg-[#060D1F] flex flex-col overflow-hidden" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      {/* Top Bar */}
+      <TopBar
+        isRunning={simulation.isRunning}
+        mode={simulation.mode}
+        simulationTime={simulation.simulationTime}
+        events={simulation.events}
+        onStart={simulation.start}
+        onPause={simulation.pause}
+        onReset={handleReset}
+        onModeChange={simulation.setMode}
+        onReplan={simulation.replan}
+        hasReplanned={simulation.hasReplanned}
+        totalShipments={simulation.shipments.length}
+        criticalCount={criticalCount}
+      />
+
+      {/* Main Content */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Sidebar */}
+        <LeftSidebar
+          mode={simulation.mode}
+          startDate={simulation.startDate}
+          filters={filters}
+          toggles={toggles}
+          isRunning={simulation.isRunning}
+          hasReplanned={simulation.hasReplanned}
+          daysElapsed={simulation.daysElapsed}
+          simulationComplete={simulation.simulationComplete}
+          onModeChange={simulation.setMode}
+          onStartDateChange={simulation.setStartDate}
+          onFilterChange={handleFilterChange}
+          onToggleChange={handleToggleChange}
+          onStart={simulation.start}
+          onPause={simulation.pause}
+          onReset={handleReset}
+          onReplan={simulation.replan}
+          onAddShipment={() => setShowAddShipment(true)}
+          onSkipToComplete={simulation.skipToComplete}
+          onViewResults={() => setShowResults(true)}
+        />
+
+        {/* Center: Map + Bottom Panel */}
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {/* World Map */}
+          <div className="flex-1 overflow-hidden relative">
+            <WorldMap
+              airports={simulation.airports}
+              flights={filteredFlights}
+              shipments={filteredShipments}
+              selectedEntity={selectedEntity}
+              onSelectAirport={handleSelectAirport}
+              onSelectFlight={handleSelectFlight}
+              onSelectShipment={handleSelectShipment}
+              toggles={toggles}
+            />
+
+            {/* Simulation mode badge */}
+            {simulation.isRunning && (
+              <div className="absolute top-3 left-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0D1E38]/90 border border-[#1E3058] backdrop-blur-sm">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#00FF9C] animate-pulse" />
+                <span className="text-[11px] text-[#A8C0E0]">
+                  {simulation.mode === 'realtime' ? 'TIEMPO REAL' :
+                    simulation.mode === '5day' ? 'SIMULACIÓN 5 DÍAS' : 'ESCENARIO COLAPSADO'}
+                </span>
+                <span className="text-[11px] font-mono text-[#4A6080]">
+                  {simulation.simulationTime.toLocaleTimeString('en-US', { hour12: false })}
+                </span>
+              </div>
+            )}
+
+            {/* 5-day progress overlay on map */}
+            {simulation.mode === '5day' && !simulation.simulationComplete && simulation.daysElapsed > 0 && (
+              <div className="absolute top-3 left-3 flex items-center gap-3 px-3 py-1.5 rounded-lg bg-[#0D1E38]/90 border border-[#4DA6FF]/30 backdrop-blur-sm">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#4DA6FF] animate-pulse" />
+                <span className="text-[11px] text-[#4DA6FF]">SIMULACIÓN 5 DÍAS</span>
+                <span className="text-[11px] font-mono text-[#4A6080]">
+                  Day {Math.min(Math.ceil(simulation.daysElapsed), 5)}/5
+                </span>
+                <div className="w-20 h-1 bg-[#1E3058] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#4DA6FF] rounded-full transition-all"
+                    style={{ width: `${(simulation.daysElapsed / 5) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Simulation complete banner */}
+            {simulation.simulationComplete && simulation.mode === '5day' && !showResults && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 rounded-xl bg-[#00FF9C]/15 border border-[#00FF9C]/50 backdrop-blur-sm">
+                <div className="w-2 h-2 rounded-full bg-[#00FF9C]" />
+                <span className="text-xs text-[#00FF9C]" style={{ fontWeight: 600 }}>Simulación de 5 días completada</span>
+                <button
+                  onClick={() => setShowResults(true)}
+                  className="px-3 py-1 rounded-lg bg-[#00FF9C]/20 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/30 transition-colors"
+                  style={{ fontWeight: 600 }}
+                >
+                  Ver Resultados →
+                </button>
+              </div>
+            )}
+
+            {/* Active filters indicator */}
+            {(filters.airline || filters.origin || filters.destination) && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/30 backdrop-blur-sm">
+                <span className="text-[11px] text-[#4DA6FF]">
+                  Filtros activos: {[
+                    filters.airline,
+                    filters.origin && `desde ${filters.origin}`,
+                    filters.destination && `hacia ${filters.destination}`
+                  ].filter(Boolean).join(' · ')}
+                </span>
+              </div>
+            )}
+
+            {/* Replanned indicator */}
+            {simulation.hasReplanned && (
+              <div className="absolute bottom-16 left-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#A855F7]/15 border border-[#A855F7]/30 backdrop-blur-sm">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#A855F7]" />
+                <span className="text-[11px] text-[#A855F7]">Rutas replanificadas — líneas punteadas muestran nuevas rutas</span>
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Panel */}
+          <BottomPanel
+            selectedEntity={selectedEntity}
+            airports={simulation.airports}
+            flights={simulation.flights}
+            shipments={simulation.shipments}
+            onClearSelection={() => setSelectedEntity(null)}
+            isRunning={simulation.isRunning}
+          />
+        </div>
+
+        {/* Right Panel */}
+        <RightPanel
+          airports={simulation.airports}
+          flights={simulation.flights}
+          shipments={simulation.shipments}
+          events={simulation.events}
+          isRunning={simulation.isRunning}
+          simulationTime={simulation.simulationTime}
+        />
+      </div>
+
+      {/* Add Shipment Modal */}
+      {showAddShipment && (
+        <AddShipmentModal
+          onClose={() => setShowAddShipment(false)}
+          onAdd={handleAddShipment}
+        />
+      )}
+
+      {/* 5-Day Results Screen */}
+      {showResults && (
+        <FiveDayResults
+          startDate={simulation.startDate}
+          daySnapshots={simulation.daySnapshots}
+          shipments={simulation.shipments}
+          events={simulation.events}
+          airports={simulation.airports}
+          onClose={() => setShowResults(false)}
+          onReset={handleReset}
+        />
+      )}
+    </div>
+  );
+}
