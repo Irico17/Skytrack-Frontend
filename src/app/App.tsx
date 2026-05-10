@@ -8,7 +8,7 @@ import { AddShipmentModal } from './components/AddShipmentModal';
 import { FiveDayResults } from './components/FiveDayResults';
 import { CollapseResults } from './components/CollapseResults';
 import { ShipmentDetailPanel } from './components/ShipmentDetailPanel';
-import { useSimulation } from './hooks/useSimulation';
+import { useSimulation, SIMULATION_K } from './hooks/useSimulation';
 import { SimulationMode, Shipment } from './data/mockData';
 
 interface SelectedEntity {
@@ -30,6 +30,11 @@ interface Toggles {
 
 export default function App() {
   const simulation = useSimulation();
+  const [realClock, setRealClock] = React.useState(new Date());
+  React.useEffect(() => {
+    const t = setInterval(() => setRealClock(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
   const [filters, setFilters] = useState<Filters>({ airline: '', origin: '', destination: '' });
@@ -176,35 +181,62 @@ export default function App() {
               onSelectFlight={handleSelectFlight}
               onSelectShipment={handleSelectShipment}
               toggles={toggles}
+              simClock={simulation.simClock}
+              activeFlights={simulation.activeFlights}
+              flightPlanFlights={simulation.flightPlanFlights}
             />
 
-            {/* Simulation mode badge */}
-            {simulation.isRunning && (
-              <div className="absolute top-3 left-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0D1E38]/90 border border-[#1E3058] backdrop-blur-sm">
-                <div className="w-1.5 h-1.5 rounded-full bg-[#00FF9C] animate-pulse" />
-                <span className="text-[11px] text-[#A8C0E0]">
-                  {simulation.mode === 'realtime' ? 'TIEMPO REAL' :
-                    simulation.mode === '5day' ? 'SIMULACIÓN 5 DÍAS' : 'ESCENARIO COLAPSADO'}
-                </span>
-                <span className="text-[11px] font-mono text-[#4A6080]">
-                  {simulation.simulationTime.toLocaleTimeString('en-US', { hour12: false })}
-                </span>
-              </div>
-            )}
-
-            {/* 5-day progress overlay on map */}
-            {simulation.mode === '5day' && !simulation.simulationComplete && simulation.daysElapsed > 0 && (
-              <div className="absolute top-3 left-3 flex items-center gap-3 px-3 py-1.5 rounded-lg bg-[#0D1E38]/90 border border-[#4DA6FF]/30 backdrop-blur-sm">
-                <div className="w-1.5 h-1.5 rounded-full bg-[#4DA6FF] animate-pulse" />
-                <span className="text-[11px] text-[#4DA6FF]">SIMULACIÓN 5 DÍAS</span>
-                <span className="text-[11px] font-mono text-[#4A6080]">
-                  Día {Math.min(Math.ceil(simulation.daysElapsed), 5)}/5
-                </span>
-                <div className="w-20 h-1 bg-[#1E3058] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#4DA6FF] rounded-full transition-all"
-                    style={{ width: `${(simulation.daysElapsed / 5) * 100}%` }}
-                  />
+            {/* ==== RELOJ DUAL: Tiempo simulado + real ==== */}
+            {(simulation.isRunning || simulation.mode === '5day') && (
+              <div style={{
+                position: 'absolute', top: 12, left: 12,
+                display: 'flex', flexDirection: 'column', gap: 6,
+                zIndex: 10,
+              }}>
+                {/* Reloj simulado */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '7px 12px', borderRadius: 10,
+                  background: 'rgba(13,30,56,0.95)',
+                  border: '1px solid rgba(77,166,255,0.35)',
+                  backdropFilter: 'blur(8px)',
+                  boxShadow: '0 2px 16px rgba(0,0,0,0.4)',
+                }}>
+                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#4DA6FF', boxShadow: '0 0 6px #4DA6FF', animation: simulation.isRunning ? 'pulse 2s infinite' : 'none' }} />
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: 9, color: '#4A6080', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Tiempo simulado · K={SIMULATION_K}×</span>
+                    <span style={{ fontSize: 15, fontFamily: 'monospace', fontWeight: 700, color: '#E2E8F8', letterSpacing: '0.05em' }}>
+                      {simulation.simClock.toLocaleDateString('es-PE', { day:'2-digit', month:'short' })}
+                      {' '}
+                      <span style={{ color: '#4DA6FF' }}>
+                        {simulation.simClock.toLocaleTimeString('en-US', { hour12: false })}
+                      </span>
+                    </span>
+                  </div>
+                  {simulation.mode === '5day' && simulation.daysElapsed > 0 && (
+                    <div style={{ marginLeft: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                      <span style={{ fontSize: 9, color: '#4A6080' }}>Día {Math.min(Math.ceil(simulation.daysElapsed), 5)}/5</span>
+                      <div style={{ width: 48, height: 3, background: '#1E3058', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ width: `${(simulation.daysElapsed / 5) * 100}%`, height: '100%', background: '#4DA6FF', borderRadius: 2, transition: 'width 0.3s' }} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* Reloj real */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '5px 12px', borderRadius: 8,
+                  background: 'rgba(13,30,56,0.80)',
+                  border: '1px solid rgba(30,48,88,0.8)',
+                  backdropFilter: 'blur(4px)',
+                }}>
+                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#4A6080' }} />
+                  <div>
+                    <span style={{ fontSize: 9, color: '#4A6080', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Hora real · </span>
+                    <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#6080A0' }}>
+                      {realClock.toLocaleTimeString('en-US', { hour12: false })}
+                    </span>
+                  </div>
                 </div>
               </div>
             )}

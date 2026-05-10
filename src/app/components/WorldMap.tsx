@@ -4,6 +4,7 @@ import {
   Airport, Flight, Shipment,
   getStatusColor, getRouteColor, interpolateCoords, getOccupancyPercent
 } from '../data/mockData';
+import type { BackendActiveFlight, BackendFlightPlanFlight } from '../types/backend';
 
 const GEO_JSON_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
@@ -33,6 +34,12 @@ interface WorldMapProps {
   onSelectFlight: (id: string) => void;
   onSelectShipment: (id: string) => void;
   toggles: Toggles;
+  /** Reloj del tiempo simulado para animar vuelos activos */
+  simClock?: Date;
+  /** Vuelos con maletas asignadas por el planificador */
+  activeFlights?: BackendActiveFlight[];
+  /** TODOS los vuelos del plan de vuelos (independientes del planificador) */
+  flightPlanFlights?: BackendFlightPlanFlight[];
 }
 
 // ── Equirectangular projection ──────────────────────────────────────────────
@@ -77,7 +84,8 @@ function GraticuleLines() {
 // ── Main component ────────────────────────────────────────────────────────────
 export function WorldMap({
   airports, flights, shipments, selectedEntity,
-  onSelectAirport, onSelectFlight, onSelectShipment, toggles
+  onSelectAirport, onSelectFlight, onSelectShipment, toggles,
+  simClock, activeFlights = [], flightPlanFlights = [],
 }: WorldMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -154,11 +162,81 @@ export function WorldMap({
   });
   const resetView = () => setViewBox({ x: 0, y: 0, w: BASE_W, h: BASE_H });
 
-  // Airport SVG positions
+  // Airport SVG positions (lookup map)
+  const airportById = useMemo(() => {
+    const m: Record<string, Airport & { svgPos: [number, number] }> = {};
+    airports.forEach(a => { m[a.id] = { ...a, svgPos: project(a.coords[0], a.coords[1]) }; });
+    return m;
+  }, [airports]);
+
+  // Airport SVG positions array for rendering
   const airportPositions = useMemo(() =>
     airports.map(a => ({ ...a, svgPos: project(a.coords[0], a.coords[1]) })),
     [airports]
   );
+
+  // ===== VUELOS ANIMADOS (TODOS los del plan de vuelos) =====
+  const activeFlightDots = useMemo(() => {
+    if (!simClock) return [];
+    const now = simClock.getTime();
+
+    // Crear lookup de vuelos con maletas asignadas por el planificador
+    const bagsMap = new Map<string, { bagsCount: number; meetsSla: boolean }>();
+    for (const af of activeFlights) {
+      bagsMap.set(af.flightId, { bagsCount: af.bagsCount, meetsSla: af.meetsSla });
+    }
+
+    // Fuente de vuelos: preferir el plan completo, fallback a activeFlights
+    type FlightSource = { flightId: string; originId: string; destinationId: string; departureTime: string; arrivalTime: string };
+    let allFlights: FlightSource[];
+    if (flightPlanFlights.length > 0) {
+      allFlights = flightPlanFlights;
+    } else {
+      allFlights = activeFlights;
+    }
+    if (allFlights.length === 0) return [];
+
+    return allFlights.flatMap(f => {
+      const origin = airportById[f.originId];
+      const dest   = airportById[f.destinationId];
+      if (!origin || !dest) return [];
+
+      const dep = new Date(f.departureTime).getTime();
+      const arr = new Date(f.arrivalTime).getTime();
+      const duration = arr - dep;
+      if (duration <= 0) return [];
+
+      const t = (now - dep) / duration;
+      if (t < 0 || t > 1) return []; // no en vuelo
+
+      const [ox, oy] = origin.svgPos;
+      const [dx, dy] = dest.svgPos;
+      const mx = (ox + dx) / 2;
+      const my = (oy + dy) / 2;
+      const ddx = dx - ox; const ddy = dy - oy;
+      const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+      const curve = dist * 0.10;
+      const cpx = mx - (ddy / dist) * curve;
+      const cpy = my + (ddx / dist) * curve;
+      const cx = (1-t)*(1-t)*ox + 2*(1-t)*t*cpx + t*t*dx;
+      const cy = (1-t)*(1-t)*oy + 2*(1-t)*t*cpy + t*t*dy;
+
+      // Color: con maletas = azul/ámbar, sin maletas = gris tenue
+      const bags = bagsMap.get(f.flightId);
+      const hasBags = bags && bags.bagsCount > 0;
+      const color = hasBags
+        ? (bags!.meetsSla ? '#4DA6FF' : '#FFC857')
+        : '#3A4A5E'; // gris tenue para vuelos vacíos
+
+      return [{
+        flightId: f.flightId, cx, cy, color, t,
+        bagsCount: hasBags ? bags!.bagsCount : 0,
+        originId: f.originId,
+        destinationId: f.destinationId,
+        hasBags: !!hasBags,
+      }];
+    });
+  }, [simClock, activeFlights, flightPlanFlights, airportById]);
 
   // Flight SVG paths
   const flightPaths = useMemo(() =>
@@ -556,6 +634,52 @@ export function WorldMap({
             </g>
           );
         })}
+
+        {/* ── Vuelos Activos (backend solution, animados según simClock) ── */}
+        {activeFlightDots.map(dot => (
+          <g
+            key={dot.flightId}
+            transform={`translate(${dot.cx},${dot.cy})`}
+            style={{ cursor: 'pointer' }}
+            onMouseEnter={(e) => {
+              e.stopPropagation();
+              const rect = containerRef.current?.getBoundingClientRect();
+              if (!rect) return;
+              setTooltip({
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top,
+                content: (
+                  <div style={{ minWidth: 150 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                      <div style={{ width: 7, height: 7, borderRadius: '50%', background: dot.color }} />
+                      <span style={{ fontWeight: 700, color: '#E2E8F8', fontSize: 12 }}>{dot.flightId}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#A8C0E0' }}>{dot.originId} → {dot.destinationId}</div>
+                    {dot.hasBags
+                      ? <div style={{ fontSize: 11, color: '#6080A0', marginTop: 4 }}>Maletas: {dot.bagsCount}</div>
+                      : <div style={{ fontSize: 11, color: '#4A6080', marginTop: 4, fontStyle: 'italic' }}>Sin carga asignada</div>
+                    }
+                    <div style={{ fontSize: 11, color: '#6080A0' }}>Progreso: {Math.round(dot.t * 100)}%</div>
+                  </div>
+                ),
+              });
+            }}
+            onMouseLeave={() => setTooltip(null)}
+          >
+            {/* Glow (solo vuelos con carga) */}
+            {dot.hasBags && <circle r={5} fill={dot.color} opacity={0.15} filter="url(#glow)" />}
+            {/* Marcador de vuelo */}
+            <g transform={dot.hasBags ? 'scale(0.32)' : 'scale(0.22)'}>
+              <path
+                d="M21,16V14L13,9V3.5A1.5,1.5,0,0,0,10,3.5V9L2,14V16L10,13.5V19L8,20.5V22L11.5,21L15,22V20.5L13,19V13.5Z"
+                fill={dot.color}
+                stroke="#040814"
+                strokeWidth={1.5}
+                opacity={dot.hasBags ? 0.95 : 0.5}
+              />
+            </g>
+          </g>
+        ))}
       </svg>
 
       {/* Tooltip */}
