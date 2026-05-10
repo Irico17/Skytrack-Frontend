@@ -8,6 +8,7 @@ import {
   Clock, FileText, Zap, CheckCircle, ChevronRight, Activity
 } from 'lucide-react';
 import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercent } from '../data/mockData';
+import type { BackendActiveFlight, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
 
 interface RightPanelProps {
   airports: Airport[];
@@ -16,6 +17,10 @@ interface RightPanelProps {
   events: SimEvent[];
   isRunning: boolean;
   simulationTime: Date;
+  mode?: string;
+  activeFlights?: BackendActiveFlight[];
+  flightPlanFlights?: BackendFlightPlanFlight[];
+  lastCycleUpdate?: BackendCycleUpdate | null;
 }
 
 function KPICard({ label, value, unit, color, icon, trend, trendDir }: {
@@ -94,23 +99,32 @@ function CustomBarTooltip({ active, payload, label }: { active?: boolean; payloa
   );
 }
 
-export function RightPanel({ airports, flights, shipments, events, isRunning, simulationTime }: RightPanelProps) {
+export function RightPanel({
+  airports, flights, shipments, events, isRunning, simulationTime,
+  mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
+}: RightPanelProps) {
   const [activeTab, setActiveTab] = useState<'kpi' | 'warehouse' | 'reports'>('kpi');
+  const hasBackendStats = mode === '5day' && lastCycleUpdate != null;
 
   // KPI calculations
-  const totalInTransit = shipments.filter(s => s.progress < 1).length;
-  const delayedCount = shipments.filter(s => s.status === 'delayed').length;
-  const criticalCount = shipments.filter(s => s.status === 'critical').length;
-  const onTimeCount = shipments.filter(s => s.status === 'on-time').length;
-  const totalBags = shipments.reduce((acc, s) => acc + s.luggageCount, 0);
+  const totalInTransit = hasBackendStats ? activeFlights.length : shipments.filter(s => s.progress < 1).length;
+  const delayedCount = hasBackendStats ? lastCycleUpdate!.batchSummary.delayed : shipments.filter(s => s.status === 'delayed').length;
+  const criticalCount = hasBackendStats ? airports.filter(a => a.status === 'critical').length : shipments.filter(s => s.status === 'critical').length;
+  const onTimeCount = hasBackendStats ? lastCycleUpdate!.batchSummary.onTime : shipments.filter(s => s.status === 'on-time').length;
+  const totalBags = hasBackendStats ? lastCycleUpdate!.totalBags : shipments.reduce((acc, s) => acc + s.luggageCount, 0);
   const replanCount = shipments.filter(s => s.isReplanned).length;
 
-  const punctualityPct = Math.round((onTimeCount / Math.max(shipments.length, 1)) * 100);
+  const backendTotal = lastCycleUpdate
+    ? lastCycleUpdate.batchSummary.onTime + lastCycleUpdate.batchSummary.delayed + lastCycleUpdate.batchSummary.unrouted
+    : 0;
+  const punctualityPct = hasBackendStats
+    ? Math.round((onTimeCount / Math.max(backendTotal, 1)) * 100)
+    : Math.round((onTimeCount / Math.max(shipments.length, 1)) * 100);
   const avgOccupancy = Math.round(
     airports.reduce((acc, a) => acc + getOccupancyPercent(a.occupancy, a.capacity), 0) / airports.length
   );
   const criticalAirports = airports.filter(a => a.status === 'critical');
-  const criticalFlights = flights.filter(f => f.status === 'critical');
+  const criticalFlights = hasBackendStats ? activeFlights.filter(f => !f.meetsSla) : flights.filter(f => f.status === 'critical');
 
   // Warehouse data for chart
   const warehouseData = airports
@@ -164,7 +178,7 @@ export function RightPanel({ airports, flights, shipments, events, isRunning, si
                 value={totalInTransit}
                 color="#4DA6FF"
                 icon={<Package className="w-3.5 h-3.5" />}
-                trend={`${totalBags} bolsas en total`}
+                trend={`${totalBags.toLocaleString()} bolsas asignadas`}
                 trendDir="neutral"
               />
               <KPICard
@@ -189,7 +203,7 @@ export function RightPanel({ airports, flights, shipments, events, isRunning, si
                 unit="%"
                 color={punctualityPct >= 85 ? '#00FF9C' : punctualityPct >= 70 ? '#FFC857' : '#FF4D4D'}
                 icon={<Clock className="w-3.5 h-3.5" />}
-                trend={`${onTimeCount}/${shipments.length} a tiempo`}
+                trend={`${onTimeCount}/${Math.max(hasBackendStats ? backendTotal : shipments.length, 1)} a tiempo`}
                 trendDir={punctualityPct >= 85 ? 'up' : 'down'}
               />
             </div>
@@ -216,14 +230,14 @@ export function RightPanel({ airports, flights, shipments, events, isRunning, si
               <TrafficLight
                 label="Envíos Críticos"
                 value={criticalCount}
-                max={Math.max(shipments.length, 1)}
+                max={Math.max(hasBackendStats ? backendTotal : shipments.length, 1)}
                 thresholdWarn={5}
                 thresholdCrit={15}
               />
               <TrafficLight
                 label="Sobrecapacidad de Vuelos"
                 value={criticalFlights.length}
-                max={Math.max(flights.length, 1)}
+                max={Math.max(hasBackendStats ? activeFlights.length : flights.length, 1)}
                 thresholdWarn={10}
                 thresholdCrit={25}
               />
@@ -377,8 +391,8 @@ export function RightPanel({ airports, flights, shipments, events, isRunning, si
               </div>
               <div className="flex flex-col gap-1.5">
                 {[
-                  { label: 'Total Envíos', value: shipments.length, color: '#4DA6FF' },
-                  { label: 'Completados', value: shipments.filter(s => s.progress >= 1).length, color: '#00FF9C' },
+                  { label: hasBackendStats ? 'Rutas Planificadas' : 'Total Envíos', value: hasBackendStats ? lastCycleUpdate!.totalRoutes : shipments.length, color: '#4DA6FF' },
+                  { label: hasBackendStats ? 'Lotes a Tiempo' : 'Completados', value: hasBackendStats ? onTimeCount : shipments.filter(s => s.progress >= 1).length, color: '#00FF9C' },
                   { label: 'En Tránsito', value: totalInTransit, color: '#A8C0E0' },
                   { label: 'Retrasados', value: delayedCount, color: '#FFC857' },
                   { label: 'Críticos', value: criticalCount, color: '#FF4D4D' },

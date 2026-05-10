@@ -78,6 +78,8 @@ interface UseSimulationReturn extends SimulationState {
   activeFlights: BackendActiveFlight[];
   /** Todos los vuelos proyectados del plan para animacion independiente del planificador */
   flightPlanFlights: BackendFlightPlanFlight[];
+  /** Último ciclo recibido del backend para KPIs reales */
+  lastCycleUpdate: BackendCycleUpdate | null;
 }
 
 // ==================== MOCK HELPERS (para modos realtime y collapse) ====================
@@ -154,6 +156,7 @@ export function useSimulation(): UseSimulationReturn {
 
   // TODOS los vuelos del plan de vuelos (independientes del planificador)
   const [flightPlanFlights, setFlightPlanFlights] = useState<BackendFlightPlanFlight[]>([]);
+  const [lastCycleUpdate, setLastCycleUpdate] = useState<BackendCycleUpdate | null>(null);
 
   // K dinámico recibido del backend
   const simKRef = useRef(SIMULATION_K);
@@ -193,6 +196,7 @@ export function useSimulation(): UseSimulationReturn {
   const handle5DayWsMessage = useCallback((msg: any) => {
     if (msg.type === 'CYCLE_UPDATE') {
       const update = msg as BackendCycleUpdate;
+      setLastCycleUpdate(update);
       const t = update.simulatedTime ? new Date(update.simulatedTime) : null;
       if (t) {
         setSimulationTime(t);
@@ -386,14 +390,29 @@ export function useSimulation(): UseSimulationReturn {
       setDaySnapshots([]);
       setActiveFlights([]);
       setFlightPlanFlights([]);
+      setLastCycleUpdate(null);
 
       try {
-        // 1. Cargar aeropuertos reales
-        const backendAirports = await fetchAirports();
+        const startDateStr = startDate.toISOString().split('T')[0];
+
+        setEvents(prev => [{
+          id: `loading-${Date.now()}`,
+          type: 'info',
+          message: 'Cargando aeropuertos y plan de vuelos...',
+          time: new Date(),
+          severity: 'info',
+        }, ...prev.slice(0, 19)]);
+
+        // 1. Cargar datos base antes de iniciar el reloj/algoritmo
+        const [backendAirports, projectedFlights] = await Promise.all([
+          fetchAirports(),
+          fetchFlightPlan(startDateStr, 5),
+        ]);
         setAirports(mapAirports(backendAirports));
+        setFlightPlanFlights(projectedFlights);
+        console.log(`✓ Cargados ${projectedFlights.length} vuelos del plan de vuelos`);
 
         // 2. Iniciar simulación en el backend (retorna K, simStartTime, etc.)
-        const startDateStr = startDate.toISOString().split('T')[0];
         const res = await startSimulation('PERIOD_SIMULATION', startDateStr);
         simIdRef.current = res.simulationId;
 
@@ -405,15 +424,7 @@ export function useSimulation(): UseSimulationReturn {
         setSimClock(new Date(simStartMs));
         setSimulationTime(new Date(simStartMs));
 
-        // 4. Cargar TODOS los vuelos del plan de vuelos para los 5 días
-        fetchFlightPlan(startDateStr, 5)
-          .then(flights => {
-            setFlightPlanFlights(flights);
-            console.log(`✓ Cargados ${flights.length} vuelos del plan de vuelos`);
-          })
-          .catch(err => console.warn('Error cargando plan de vuelos:', err));
-
-        // 5. Abrir WebSocket
+        // 4. Abrir WebSocket
         const ws = new SimulationWebSocket();
         wsRef.current = ws;
         ws.onMessage(handle5DayWsMessage);
@@ -476,6 +487,7 @@ export function useSimulation(): UseSimulationReturn {
     setSimulationTime(now);
     setHasReplanned(false);
     setDaySnapshots([]);
+    setLastCycleUpdate(null);
     setSimulationComplete(false);
     setDaysElapsed(0);
     setCollapseComplete(false);
@@ -568,5 +580,6 @@ export function useSimulation(): UseSimulationReturn {
     replan, skipToComplete, skipToCollapseComplete, addShipment,
     setAirports, setFlights, setShipments,
     simClock, activeFlights, flightPlanFlights,
+    lastCycleUpdate,
   };
 }

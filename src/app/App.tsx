@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, PanelBottomClose, PanelBottomOpen } from 'lucide-react';
 import { TopBar } from './components/TopBar';
 import { LeftSidebar } from './components/LeftSidebar';
 import { WorldMap } from './components/WorldMap';
@@ -28,6 +29,15 @@ interface Toggles {
   showCongestion: boolean;
 }
 
+const MONTHS_ES_SHORT = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+
+function formatSimulationClock(date: Date): { date: string; time: string } {
+  return {
+    date: `${String(date.getUTCDate()).padStart(2, '0')} ${MONTHS_ES_SHORT[date.getUTCMonth()]}`,
+    time: `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')}`,
+  };
+}
+
 export default function App() {
   const simulation = useSimulation();
   const [realClock, setRealClock] = React.useState(new Date());
@@ -46,6 +56,13 @@ export default function App() {
   const [showAddShipment, setShowAddShipment] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [showCollapseResults, setShowCollapseResults] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [bottomCollapsed, setBottomCollapsed] = useState(false);
+  const [mapExpanded, setMapExpanded] = useState(false);
+
+  const simClockDisplay = formatSimulationClock(simulation.simClock);
+  const hidePanels = mapExpanded;
 
   // Auto-show results when 5day simulation completes
   React.useEffect(() => {
@@ -143,30 +160,32 @@ export default function App() {
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar */}
-        <LeftSidebar
-          mode={simulation.mode}
-          startDate={simulation.startDate}
-          filters={filters}
-          toggles={toggles}
-          isRunning={simulation.isRunning}
-          hasReplanned={simulation.hasReplanned}
-          daysElapsed={simulation.daysElapsed}
-          simulationComplete={simulation.simulationComplete}
-          collapseComplete={simulation.collapseComplete}
-          onModeChange={simulation.setMode}
-          onStartDateChange={simulation.setStartDate}
-          onFilterChange={handleFilterChange}
-          onToggleChange={handleToggleChange}
-          onStart={simulation.start}
-          onPause={simulation.pause}
-          onReset={handleReset}
-          onReplan={simulation.replan}
-          onAddShipment={() => setShowAddShipment(true)}
-          onSkipToComplete={simulation.skipToComplete}
-          onSkipToCollapseComplete={simulation.skipToCollapseComplete}
-          onViewResults={() => setShowResults(true)}
-          onViewCollapseResults={() => setShowCollapseResults(true)}
-        />
+        {!hidePanels && !leftCollapsed && (
+          <LeftSidebar
+            mode={simulation.mode}
+            startDate={simulation.startDate}
+            filters={filters}
+            toggles={toggles}
+            isRunning={simulation.isRunning}
+            hasReplanned={simulation.hasReplanned}
+            daysElapsed={simulation.daysElapsed}
+            simulationComplete={simulation.simulationComplete}
+            collapseComplete={simulation.collapseComplete}
+            onModeChange={simulation.setMode}
+            onStartDateChange={simulation.setStartDate}
+            onFilterChange={handleFilterChange}
+            onToggleChange={handleToggleChange}
+            onStart={simulation.start}
+            onPause={simulation.pause}
+            onReset={handleReset}
+            onReplan={simulation.replan}
+            onAddShipment={() => setShowAddShipment(true)}
+            onSkipToComplete={simulation.skipToComplete}
+            onSkipToCollapseComplete={simulation.skipToCollapseComplete}
+            onViewResults={() => setShowResults(true)}
+            onViewCollapseResults={() => setShowCollapseResults(true)}
+          />
+        )}
 
         {/* Center: Map + Bottom Panel */}
         <div className="flex flex-1 flex-col overflow-hidden">
@@ -184,7 +203,35 @@ export default function App() {
               simClock={simulation.simClock}
               activeFlights={simulation.activeFlights}
               flightPlanFlights={simulation.flightPlanFlights}
+              isExpanded={mapExpanded}
+              onToggleExpanded={() => setMapExpanded(v => !v)}
             />
+
+            {!hidePanels && (
+              <div className="absolute top-3 right-3 z-20 flex gap-1.5">
+                <button
+                  onClick={() => setLeftCollapsed(v => !v)}
+                  className="w-8 h-8 rounded-lg bg-[#0D1E38]/90 border border-[#1E3058] text-[#A8C0E0] flex items-center justify-center hover:border-[#4DA6FF]/60 hover:text-[#4DA6FF] transition-colors"
+                  title={leftCollapsed ? 'Mostrar panel izquierdo' : 'Ocultar panel izquierdo'}
+                >
+                  {leftCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+                </button>
+                <button
+                  onClick={() => setBottomCollapsed(v => !v)}
+                  className="w-8 h-8 rounded-lg bg-[#0D1E38]/90 border border-[#1E3058] text-[#A8C0E0] flex items-center justify-center hover:border-[#4DA6FF]/60 hover:text-[#4DA6FF] transition-colors"
+                  title={bottomCollapsed ? 'Mostrar panel inferior' : 'Ocultar panel inferior'}
+                >
+                  {bottomCollapsed ? <PanelBottomOpen className="w-4 h-4" /> : <PanelBottomClose className="w-4 h-4" />}
+                </button>
+                <button
+                  onClick={() => setRightCollapsed(v => !v)}
+                  className="w-8 h-8 rounded-lg bg-[#0D1E38]/90 border border-[#1E3058] text-[#A8C0E0] flex items-center justify-center hover:border-[#4DA6FF]/60 hover:text-[#4DA6FF] transition-colors"
+                  title={rightCollapsed ? 'Mostrar panel derecho' : 'Ocultar panel derecho'}
+                >
+                  {rightCollapsed ? <PanelRightOpen className="w-4 h-4" /> : <PanelRightClose className="w-4 h-4" />}
+                </button>
+              </div>
+            )}
 
             {/* ==== RELOJ DUAL: Tiempo simulado + real ==== */}
             {(simulation.isRunning || simulation.mode === '5day') && (
@@ -206,10 +253,10 @@ export default function App() {
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
                     <span style={{ fontSize: 9, color: '#4A6080', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Tiempo simulado · K={SIMULATION_K}×</span>
                     <span style={{ fontSize: 15, fontFamily: 'monospace', fontWeight: 700, color: '#E2E8F8', letterSpacing: '0.05em' }}>
-                      {simulation.simClock.toLocaleDateString('es-PE', { day:'2-digit', month:'short' })}
+                      {simClockDisplay.date}
                       {' '}
                       <span style={{ color: '#4DA6FF' }}>
-                        {simulation.simClock.toLocaleTimeString('en-US', { hour12: false })}
+                        {simClockDisplay.time}
                       </span>
                     </span>
                   </div>
@@ -303,26 +350,34 @@ export default function App() {
           </div>
 
           {/* Bottom Panel */}
-          <BottomPanel
-            selectedEntity={selectedEntity}
-            airports={simulation.airports}
-            flights={simulation.flights}
-            shipments={simulation.shipments}
-            onClearSelection={() => setSelectedEntity(null)}
-            onSelectShipment={handleSelectShipment}
-            isRunning={simulation.isRunning}
-          />
+          {!hidePanels && !bottomCollapsed && (
+            <BottomPanel
+              selectedEntity={selectedEntity}
+              airports={simulation.airports}
+              flights={simulation.flights}
+              shipments={simulation.shipments}
+              onClearSelection={() => setSelectedEntity(null)}
+              onSelectShipment={handleSelectShipment}
+              isRunning={simulation.isRunning}
+            />
+          )}
         </div>
 
         {/* Right Panel */}
-        <RightPanel
-          airports={simulation.airports}
-          flights={simulation.flights}
-          shipments={simulation.shipments}
-          events={simulation.events}
-          isRunning={simulation.isRunning}
-          simulationTime={simulation.simulationTime}
-        />
+        {!hidePanels && !rightCollapsed && (
+          <RightPanel
+            airports={simulation.airports}
+            flights={simulation.flights}
+            shipments={simulation.shipments}
+            events={simulation.events}
+            isRunning={simulation.isRunning}
+            simulationTime={simulation.simulationTime}
+            mode={simulation.mode}
+            activeFlights={simulation.activeFlights}
+            flightPlanFlights={simulation.flightPlanFlights}
+            lastCycleUpdate={simulation.lastCycleUpdate}
+          />
+        )}
       </div>
 
       {/* Add Shipment Modal */}

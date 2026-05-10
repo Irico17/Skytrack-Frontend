@@ -56,6 +56,55 @@ function buildDailyBags(startDate: Date) {
   ];
 }
 
+function buildDailyBagsFromSnapshots(snapshots: DaySnapshot[], startDate: Date) {
+  if (snapshots.length === 0) return buildDailyBags(startDate);
+  return snapshots.map(s => ({
+    day: s.date || fmtDate(startDate, s.day),
+    bags: s.totalBags,
+    replanned: s.replanned,
+  }));
+}
+
+function buildStatusEvolutionFromSnapshots(snapshots: DaySnapshot[]) {
+  if (snapshots.length === 0) return STATUS_EVOLUTION;
+  return [
+    { label: 'Día 0\n(Inicio)', day: 'Inicio', onTime: 0, delayed: 0, critical: 0 },
+    ...snapshots.map(s => ({
+      label: `Día ${s.day}`,
+      day: `Día ${s.day}`,
+      onTime: s.onTimePct,
+      delayed: Math.max(0, Math.min(100, Math.round((s.delayed / Math.max(s.completed + s.delayed, 1)) * 100))),
+      critical: Math.max(0, Math.min(100, Math.round((s.critical / Math.max(s.completed + s.delayed + s.critical, 1)) * 100))),
+    })),
+  ];
+}
+
+function buildIncidentTimelineFromEvents(events: SimEvent[], startDate: Date) {
+  if (events.length === 0) return buildIncidentTimeline(startDate);
+  return events.slice(0, 12).map(event => ({
+    time: event.time.toLocaleString('es-PE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }),
+    type: event.severity === 'critical' ? 'critical' : event.severity === 'warning' ? 'warning' : 'info',
+    text: event.message,
+  }));
+}
+
+function buildAirportImpactFromAirports(airports: Airport[]) {
+  if (airports.length === 0) return AIRPORT_IMPACT;
+  return airports
+    .map(a => {
+      const peakOccupancy = Math.round((a.occupancy / Math.max(a.capacity, 1)) * 100);
+      return {
+        id: a.id,
+        city: a.city,
+        peakOccupancy,
+        daysOverloaded: peakOccupancy >= 90 ? 1 : 0,
+        color: peakOccupancy >= 90 ? '#FF4D4D' : peakOccupancy >= 70 ? '#FFC857' : '#00FF9C',
+      };
+    })
+    .sort((a, b) => b.peakOccupancy - a.peakOccupancy)
+    .slice(0, 6);
+}
+
 function buildIncidentTimeline(startDate: Date) {
   return [
     { time: `${fmtDate(startDate, 1)} · 14:22`, type: 'warning', text: 'Almacén DXB alcanzó 94% de capacidad — protocolo de desvío activado' },
@@ -183,9 +232,6 @@ const CustomBagsTooltip = ({ active, payload, label }: { active?: boolean; paylo
 export function FiveDayResults({ startDate, daySnapshots, shipments, events, airports, onClose, onReset }: FiveDayResultsProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'days' | 'airlines' | 'incidents'>('overview');
 
-  const dailyBags = buildDailyBags(startDate);
-  const incidentTimeline = buildIncidentTimeline(startDate);
-
   const PRESET_SNAPSHOTS_LOCAL: DaySnapshot[] = daySnapshots.length === 5 ? daySnapshots : [
     { day: 1, date: fmtDate(startDate, 1), onTimePct: 80, delayed: 4, critical: 1, completed: 3, totalBags: 2840, newEvents: 5, avgOccupancy: 71, replanned: 0, keyEvent: 'Almacén DXB al 94% — alerta de congestión emitida', severity: 'warning' },
     { day: 2, date: fmtDate(startDate, 2), onTimePct: 68, delayed: 7, critical: 3, completed: 6, totalBags: 3120, newEvents: 11, avgOccupancy: 79, replanned: 0, keyEvent: 'Disrupción climática: BA297 y LH456 retrasados 4h en Atlántico Norte', severity: 'warning' },
@@ -194,11 +240,16 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
     { day: 5, date: fmtDate(startDate, 5), onTimePct: 83, delayed: 3, critical: 1, completed: 20, totalBags: 4280, newEvents: 4, avgOccupancy: 67, replanned: 12, keyEvent: 'Operaciones normalizadas — tasa de puntualidad recuperada al 83%', severity: 'normal' },
   ];
 
+  const dailyBags = buildDailyBagsFromSnapshots(PRESET_SNAPSHOTS_LOCAL, startDate);
+  const statusEvolution = buildStatusEvolutionFromSnapshots(PRESET_SNAPSHOTS_LOCAL);
+  const incidentTimeline = buildIncidentTimelineFromEvents(events, startDate);
+  const airportImpact = buildAirportImpactFromAirports(airports);
+
   // Computed totals
   const totalBags = dailyBags.reduce((acc, d) => acc + d.bags, 0);
   const totalReplanned = dailyBags.reduce((acc, d) => acc + d.replanned, 0);
   const totalIncidents = incidentTimeline.filter(e => e.type === 'critical').length + incidentTimeline.filter(e => e.type === 'warning').length;
-  const finalOnTimeRate = STATUS_EVOLUTION[STATUS_EVOLUTION.length - 1].onTime;
+  const finalOnTimeRate = PRESET_SNAPSHOTS_LOCAL[PRESET_SNAPSHOTS_LOCAL.length - 1]?.onTimePct ?? 0;
   const worstDay = PRESET_SNAPSHOTS_LOCAL.find(s => s.day === 3);
   const peakCritical = worstDay?.critical ?? 17;
 
@@ -378,7 +429,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                 <SectionTitle icon={<TrendingUp className="w-3.5 h-3.5" />}>EVOLUCIÓN DE ESTADO — PERÍODO 5 DÍAS</SectionTitle>
                 <div style={{ height: 200 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={STATUS_EVOLUTION} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                    <AreaChart data={statusEvolution} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
                       <defs>
                         <linearGradient id="fdr-gradGreen" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#00FF9C" stopOpacity={0.25} />
@@ -453,7 +504,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
             <div className="bg-[#0A1628] rounded-xl border border-[#1E3058] p-4">
               <SectionTitle icon={<Warehouse className="w-3.5 h-3.5" />}>IMPACTO DE CONGESTIÓN EN AEROPUERTOS — OCUPACIÓN MÁXIMA EN 5 DÍAS</SectionTitle>
               <div className="grid grid-cols-6 gap-3">
-                {AIRPORT_IMPACT.map(a => {
+                {airportImpact.map(a => {
                   const fill = a.peakOccupancy >= 90 ? '#FF4D4D' : a.peakOccupancy >= 80 ? '#FFC857' : '#00FF9C';
                   return (
                     <div key={a.id} className="bg-[#0D1E38] rounded-lg p-3 border border-[#1E3058]">
@@ -592,7 +643,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
               <SectionTitle icon={<Activity className="w-3.5 h-3.5" />}>EVOLUCIÓN DE PUNTUALIDAD + SUPERPOSICIÓN DE DISRUPCIONES</SectionTitle>
               <div style={{ height: 180 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={STATUS_EVOLUTION} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                  <AreaChart data={statusEvolution} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                     <defs>
                       <linearGradient id="fdr-gradG2" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#00FF9C" stopOpacity={0.3} />

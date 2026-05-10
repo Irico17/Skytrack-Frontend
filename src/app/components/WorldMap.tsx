@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { feature } from 'topojson-client';
+import { LocateFixed, Maximize2, Minimize2 } from 'lucide-react';
 import {
   Airport, Flight, Shipment,
-  getStatusColor, getRouteColor, interpolateCoords, getOccupancyPercent
+  getStatusColor, getRouteColor, getOccupancyPercent
 } from '../data/mockData';
 import type { BackendActiveFlight, BackendFlightPlanFlight } from '../types/backend';
 
@@ -40,6 +41,8 @@ interface WorldMapProps {
   activeFlights?: BackendActiveFlight[];
   /** TODOS los vuelos del plan de vuelos (independientes del planificador) */
   flightPlanFlights?: BackendFlightPlanFlight[];
+  isExpanded?: boolean;
+  onToggleExpanded?: () => void;
 }
 
 // ── Equirectangular projection ──────────────────────────────────────────────
@@ -86,6 +89,7 @@ export function WorldMap({
   airports, flights, shipments, selectedEntity,
   onSelectAirport, onSelectFlight, onSelectShipment, toggles,
   simClock, activeFlights = [], flightPlanFlights = [],
+  isExpanded = false, onToggleExpanded,
 }: WorldMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -160,7 +164,41 @@ export function WorldMap({
     const f = 1.4; const nx = vb.x - vb.w * (f - 1) / 2; const ny = vb.y - vb.h * (f - 1) / 2;
     return { x: nx, y: ny, w: Math.min(vb.w * f, BASE_W * 2), h: Math.min(vb.h * f, BASE_H * 2) };
   });
-  const resetView = () => setViewBox({ x: 0, y: 0, w: BASE_W, h: BASE_H });
+  const resetView = useCallback(() => {
+    const valid = airports
+      .map(a => project(a.coords[0], a.coords[1]))
+      .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+
+    if (valid.length === 0) {
+      setViewBox({ x: 0, y: 0, w: BASE_W, h: BASE_H });
+      return;
+    }
+
+    const xs = valid.map(([x]) => x);
+    const ys = valid.map(([, y]) => y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const padding = 70;
+    const boxW = Math.max(maxX - minX + padding * 2, 260);
+    const boxH = Math.max(maxY - minY + padding * 2, 150);
+    const targetRatio = BASE_W / BASE_H;
+    let w = boxW;
+    let h = boxH;
+    if (w / h > targetRatio) {
+      h = w / targetRatio;
+    } else {
+      w = h * targetRatio;
+    }
+
+    setViewBox({
+      x: Math.max(0, (minX + maxX) / 2 - w / 2),
+      y: Math.max(0, (minY + maxY) / 2 - h / 2),
+      w: Math.min(w, BASE_W),
+      h: Math.min(h, BASE_H),
+    });
+  }, [airports]);
 
   // Airport SVG positions (lookup map)
   const airportById = useMemo(() => {
@@ -215,7 +253,7 @@ export function WorldMap({
       const my = (oy + dy) / 2;
       const ddx = dx - ox; const ddy = dy - oy;
       const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
-      const curve = dist * 0.10;
+      const curve = Math.min(Math.max(dist * 0.22, 18), 110);
       const cpx = mx - (ddy / dist) * curve;
       const cpy = my + (ddx / dist) * curve;
       const cx = (1-t)*(1-t)*ox + 2*(1-t)*t*cpx + t*t*dx;
@@ -230,6 +268,7 @@ export function WorldMap({
 
       return [{
         flightId: f.flightId, cx, cy, color, t,
+        pathD: `M ${ox} ${oy} Q ${cpx} ${cpy} ${dx} ${dy}`,
         bagsCount: hasBags ? bags!.bagsCount : 0,
         originId: f.originId,
         destinationId: f.destinationId,
@@ -635,6 +674,29 @@ export function WorldMap({
           );
         })}
 
+        {/* ── Rutas activas con maletas asignadas ── */}
+        {toggles.showRoutes && activeFlightDots.filter(dot => dot.hasBags).map(dot => (
+          <g key={`route-${dot.flightId}`} style={{ pointerEvents: 'none' }}>
+            <path
+              d={dot.pathD}
+              stroke={dot.color}
+              strokeWidth={4}
+              strokeOpacity={0.08}
+              fill="none"
+              filter="url(#glow)"
+            />
+            <path
+              d={dot.pathD}
+              stroke={dot.color}
+              strokeWidth={1.4}
+              strokeOpacity={0.78}
+              strokeLinecap="round"
+              strokeDasharray="5 7"
+              fill="none"
+            />
+          </g>
+        ))}
+
         {/* ── Vuelos Activos (backend solution, animados según simClock) ── */}
         {activeFlightDots.map(dot => (
           <g
@@ -730,7 +792,7 @@ export function WorldMap({
         <button
           onMouseDown={e => e.stopPropagation()}
           onClick={resetView}
-          title="Reset view"
+          title="Centrar aeropuertos"
           style={{
             width: 32, height: 32, borderRadius: 8,
             background: 'rgba(10,20,45,0.92)',
@@ -739,14 +801,24 @@ export function WorldMap({
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
         >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-            <circle cx="6" cy="6" r="2.5" />
-            <line x1="6" y1="1" x2="6" y2="3" />
-            <line x1="6" y1="9" x2="6" y2="11" />
-            <line x1="1" y1="6" x2="3" y2="6" />
-            <line x1="9" y1="6" x2="11" y2="6" />
-          </svg>
+          <LocateFixed size={14} />
         </button>
+        {onToggleExpanded && (
+          <button
+            onMouseDown={e => e.stopPropagation()}
+            onClick={onToggleExpanded}
+            title={isExpanded ? 'Salir de vista amplia' : 'Expandir mapa'}
+            style={{
+              width: 32, height: 32, borderRadius: 8,
+              background: isExpanded ? 'rgba(77,166,255,0.22)' : 'rgba(10,20,45,0.92)',
+              border: '1px solid #1E3058',
+              color: isExpanded ? '#4DA6FF' : '#A8C0E0', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
+        )}
       </div>
 
       {/* Zoom indicator */}
