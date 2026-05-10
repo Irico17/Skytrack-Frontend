@@ -124,6 +124,22 @@ export default function App() {
     });
   }, [simulation.flights, filters]);
 
+  const filteredFlightPlanFlights = useMemo(() => {
+    return simulation.flightPlanFlights.filter(f => {
+      if (filters.origin && f.originId !== filters.origin) return false;
+      if (filters.destination && f.destinationId !== filters.destination) return false;
+      return true;
+    });
+  }, [simulation.flightPlanFlights, filters.origin, filters.destination]);
+
+  const filteredActiveFlights = useMemo(() => {
+    return simulation.activeFlights.filter(f => {
+      if (filters.origin && f.originId !== filters.origin) return false;
+      if (filters.destination && f.destinationId !== filters.destination) return false;
+      return true;
+    });
+  }, [simulation.activeFlights, filters.origin, filters.destination]);
+
   const criticalCount = useMemo(() =>
     simulation.shipments.filter(s => s.status === 'critical').length,
     [simulation.shipments]
@@ -171,6 +187,7 @@ export default function App() {
             daysElapsed={simulation.daysElapsed}
             simulationComplete={simulation.simulationComplete}
             collapseComplete={simulation.collapseComplete}
+            airports={simulation.airports}
             onModeChange={simulation.setMode}
             onStartDateChange={simulation.setStartDate}
             onFilterChange={handleFilterChange}
@@ -201,8 +218,8 @@ export default function App() {
               onSelectShipment={handleSelectShipment}
               toggles={toggles}
               simClock={simulation.simClock}
-              activeFlights={simulation.activeFlights}
-              flightPlanFlights={simulation.flightPlanFlights}
+              activeFlights={filteredActiveFlights}
+              flightPlanFlights={filteredFlightPlanFlights}
               isExpanded={mapExpanded}
               onToggleExpanded={() => setMapExpanded(v => !v)}
             />
@@ -359,6 +376,10 @@ export default function App() {
               onClearSelection={() => setSelectedEntity(null)}
               onSelectShipment={handleSelectShipment}
               isRunning={simulation.isRunning}
+              mode={simulation.mode}
+              activeFlights={filteredActiveFlights}
+              flightPlanFlights={filteredFlightPlanFlights}
+              lastCycleUpdate={simulation.lastCycleUpdate}
             />
           )}
         </div>
@@ -373,8 +394,8 @@ export default function App() {
             isRunning={simulation.isRunning}
             simulationTime={simulation.simulationTime}
             mode={simulation.mode}
-            activeFlights={simulation.activeFlights}
-            flightPlanFlights={simulation.flightPlanFlights}
+            activeFlights={filteredActiveFlights}
+            flightPlanFlights={filteredFlightPlanFlights}
             lastCycleUpdate={simulation.lastCycleUpdate}
           />
         )}

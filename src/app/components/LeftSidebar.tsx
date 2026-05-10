@@ -4,7 +4,7 @@ import {
   RotateCcw, Zap, PlusCircle, Search, X, ChevronDown, ChevronUp,
   Plane, Package, Building2, FastForward, BarChart2, Calendar,
 } from 'lucide-react';
-import { SimulationMode, AIRLINES, INITIAL_AIRPORTS } from '../data/mockData';
+import { SimulationMode, AIRLINES, INITIAL_AIRPORTS, Airport } from '../data/mockData';
 
 interface Filters {
   airline: string;
@@ -28,6 +28,7 @@ interface LeftSidebarProps {
   daysElapsed: number;
   simulationComplete: boolean;
   collapseComplete: boolean;
+  airports?: Airport[];
   onModeChange: (mode: SimulationMode) => void;
   onStartDateChange: (date: Date) => void;
   onFilterChange: (key: keyof Filters, value: string) => void;
@@ -88,9 +89,10 @@ function ToggleSwitch({ checked, onChange }: { checked: boolean; onChange: () =>
   );
 }
 
-function SelectField({ label, value, onChange, options }: {
+function SelectField({ label, value, onChange, options, disabled = false }: {
   label: string; value: string; onChange: (v: string) => void;
   options: { value: string; label: string }[];
+  disabled?: boolean;
 }) {
   return (
     <div className="mb-3">
@@ -99,6 +101,7 @@ function SelectField({ label, value, onChange, options }: {
         <select
           value={value}
           onChange={e => onChange(e.target.value)}
+          disabled={disabled}
           className="w-full bg-[#0D1E38] border border-[#1E3058] rounded-lg px-3 py-2 text-xs text-[#C8D8F0] appearance-none focus:outline-none focus:border-[#4DA6FF]/60 cursor-pointer"
           style={{ backgroundImage: 'none' }}
         >
@@ -114,20 +117,22 @@ function SelectField({ label, value, onChange, options }: {
 
 export function LeftSidebar({
   mode, startDate, filters, toggles, isRunning, hasReplanned,
-  daysElapsed, simulationComplete, collapseComplete,
+  daysElapsed, simulationComplete, collapseComplete, airports = INITIAL_AIRPORTS,
   onModeChange, onStartDateChange, onFilterChange, onToggleChange,
   onStart, onPause, onReset, onReplan, onAddShipment,
   onSkipToComplete, onSkipToCollapseComplete, onViewResults, onViewCollapseResults,
 }: LeftSidebarProps) {
 
-  const airlineOptions = [
-    { value: '', label: 'Todas las Aerolíneas' },
-    ...AIRLINES.map(a => ({ value: a.id, label: a.name }))
-  ];
+  const airlineOptions = mode === '5day'
+    ? [{ value: '', label: '— Sin aerolíneas reales' }]
+    : [
+        { value: '', label: 'Todas las Aerolíneas' },
+        ...AIRLINES.map(a => ({ value: a.id, label: a.name }))
+      ];
 
   const cityOptions = [
     { value: '', label: 'Todas las Ciudades' },
-    ...INITIAL_AIRPORTS.map(a => ({ value: a.id, label: `${a.city} (${a.id})` }))
+    ...airports.map(a => ({ value: a.id, label: `${a.city} (${a.id})` }))
   ];
 
   const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -367,6 +372,7 @@ export function LeftSidebar({
           value={filters.airline}
           onChange={v => onFilterChange('airline', v)}
           options={airlineOptions}
+          disabled={mode === '5day'}
         />
         <SelectField
           label="AEROPUERTO DE ORIGEN"

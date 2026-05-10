@@ -87,6 +87,17 @@ const CUSTOM_TOOLTIP_STYLE = {
   color: '#C8D8F0',
 };
 
+const DASH = '—';
+
+function ReportRow({ label, value, color = '#C8D8F0' }: { label: string; value: React.ReactNode; color?: string }) {
+  return (
+    <div className="flex items-center justify-between py-1.5 border-b border-[#1E3058]/40">
+      <span className="text-[11px] text-[#4A6080]">{label}</span>
+      <span className="text-[11px]" style={{ color, fontWeight: 600 }}>{value}</span>
+    </div>
+  );
+}
+
 function CustomBarTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   const val = payload[0].value;
@@ -104,15 +115,20 @@ export function RightPanel({
   mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
 }: RightPanelProps) {
   const [activeTab, setActiveTab] = useState<'kpi' | 'warehouse' | 'reports'>('kpi');
-  const hasBackendStats = mode === '5day' && lastCycleUpdate != null;
+  const isFiveDayMode = mode === '5day';
+  const hasBackendStats = isFiveDayMode && lastCycleUpdate != null;
+  const backendMetrics = hasBackendStats ? lastCycleUpdate?.operationalMetrics : undefined;
 
   // KPI calculations
-  const totalInTransit = hasBackendStats ? activeFlights.length : shipments.filter(s => s.progress < 1).length;
-  const delayedCount = hasBackendStats ? lastCycleUpdate!.batchSummary.delayed : shipments.filter(s => s.status === 'delayed').length;
-  const criticalCount = hasBackendStats ? airports.filter(a => a.status === 'critical').length : shipments.filter(s => s.status === 'critical').length;
-  const onTimeCount = hasBackendStats ? lastCycleUpdate!.batchSummary.onTime : shipments.filter(s => s.status === 'on-time').length;
-  const totalBags = hasBackendStats ? lastCycleUpdate!.totalBags : shipments.reduce((acc, s) => acc + s.luggageCount, 0);
-  const replanCount = shipments.filter(s => s.isReplanned).length;
+  const totalInTransit = isFiveDayMode ? backendMetrics?.inFlightBags ?? DASH : shipments.filter(s => s.progress < 1).length;
+  const delayedCount = hasBackendStats ? lastCycleUpdate!.batchSummary.delayed : isFiveDayMode ? 0 : shipments.filter(s => s.status === 'delayed').length;
+  const criticalCount = hasBackendStats ? backendMetrics?.overloadedAirports ?? airports.filter(a => a.status === 'critical').length : isFiveDayMode ? 0 : shipments.filter(s => s.status === 'critical').length;
+  const onTimeCount = hasBackendStats ? lastCycleUpdate!.batchSummary.onTime : isFiveDayMode ? 0 : shipments.filter(s => s.status === 'on-time').length;
+  const totalBags = isFiveDayMode ? backendMetrics?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? DASH : shipments.reduce((acc, s) => acc + s.luggageCount, 0);
+  const deliveredBags = isFiveDayMode ? backendMetrics?.deliveredBags ?? DASH : shipments.filter(s => s.progress >= 1).reduce((acc, s) => acc + s.luggageCount, 0);
+  const pendingBags = isFiveDayMode ? backendMetrics?.pendingDeliveryBags ?? DASH : shipments.filter(s => s.progress < 1).reduce((acc, s) => acc + s.luggageCount, 0);
+  const storedBags = isFiveDayMode ? backendMetrics?.storedBags ?? DASH : airports.reduce((acc, a) => acc + a.occupancy, 0);
+  const replanCount: number | string = isFiveDayMode ? DASH : shipments.filter(s => s.isReplanned).length;
 
   const backendTotal = lastCycleUpdate
     ? lastCycleUpdate.batchSummary.onTime + lastCycleUpdate.batchSummary.delayed + lastCycleUpdate.batchSummary.unrouted
@@ -120,9 +136,9 @@ export function RightPanel({
   const punctualityPct = hasBackendStats
     ? Math.round((onTimeCount / Math.max(backendTotal, 1)) * 100)
     : Math.round((onTimeCount / Math.max(shipments.length, 1)) * 100);
-  const avgOccupancy = Math.round(
-    airports.reduce((acc, a) => acc + getOccupancyPercent(a.occupancy, a.capacity), 0) / airports.length
-  );
+  const avgOccupancy = airports.length > 0
+    ? Math.round(airports.reduce((acc, a) => acc + getOccupancyPercent(a.occupancy, a.capacity), 0) / airports.length)
+    : 0;
   const criticalAirports = airports.filter(a => a.status === 'critical');
   const criticalFlights = hasBackendStats ? activeFlights.filter(f => !f.meetsSla) : flights.filter(f => f.status === 'critical');
 
@@ -133,11 +149,17 @@ export function RightPanel({
     .slice(0, 8);
 
   // Shipment status distribution
-  const statusData = [
-    { name: 'A Tiempo', value: onTimeCount, color: '#00FF9C' },
-    { name: 'Retrasado', value: delayedCount, color: '#FFC857' },
-    { name: 'Crítico', value: criticalCount, color: '#FF4D4D' },
-  ].filter(d => d.value > 0);
+  const statusData = hasBackendStats
+    ? [
+        { name: 'A Tiempo', value: onTimeCount, color: '#00FF9C' },
+        { name: 'Retrasado', value: delayedCount, color: '#FFC857' },
+        { name: 'Sin ruta', value: lastCycleUpdate!.batchSummary.unrouted, color: '#FF4D4D' },
+      ].filter(d => d.value > 0)
+    : [
+        { name: 'A Tiempo', value: onTimeCount, color: '#00FF9C' },
+        { name: 'Retrasado', value: delayedCount, color: '#FFC857' },
+        { name: 'Crítico', value: criticalCount, color: '#FF4D4D' },
+      ].filter(d => d.value > 0);
 
   const tabs = [
     { id: 'kpi' as const, label: 'KPIs', icon: <Activity className="w-3 h-3" /> },
@@ -174,27 +196,35 @@ export function RightPanel({
           <>
             <div className="grid grid-cols-2 gap-2">
               <KPICard
-                label="EN TRÁNSITO"
+                label={hasBackendStats ? 'MALETAS EN VUELO' : 'EN TRÁNSITO'}
                 value={totalInTransit}
                 color="#4DA6FF"
                 icon={<Package className="w-3.5 h-3.5" />}
-                trend={`${totalBags.toLocaleString()} bolsas asignadas`}
+                trend={typeof totalBags === 'number' ? `${totalBags.toLocaleString()} bolsas asignadas` : undefined}
                 trendDir="neutral"
               />
               <KPICard
-                label="RETRASADOS"
-                value={delayedCount}
-                color={delayedCount > 0 ? '#FFC857' : '#00FF9C'}
-                icon={<AlertTriangle className="w-3.5 h-3.5" />}
-                trend={delayedCount > 0 ? 'Requiere atención' : 'Todos a tiempo'}
-                trendDir={delayedCount > 0 ? 'down' : 'up'}
+                label="ENTREGADAS"
+                value={deliveredBags}
+                color="#00FF9C"
+                icon={<CheckCircle className="w-3.5 h-3.5" />}
+                trend={hasBackendStats ? 'Retiro confirmado por reloj' : undefined}
+                trendDir="up"
               />
               <KPICard
-                label="CRÍTICOS"
-                value={criticalCount}
+                label="POR ENTREGAR"
+                value={pendingBags}
+                color={delayedCount > 0 ? '#FFC857' : '#00FF9C'}
+                icon={<AlertTriangle className="w-3.5 h-3.5" />}
+                trend={hasBackendStats ? `${delayedCount} lotes con SLA vencido` : undefined}
+                trendDir={delayedCount > 0 ? 'down' : 'neutral'}
+              />
+              <KPICard
+                label="EN ALMACÉN"
+                value={storedBags}
                 color={criticalCount > 0 ? '#FF4D4D' : '#00FF9C'}
-                icon={<Zap className="w-3.5 h-3.5" />}
-                trend={criticalCount > 0 ? 'Acción requerida' : 'Sin problemas'}
+                icon={<Warehouse className="w-3.5 h-3.5" />}
+                trend={hasBackendStats ? `${criticalCount} aeropuertos sobre capacidad` : undefined}
                 trendDir={criticalCount > 0 ? 'down' : 'up'}
               />
               <KPICard
@@ -205,6 +235,14 @@ export function RightPanel({
                 icon={<Clock className="w-3.5 h-3.5" />}
                 trend={`${onTimeCount}/${Math.max(hasBackendStats ? backendTotal : shipments.length, 1)} a tiempo`}
                 trendDir={punctualityPct >= 85 ? 'up' : 'down'}
+              />
+              <KPICard
+                label="TOTAL BOLSAS"
+                value={typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags}
+                color="#A8C0E0"
+                icon={<Zap className="w-3.5 h-3.5" />}
+                trend={hasBackendStats ? `${lastCycleUpdate!.totalRoutes} rutas asignadas` : undefined}
+                trendDir="neutral"
               />
             </div>
 
@@ -235,12 +273,15 @@ export function RightPanel({
                 thresholdCrit={15}
               />
               <TrafficLight
-                label="Sobrecapacidad de Vuelos"
+                label={hasBackendStats ? 'Vuelos con Riesgo SLA' : 'Sobrecapacidad de Vuelos'}
                 value={criticalFlights.length}
                 max={Math.max(hasBackendStats ? activeFlights.length : flights.length, 1)}
                 thresholdWarn={10}
                 thresholdCrit={25}
               />
+              {hasBackendStats && (
+                <ReportRow label="Sobrecapacidad de vuelos" value={DASH} color="#4A6080" />
+              )}
             </div>
 
             {/* Shipment status donut */}
@@ -393,17 +434,18 @@ export function RightPanel({
                 {[
                   { label: hasBackendStats ? 'Rutas Planificadas' : 'Total Envíos', value: hasBackendStats ? lastCycleUpdate!.totalRoutes : shipments.length, color: '#4DA6FF' },
                   { label: hasBackendStats ? 'Lotes a Tiempo' : 'Completados', value: hasBackendStats ? onTimeCount : shipments.filter(s => s.progress >= 1).length, color: '#00FF9C' },
-                  { label: 'En Tránsito', value: totalInTransit, color: '#A8C0E0' },
+                  { label: hasBackendStats ? 'Maletas en Vuelo' : 'En Tránsito', value: totalInTransit, color: '#A8C0E0' },
+                  { label: 'Maletas Entregadas', value: deliveredBags, color: '#00FF9C' },
+                  { label: 'Maletas por Entregar', value: pendingBags, color: '#FFC857' },
+                  { label: 'Maletas en Almacén', value: storedBags, color: '#4DA6FF' },
                   { label: 'Retrasados', value: delayedCount, color: '#FFC857' },
-                  { label: 'Críticos', value: criticalCount, color: '#FF4D4D' },
+                  { label: hasBackendStats ? 'Aeropuertos Sobrecap.' : 'Críticos', value: criticalCount, color: '#FF4D4D' },
                   { label: 'Replanificados', value: replanCount, color: '#A855F7' },
-                  { label: 'Total Bolsas', value: totalBags.toLocaleString(), color: '#4DA6FF' },
+                  { label: 'Total Bolsas', value: typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags, color: '#4DA6FF' },
                   { label: 'Ocupación Prom.', value: `${avgOccupancy}%`, color: getStatusColor(avgOccupancy >= 90 ? 'critical' : avgOccupancy >= 70 ? 'warning' : 'normal') },
+                  { label: 'Pico de Aeropuerto', value: backendMetrics?.peakAirportId ? `${backendMetrics.peakAirportId} · ${Math.round(backendMetrics.peakAirportOccupancyRatio * 100)}%` : DASH, color: backendMetrics?.peakAirportId ? '#4DA6FF' : '#4A6080' },
                 ].map(row => (
-                  <div key={row.label} className="flex items-center justify-between py-1.5 border-b border-[#1E3058]/40">
-                    <span className="text-[11px] text-[#4A6080]">{row.label}</span>
-                    <span className="text-[11px]" style={{ color: row.color, fontWeight: 600 }}>{row.value}</span>
-                  </div>
+                  <ReportRow key={row.label} label={row.label} value={row.value} color={row.color} />
                 ))}
               </div>
             </div>
@@ -415,25 +457,45 @@ export function RightPanel({
                 <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>PLANES DE VUELO</span>
               </div>
               <div className="max-h-40 overflow-y-auto">
-                {flights.map(f => (
+                {isFiveDayMode ? flightPlanFlights.slice(0, 80).map(f => (
+                  <div key={f.flightId} className="flex items-center justify-between px-3 py-2 border-b border-[#1E3058]/30 hover:bg-[#1A2E4A]/30">
+                    <div>
+                      <span className="text-[11px] text-[#A8C0E0]" style={{ fontWeight: 500 }}>{f.flightId}</span>
+                      <div className="text-[10px] text-[#4A6080]">{f.originId} → {f.destinationId} · {new Date(f.departureTime).toISOString().slice(11, 16)}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[11px] text-[#4A6080]">{DASH}</div>
+                      <div className="text-[10px] text-[#4A6080]">cap. {f.capacity}</div>
+                    </div>
+                  </div>
+                )) : flights.map(f => (
                   <div key={f.id} className="flex items-center justify-between px-3 py-2 border-b border-[#1E3058]/30 hover:bg-[#1A2E4A]/30">
                     <div>
                       <span className="text-[11px] text-[#A8C0E0]" style={{ fontWeight: 500 }}>{f.flightNumber}</span>
                       <div className="text-[10px] text-[#4A6080]">{f.from} → {f.to} · {f.departureTime}</div>
                     </div>
                     <div className="text-right">
-                      <div className="text-[11px]" style={{ color: getStatusColor(f.status) }}>
-                        {Math.round((f.load / f.capacity) * 100)}%
-                      </div>
+                      <div className="text-[11px]" style={{ color: getStatusColor(f.status) }}>{Math.round((f.load / f.capacity) * 100)}%</div>
                       <div className="text-[10px] text-[#4A6080]">{f.load}/{f.capacity}</div>
                     </div>
                   </div>
                 ))}
+                {isFiveDayMode && flightPlanFlights.length === 0 && (
+                  <div className="text-[11px] text-[#3A5070] px-3 py-4">{DASH}</div>
+                )}
               </div>
             </div>
 
             {/* Replanned shipments */}
-            {recentReplanned.length > 0 && (
+            {hasBackendStats ? (
+              <div className="bg-[#0D1E38] rounded-xl border border-[#1E3058] overflow-hidden">
+                <div className="px-3 py-2 border-b border-[#1E3058] flex items-center gap-2">
+                  <Zap className="w-3 h-3 text-[#4A6080]" />
+                  <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>REPLANIFICADOS</span>
+                </div>
+                <div className="text-[11px] text-[#4A6080] px-3 py-4">{DASH}</div>
+              </div>
+            ) : recentReplanned.length > 0 && (
               <div className="bg-[#A855F7]/8 rounded-xl border border-[#A855F7]/20 overflow-hidden">
                 <div className="px-3 py-2 border-b border-[#A855F7]/15 flex items-center gap-2">
                   <Zap className="w-3 h-3 text-[#A855F7]" />

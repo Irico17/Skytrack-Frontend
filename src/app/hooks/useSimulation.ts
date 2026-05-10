@@ -242,6 +242,12 @@ export function useSimulation(): UseSimulationReturn {
       }
       setDaysElapsed(update.daysElapsed);
       applyAirportCapacities(update.airportCapacities);
+      if (update.operationalMetrics) {
+        setLastCycleUpdate(prev => prev
+          ? { ...prev, simulatedTime: update.simulatedTime, daysElapsed: update.daysElapsed, airportCapacities: update.airportCapacities, operationalMetrics: update.operationalMetrics }
+          : prev
+        );
+      }
 
     } else if (msg.type === 'SIMULATION_FINISHED') {
       const finished = msg as BackendSimulationFinished;

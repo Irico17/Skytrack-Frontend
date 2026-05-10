@@ -139,7 +139,8 @@ export function WorldMap({
 
   // Pan on drag
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.target !== svgRef.current && !(e.target as Element).closest('[data-map-bg]')) return;
+    const target = e.target as Element;
+    if (target.closest('[data-interactive="true"]')) return;
     dragRef.current = { startX: e.clientX, startY: e.clientY, startVB: viewBox };
   }, [viewBox]);
 
@@ -192,9 +193,12 @@ export function WorldMap({
       w = h * targetRatio;
     }
 
+    const centeredX = (minX + maxX) / 2 - w / 2;
+    const centeredY = (minY + maxY) / 2 - h / 2;
+
     setViewBox({
-      x: Math.max(0, (minX + maxX) / 2 - w / 2),
-      y: Math.max(0, (minY + maxY) / 2 - h / 2),
+      x: Math.max(-40, Math.min(centeredX, BASE_W - w + 40)),
+      y: Math.max(-30, Math.min(centeredY, BASE_H - h + 30)),
       w: Math.min(w, BASE_W),
       h: Math.min(h, BASE_H),
     });
@@ -491,8 +495,7 @@ export function WorldMap({
           return (
             <g
               key={`${geo.id}-${i}`}
-              onMouseEnter={() => setHoveredCountry(geo.id)}
-              onMouseLeave={() => setHoveredCountry(null)}
+              style={{ pointerEvents: 'none' }}
             >
               {coords.map((ringSet: any, ri: number) =>
                 ringSet.map((ring: number[][], ri2: number) => {
@@ -535,6 +538,7 @@ export function WorldMap({
               <path
                 d={f.pathD} stroke="transparent" strokeWidth={10} fill="none"
                 style={{ cursor: 'pointer' }}
+                data-interactive="true"
                 onClick={(e) => { e.stopPropagation(); onSelectFlight(f.id); }}
                 onMouseEnter={(e) => {
                   e.stopPropagation();
@@ -568,6 +572,7 @@ export function WorldMap({
               key={a.id}
               transform={`translate(${px},${py})`}
               style={{ cursor: 'pointer' }}
+              data-interactive="true"
               onClick={(e) => { e.stopPropagation(); onSelectAirport(a.id); }}
               onMouseEnter={(e) => {
                 e.stopPropagation();
@@ -647,6 +652,7 @@ export function WorldMap({
               key={s.id}
               transform={`translate(${px},${py}) rotate(${s.angle + 90})`}
               style={{ cursor: 'pointer' }}
+              data-interactive="true"
               onClick={(e) => { e.stopPropagation(); onSelectShipment(s.id); }}
               onMouseEnter={(e) => {
                 e.stopPropagation();
@@ -702,8 +708,15 @@ export function WorldMap({
           <g
             key={dot.flightId}
             transform={`translate(${dot.cx},${dot.cy})`}
-            style={{ cursor: 'pointer' }}
+            style={{ cursor: dot.hasBags ? 'pointer' : 'default', pointerEvents: dot.hasBags ? 'auto' : 'none' }}
+            data-interactive={dot.hasBags ? 'true' : undefined}
+            onClick={(e) => {
+              if (!dot.hasBags) return;
+              e.stopPropagation();
+              onSelectFlight(dot.flightId);
+            }}
             onMouseEnter={(e) => {
+              if (!dot.hasBags) return;
               e.stopPropagation();
               const rect = containerRef.current?.getBoundingClientRect();
               if (!rect) return;
@@ -776,6 +789,7 @@ export function WorldMap({
         ].map(btn => (
           <button
             key={btn.label}
+            data-interactive="true"
             onMouseDown={e => e.stopPropagation()}
             onClick={btn.action}
             style={{
@@ -790,6 +804,7 @@ export function WorldMap({
           </button>
         ))}
         <button
+          data-interactive="true"
           onMouseDown={e => e.stopPropagation()}
           onClick={resetView}
           title="Centrar aeropuertos"
@@ -805,6 +820,7 @@ export function WorldMap({
         </button>
         {onToggleExpanded && (
           <button
+            data-interactive="true"
             onMouseDown={e => e.stopPropagation()}
             onClick={onToggleExpanded}
             title={isExpanded ? 'Salir de vista amplia' : 'Expandir mapa'}

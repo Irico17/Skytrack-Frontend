@@ -43,6 +43,19 @@ export interface BackendAirportCapacity {
   occupancyRatio: number;  // 0.0 – 1.0+
 }
 
+export interface BackendOperationalMetrics {
+  totalAssignedBags: number;
+  inFlightBags: number;
+  storedBags: number;
+  deliveredBags: number;
+  pendingDeliveryBags: number;
+  notDepartedBags: number;
+  activeLoadedFlights: number;
+  overloadedAirports: number;
+  peakAirportId: string | null;
+  peakAirportOccupancyRatio: number;
+}
+
 /** Vuelo del plan de vuelos proyectado a un día específico */
 export interface BackendFlightPlanFlight {
   flightId: string;
@@ -69,6 +82,7 @@ export interface BackendCycleUpdate {
   totalBags: number;
   semaphores: BackendSemaphore;
   batchSummary: BackendBatchSummary;
+  operationalMetrics?: BackendOperationalMetrics;
   activeFlights: BackendActiveFlight[];
   airportCapacities: BackendAirportCapacity[];
 }
@@ -80,6 +94,7 @@ export interface BackendStorageUpdate {
   simulatedTime: string;
   daysElapsed: number;
   airportCapacities: BackendAirportCapacity[];
+  operationalMetrics?: BackendOperationalMetrics;
 }
 
 
