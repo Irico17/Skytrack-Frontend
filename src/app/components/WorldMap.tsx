@@ -262,6 +262,7 @@ export function WorldMap({
       const cpy = my + (ddx / dist) * curve;
       const cx = (1-t)*(1-t)*ox + 2*(1-t)*t*cpx + t*t*dx;
       const cy = (1-t)*(1-t)*oy + 2*(1-t)*t*cpy + t*t*dy;
+      const angle = Math.atan2(2*(1-t)*(cpy-oy) + 2*t*(dy-cpy), 2*(1-t)*(cpx-ox) + 2*t*(dx-cpx)) * (180 / Math.PI);
 
       // Color: con maletas = azul/ámbar, sin maletas = gris tenue
       const bags = bagsMap.get(f.flightId);
@@ -271,7 +272,7 @@ export function WorldMap({
         : '#3A4A5E'; // gris tenue para vuelos vacíos
 
       return [{
-        flightId: f.flightId, cx, cy, color, t,
+        flightId: f.flightId, cx, cy, color, t, angle,
         pathD: `M ${ox} ${oy} Q ${cpx} ${cpy} ${dx} ${dy}`,
         bagsCount: hasBags ? bags!.bagsCount : 0,
         originId: f.originId,
@@ -707,7 +708,7 @@ export function WorldMap({
         {activeFlightDots.map(dot => (
           <g
             key={dot.flightId}
-            transform={`translate(${dot.cx},${dot.cy})`}
+            transform={`translate(${dot.cx},${dot.cy}) rotate(${dot.angle + 90})`}
             style={{ cursor: dot.hasBags ? 'pointer' : 'default', pointerEvents: dot.hasBags ? 'auto' : 'none' }}
             data-interactive={dot.hasBags ? 'true' : undefined}
             onClick={(e) => {
