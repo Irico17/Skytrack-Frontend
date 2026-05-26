@@ -6,10 +6,11 @@ import { WorldMap } from './components/WorldMap';
 import { BottomPanel } from './components/BottomPanel';
 import { RightPanel } from './components/RightPanel';
 import { AddShipmentModal } from './components/AddShipmentModal';
+import { CancelFlightModal } from './components/CancelFlightModal';
 import { FiveDayResults } from './components/FiveDayResults';
 import { CollapseResults } from './components/CollapseResults';
 import { ShipmentDetailPanel } from './components/ShipmentDetailPanel';
-import { useSimulation, SIMULATION_K } from './hooks/useSimulation';
+import { useSimulation } from './hooks/useSimulation';
 import { SimulationMode, Shipment } from './data/mockData';
 
 interface SelectedEntity {
@@ -38,6 +39,10 @@ function formatSimulationClock(date: Date): { date: string; time: string } {
   };
 }
 
+function formatApiDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 export default function App() {
   const simulation = useSimulation();
   const [realClock, setRealClock] = React.useState(new Date());
@@ -54,6 +59,7 @@ export default function App() {
     showCongestion: true,
   });
   const [showAddShipment, setShowAddShipment] = useState(false);
+  const [showCancelFlight, setShowCancelFlight] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [showCollapseResults, setShowCollapseResults] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -145,8 +151,8 @@ export default function App() {
     [simulation.shipments]
   );
 
-  const handleAddShipment = useCallback((data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
-    simulation.addShipment(data);
+  const handleAddShipment = useCallback(async (data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
+    await simulation.addShipment(data);
   }, [simulation]);
 
   const handleReset = useCallback(() => {
@@ -197,6 +203,7 @@ export default function App() {
             onReset={handleReset}
             onReplan={simulation.replan}
             onAddShipment={() => setShowAddShipment(true)}
+            onCancelFlight={() => setShowCancelFlight(true)}
             onSkipToComplete={simulation.skipToComplete}
             onSkipToCollapseComplete={simulation.skipToCollapseComplete}
             onViewResults={() => setShowResults(true)}
@@ -406,6 +413,17 @@ export default function App() {
         <AddShipmentModal
           onClose={() => setShowAddShipment(false)}
           onAdd={handleAddShipment}
+          airports={simulation.airports}
+        />
+      )}
+
+      {showCancelFlight && (
+        <CancelFlightModal
+          onClose={() => setShowCancelFlight(false)}
+          onCancel={simulation.cancelFlight}
+          flightPlanFlights={filteredFlightPlanFlights.length > 0 ? filteredFlightPlanFlights : simulation.flightPlanFlights}
+          activeFlights={filteredActiveFlights.length > 0 ? filteredActiveFlights : simulation.activeFlights}
+          defaultDay={formatApiDate(simulation.simClock)}
         />
       )}
 

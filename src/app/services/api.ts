@@ -3,9 +3,14 @@ import type {
   BackendStartResponse,
   BackendSimulationResults,
   BackendFlightPlanFlight,
+  BackendSimulationStatus,
+  BackendSolution,
+  BackendShipmentRequest,
+  BackendShipmentResponse,
+  BackendCancellationResult,
 } from '../types/backend';
 
-const BASE = '/api';
+const BASE = import.meta.env.VITE_API_BASE ?? '/api';
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${url}`, {
@@ -16,7 +21,8 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     const body = await res.text();
     throw new Error(`HTTP ${res.status}: ${body}`);
   }
-  return res.json() as Promise<T>;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 // ==================== AEROPUERTOS ====================
@@ -52,6 +58,11 @@ export function startSimulation(
   });
 }
 
+/** Inicia operación día a día usando la fecha actual de ejecución. */
+export function startDayToDaySimulation(startDate: string): Promise<BackendStartResponse> {
+  return startSimulation('DAY_TO_DAY', startDate);
+}
+
 export function stopSimulation(simId: string): Promise<void> {
   return request<void>(`/simulations/${simId}/stop`, { method: 'POST' });
 }
@@ -70,4 +81,33 @@ export function resumeSimulation(simId: string): Promise<void> {
  */
 export function getSimulationResults(simId: string): Promise<BackendSimulationResults> {
   return request<BackendSimulationResults>(`/simulations/${simId}/results`);
+}
+
+export function getSimulationStatus(simId: string): Promise<BackendSimulationStatus> {
+  return request<BackendSimulationStatus>(`/simulations/${simId}/status`);
+}
+
+export function getSimulationSolution(simId: string): Promise<BackendSolution> {
+  return request<BackendSolution>(`/simulations/${simId}/solution`);
+}
+
+export function createShipment(
+  simId: string,
+  payload: BackendShipmentRequest
+): Promise<BackendShipmentResponse> {
+  return request<BackendShipmentResponse>(`/simulations/${simId}/shipments`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function cancelFlight(
+  simId: string,
+  flightId: string,
+  day: string
+): Promise<BackendCancellationResult> {
+  return request<BackendCancellationResult>(`/simulations/${simId}/flights/${encodeURIComponent(flightId)}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ day }),
+  });
 }

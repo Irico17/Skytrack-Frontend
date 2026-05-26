@@ -21,7 +21,7 @@ interface TopBarProps {
 }
 
 const MODE_LABELS: Record<SimulationMode, string> = {
-  realtime: 'Operaciones en Tiempo Real',
+  realtime: 'Operación Día a Día',
   '5day': 'Simulación 5 Días',
   collapse: 'Escenario de Colapso',
 };

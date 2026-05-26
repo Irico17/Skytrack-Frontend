@@ -4,7 +4,7 @@ import {
   RotateCcw, Zap, PlusCircle, Search, X, ChevronDown, ChevronUp,
   Plane, Package, Building2, FastForward, BarChart2, Calendar,
 } from 'lucide-react';
-import { SimulationMode, AIRLINES, INITIAL_AIRPORTS, Airport } from '../data/mockData';
+import { SimulationMode, AIRLINES, Airport } from '../data/mockData';
 
 interface Filters {
   airline: string;
@@ -38,6 +38,7 @@ interface LeftSidebarProps {
   onReset: () => void;
   onReplan: () => void;
   onAddShipment: () => void;
+  onCancelFlight: () => void;
   onSkipToComplete: () => void;
   onSkipToCollapseComplete: () => void;
   onViewResults: () => void;
@@ -71,7 +72,7 @@ function Section({ title, icon, children, defaultOpen = true }: SectionProps) {
 }
 
 const SIMULATION_MODES = [
-  { id: 'realtime' as SimulationMode, label: 'Operaciones en Tiempo Real', desc: 'Monitoreo en vivo', color: '#00FF9C' },
+  { id: 'realtime' as SimulationMode, label: 'Operación Día a Día', desc: 'Datos reales del backend', color: '#00FF9C' },
   { id: '5day' as SimulationMode, label: 'Simulación 5 Días', desc: 'Planificación a mediano plazo', color: '#4DA6FF' },
   { id: 'collapse' as SimulationMode, label: 'Escenario de Colapso', desc: 'Pruebas de estrés', color: '#FF4D4D' },
 ];
@@ -117,14 +118,14 @@ function SelectField({ label, value, onChange, options, disabled = false }: {
 
 export function LeftSidebar({
   mode, startDate, filters, toggles, isRunning, hasReplanned,
-  daysElapsed, simulationComplete, collapseComplete, airports = INITIAL_AIRPORTS,
+  daysElapsed, simulationComplete, collapseComplete, airports = [],
   onModeChange, onStartDateChange, onFilterChange, onToggleChange,
-  onStart, onPause, onReset, onReplan, onAddShipment,
+  onStart, onPause, onReset, onReplan, onAddShipment, onCancelFlight,
   onSkipToComplete, onSkipToCollapseComplete, onViewResults, onViewCollapseResults,
 }: LeftSidebarProps) {
 
-  const airlineOptions = mode === '5day'
-    ? [{ value: '', label: '— Sin aerolíneas reales' }]
+  const airlineOptions = mode === '5day' || mode === 'realtime'
+    ? [{ value: '', label: '— Clientes backend' }]
     : [
         { value: '', label: 'Todas las Aerolíneas' },
         ...AIRLINES.map(a => ({ value: a.id, label: a.name }))
@@ -159,11 +160,21 @@ export function LeftSidebar({
       <div className="p-4 border-b border-[#1E3058]">
         <button
           onClick={onAddShipment}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors"
+          disabled={mode === '5day' || (mode === 'realtime' && !isRunning)}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           style={{ fontWeight: 600 }}
         >
           <PlusCircle className="w-4 h-4" />
-          Registrar Envío
+          Registrar Maletas
+        </button>
+        <button
+          onClick={onCancelFlight}
+          disabled={mode !== 'realtime' || !isRunning}
+          className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#FF4D4D]/15 border border-[#FF4D4D]/40 text-[#FF4D4D] text-xs hover:bg-[#FF4D4D]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+          style={{ fontWeight: 600 }}
+        >
+          <Plane className="w-4 h-4" />
+          Cancelar Vuelo
         </button>
       </div>
 
@@ -372,7 +383,7 @@ export function LeftSidebar({
           value={filters.airline}
           onChange={v => onFilterChange('airline', v)}
           options={airlineOptions}
-          disabled={mode === '5day'}
+          disabled={mode === '5day' || mode === 'realtime'}
         />
         <SelectField
           label="AEROPUERTO DE ORIGEN"

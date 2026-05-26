@@ -21,7 +21,13 @@ export class SimulationWebSocket {
   private readonly url: string;
 
   constructor() {
-    // En desarrollo Vite redirige /ws → ws://localhost:8080
+    const configuredUrl = import.meta.env.VITE_WS_URL;
+    if (configuredUrl) {
+      this.url = configuredUrl;
+      return;
+    }
+
+    // En desarrollo Vite redirige /ws -> ws://localhost:8080
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.url = `${protocol}//${window.location.host}/ws/simulation`;
   }

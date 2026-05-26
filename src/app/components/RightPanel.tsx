@@ -115,20 +115,20 @@ export function RightPanel({
   mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
 }: RightPanelProps) {
   const [activeTab, setActiveTab] = useState<'kpi' | 'warehouse' | 'reports'>('kpi');
-  const isFiveDayMode = mode === '5day';
-  const hasBackendStats = isFiveDayMode && lastCycleUpdate != null;
+  const isBackendStatsMode = mode === '5day' || mode === 'realtime';
+  const hasBackendStats = isBackendStatsMode && lastCycleUpdate != null;
   const backendMetrics = hasBackendStats ? lastCycleUpdate?.operationalMetrics : undefined;
 
   // KPI calculations
-  const totalInTransit = isFiveDayMode ? backendMetrics?.inFlightBags ?? DASH : shipments.filter(s => s.progress < 1).length;
-  const delayedCount = hasBackendStats ? lastCycleUpdate!.batchSummary.delayed : isFiveDayMode ? 0 : shipments.filter(s => s.status === 'delayed').length;
-  const criticalCount = hasBackendStats ? backendMetrics?.overloadedAirports ?? airports.filter(a => a.status === 'critical').length : isFiveDayMode ? 0 : shipments.filter(s => s.status === 'critical').length;
-  const onTimeCount = hasBackendStats ? lastCycleUpdate!.batchSummary.onTime : isFiveDayMode ? 0 : shipments.filter(s => s.status === 'on-time').length;
-  const totalBags = isFiveDayMode ? backendMetrics?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? DASH : shipments.reduce((acc, s) => acc + s.luggageCount, 0);
-  const deliveredBags = isFiveDayMode ? backendMetrics?.deliveredBags ?? DASH : shipments.filter(s => s.progress >= 1).reduce((acc, s) => acc + s.luggageCount, 0);
-  const pendingBags = isFiveDayMode ? backendMetrics?.pendingDeliveryBags ?? DASH : shipments.filter(s => s.progress < 1).reduce((acc, s) => acc + s.luggageCount, 0);
-  const storedBags = isFiveDayMode ? backendMetrics?.storedBags ?? DASH : airports.reduce((acc, a) => acc + a.occupancy, 0);
-  const replanCount: number | string = isFiveDayMode ? DASH : shipments.filter(s => s.isReplanned).length;
+  const totalInTransit = isBackendStatsMode ? backendMetrics?.inFlightBags ?? DASH : shipments.filter(s => s.progress < 1).length;
+  const delayedCount = hasBackendStats ? lastCycleUpdate!.batchSummary.delayed : isBackendStatsMode ? 0 : shipments.filter(s => s.status === 'delayed').length;
+  const criticalCount = hasBackendStats ? backendMetrics?.overloadedAirports ?? airports.filter(a => a.status === 'critical').length : isBackendStatsMode ? 0 : shipments.filter(s => s.status === 'critical').length;
+  const onTimeCount = hasBackendStats ? lastCycleUpdate!.batchSummary.onTime : isBackendStatsMode ? 0 : shipments.filter(s => s.status === 'on-time').length;
+  const totalBags = isBackendStatsMode ? backendMetrics?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? DASH : shipments.reduce((acc, s) => acc + s.luggageCount, 0);
+  const deliveredBags = isBackendStatsMode ? backendMetrics?.deliveredBags ?? DASH : shipments.filter(s => s.progress >= 1).reduce((acc, s) => acc + s.luggageCount, 0);
+  const pendingBags = isBackendStatsMode ? backendMetrics?.pendingDeliveryBags ?? DASH : shipments.filter(s => s.progress < 1).reduce((acc, s) => acc + s.luggageCount, 0);
+  const storedBags = isBackendStatsMode ? backendMetrics?.storedBags ?? DASH : airports.reduce((acc, a) => acc + a.occupancy, 0);
+  const replanCount: number | string = isBackendStatsMode ? DASH : shipments.filter(s => s.isReplanned).length;
 
   const backendTotal = lastCycleUpdate
     ? lastCycleUpdate.batchSummary.onTime + lastCycleUpdate.batchSummary.delayed + lastCycleUpdate.batchSummary.unrouted
@@ -457,7 +457,7 @@ export function RightPanel({
                 <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>PLANES DE VUELO</span>
               </div>
               <div className="max-h-40 overflow-y-auto">
-                {isFiveDayMode ? flightPlanFlights.slice(0, 80).map(f => (
+                {isBackendStatsMode ? flightPlanFlights.slice(0, 80).map(f => (
                   <div key={f.flightId} className="flex items-center justify-between px-3 py-2 border-b border-[#1E3058]/30 hover:bg-[#1A2E4A]/30">
                     <div>
                       <span className="text-[11px] text-[#A8C0E0]" style={{ fontWeight: 500 }}>{f.flightId}</span>
@@ -480,7 +480,7 @@ export function RightPanel({
                     </div>
                   </div>
                 ))}
-                {isFiveDayMode && flightPlanFlights.length === 0 && (
+                {isBackendStatsMode && flightPlanFlights.length === 0 && (
                   <div className="text-[11px] text-[#3A5070] px-3 py-4">{DASH}</div>
                 )}
               </div>

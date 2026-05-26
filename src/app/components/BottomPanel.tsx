@@ -347,8 +347,8 @@ export function BottomPanel({
   mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
 }: BottomPanelProps) {
   const [activeTab, setActiveTab] = useState<'detail' | 'shipments' | 'active'>('detail');
-  const isFiveDayMode = mode === '5day';
-  const hasBackendStats = isFiveDayMode && lastCycleUpdate != null;
+  const isBackendStatsMode = mode === '5day' || mode === 'realtime';
+  const hasBackendStats = isBackendStatsMode && lastCycleUpdate != null;
   const backendMetrics = lastCycleUpdate?.operationalMetrics;
 
   const selectedAirport = selectedEntity?.type === 'airport' ? airports.find(a => a.id === selectedEntity.id) : null;
@@ -402,7 +402,7 @@ export function BottomPanel({
         )}
 
         <div className="flex items-center gap-3 text-[11px] text-[#4A6080]">
-          {isFiveDayMode ? (
+          {isBackendStatsMode ? (
             <>
               <span className="text-[#00FF9C]">● {lastCycleUpdate?.batchSummary.onTime ?? DASH} A Tiempo</span>
               <span className="text-[#FFC857]">● {lastCycleUpdate?.batchSummary.delayed ?? DASH} Retrasados</span>
@@ -428,7 +428,7 @@ export function BottomPanel({
             {selectedShipment && <ShipmentDetail shipment={selectedShipment} airports={airports} flights={flights} />}
             {!hasSelection && (
               <div className="flex items-center h-full gap-6">
-                {(isFiveDayMode ? [
+                {(isBackendStatsMode ? [
                   { label: 'Total Aeropuertos', value: airports.length, color: '#4DA6FF', icon: <Building2 className="w-5 h-5" /> },
                   { label: 'Plan de Vuelos', value: flightPlanFlights.length || DASH, color: '#A855F7', icon: <Plane className="w-5 h-5" /> },
                   { label: 'Maletas en Vuelo', value: backendMetrics?.inFlightBags ?? DASH, color: '#00FF9C', icon: <Package className="w-5 h-5" /> },
@@ -467,7 +467,9 @@ export function BottomPanel({
               <div className="flex-1" />
               <span>PROGRESO</span>
             </div>
-            {isFiveDayMode ? activeFlights.map(f => (
+            {isBackendStatsMode && shipments.length > 0 ? shipments.map(s => (
+              <ShipmentListRow key={s.id} s={s} onClick={() => onSelectShipment?.(s.id)} />
+            )) : isBackendStatsMode ? activeFlights.map(f => (
               <button
                 key={f.flightId}
                 onClick={() => undefined}
@@ -486,7 +488,7 @@ export function BottomPanel({
             )) : shipments.map(s => (
               <ShipmentListRow key={s.id} s={s} onClick={() => onSelectShipment?.(s.id)} />
             ))}
-            {isFiveDayMode && activeFlights.length === 0 && (
+            {isBackendStatsMode && activeFlights.length === 0 && shipments.length === 0 && (
               <div className="h-full flex items-center justify-center text-[#2A4060] text-sm">{DASH}</div>
             )}
           </div>
@@ -494,7 +496,7 @@ export function BottomPanel({
 
         {activeTab === 'active' && (
           <div className="h-full overflow-y-auto">
-            {isFiveDayMode ? (
+            {isBackendStatsMode ? (
               delayedBackendFlights.length === 0 && criticalAirports.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-[#2A4060] text-sm">
                   <CheckCircle className="w-4 h-4 mr-2 text-[#00FF9C]" />

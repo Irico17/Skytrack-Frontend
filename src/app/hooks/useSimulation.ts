@@ -4,9 +4,30 @@ import {
   INITIAL_AIRPORTS, INITIAL_FLIGHTS, INITIAL_SHIPMENTS,
   getOccupancyStatus,
 } from '../data/mockData';
-import { fetchAirports, fetchFlightPlan, startSimulation, stopSimulation, pauseSimulation, resumeSimulation, getSimulationResults } from '../services/api';
+import {
+  fetchAirports,
+  fetchFlightPlan,
+  startSimulation,
+  startDayToDaySimulation,
+  stopSimulation,
+  pauseSimulation,
+  resumeSimulation,
+  getSimulationResults,
+  getSimulationStatus,
+  getSimulationSolution,
+  createShipment,
+  cancelFlight as cancelFlightRequest,
+} from '../services/api';
 import { SimulationWebSocket } from '../services/websocket';
-import { mapAirports, mapSemaphoreToStatus, mapDaySnapshots, buildCycleDaySnapshot } from '../services/mapper';
+import {
+  mapAirports,
+  mapDaySnapshots,
+  buildCycleDaySnapshot,
+  mapFlightPlanFlights,
+  mergeActiveFlightLoads,
+  mapSolutionToShipments,
+  mapShipmentResponseToShipment,
+} from '../services/mapper';
 import type { BackendCycleUpdate, BackendSimulationFinished, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity } from '../types/backend';
 
 /** Factor de aceleración del tiempo simulado: 1 min real = K min simulados */
@@ -68,7 +89,8 @@ interface UseSimulationReturn extends SimulationState {
   replan: () => void;
   skipToComplete: () => void;
   skipToCollapseComplete: () => void;
-  addShipment: (shipment: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => void;
+  addShipment: (shipment: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => Promise<void>;
+  cancelFlight: (flightId: string, day: string) => Promise<void>;
   setAirports: Dispatch<SetStateAction<Airport[]>>;
   setFlights: Dispatch<SetStateAction<Flight[]>>;
   setShipments: Dispatch<SetStateAction<Shipment[]>>;
@@ -94,6 +116,18 @@ const DISRUPTION_MESSAGES = [
 
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
 const MONTHS_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+function isBackendMode(mode: SimulationMode): boolean {
+  return mode === 'realtime' || mode === '5day';
+}
+
+function formatApiDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function stripProjectedDaySuffix(flightId: string): string {
+  return flightId.replace(/-D\d+$/, '');
+}
 
 function buildPresetSnapshots(startDate: Date): DaySnapshot[] {
   const fmt = (d: Date) => `${String(d.getDate()).padStart(2,'0')} ${MONTHS_ES[d.getMonth()]}`;
@@ -122,9 +156,9 @@ export function useSimulation(): UseSimulationReturn {
   today.setHours(8, 0, 0, 0);
 
   const [startDate, setStartDate] = useState<Date>(today);
-  const [airports, setAirports] = useState<Airport[]>(INITIAL_AIRPORTS);
-  const [flights, setFlights] = useState<Flight[]>(INITIAL_FLIGHTS);
-  const [shipments, setShipments] = useState<Shipment[]>(INITIAL_SHIPMENTS);
+  const [airports, setAirports] = useState<Airport[]>([]);
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [mode, setMode] = useState<SimulationMode>('realtime');
   const [simulationTime, setSimulationTime] = useState<Date>(today);
@@ -176,14 +210,26 @@ export function useSimulation(): UseSimulationReturn {
     });
   }, []);
 
-  // ===== CARGAR AEROPUERTOS REALES AL MONTAR =====
+  // ===== CARGAR AEROPUERTOS REALES PARA MODOS BACKEND =====
   useEffect(() => {
-    if (mode === '5day') {
+    if (isBackendMode(mode)) {
       fetchAirports()
         .then(data => setAirports(mapAirports(data)))
         .catch(err => console.warn('No se pudieron cargar aeropuertos del backend:', err));
     }
   }, [mode]);
+
+  useEffect(() => {
+    if (isRunning) return;
+    if (mode === 'collapse') {
+      setAirports(INITIAL_AIRPORTS);
+      setFlights(INITIAL_FLIGHTS);
+      setShipments(INITIAL_SHIPMENTS);
+      return;
+    }
+    setFlights([]);
+    setShipments([]);
+  }, [mode, isRunning]);
 
   // Sync tiempo y eventos cuando cambia startDate
   useEffect(() => {
@@ -208,13 +254,14 @@ export function useSimulation(): UseSimulationReturn {
       // Actualizar vuelos activos (con maletas asignadas por el planificador)
       if (update.activeFlights) {
         setActiveFlights(update.activeFlights);
+        setFlights(prev => mergeActiveFlightLoads(prev, update.activeFlights));
       }
 
       // Actualizar capacidad de aeropuertos desde los datos del backend
       applyAirportCapacities(update.airportCapacities);
 
-      // Actualizar snapshot del día
-      const snap = buildCycleDaySnapshot(update, startDate);
+      // Actualizar snapshot del día para la simulación de 5 días
+      const snap = mode === '5day' ? buildCycleDaySnapshot(update, startDate) : null;
       if (snap) {
         setDaySnapshots(prev => {
           const exists = prev.find(s => s.day === snap.day);
@@ -229,11 +276,28 @@ export function useSimulation(): UseSimulationReturn {
       setEvents(prev => [{
         id: `cycle-${update.cycle}`,
         type: 'info',
-        message: `Ciclo ${update.cycle} — Día ${update.daysElapsed.toFixed(1)}/5 — ${update.totalRoutes} rutas`,
+        message: mode === '5day'
+          ? `Ciclo ${update.cycle} — Día ${update.daysElapsed.toFixed(1)}/5 — ${update.totalRoutes} rutas`
+          : `Ciclo ${update.cycle} — Operación día a día — ${update.totalRoutes} rutas`,
         time: new Date(),
         severity: update.semaphores.sla === 'RED' ? 'critical'
                 : update.semaphores.sla === 'AMBER' ? 'warning' : 'info',
       }, ...prev.slice(0, 19)]);
+
+      const id = simIdRef.current;
+      const simulated = t ?? new Date();
+      if (id) {
+        getSimulationSolution(id)
+          .then(solution => {
+            const mapped = mapSolutionToShipments(solution, simulated);
+            setShipments(prev => {
+              const mappedIds = new Set(mapped.map(s => s.id));
+              const pending = prev.filter(s => s.currentFlightId === 'PENDING' && !mappedIds.has(s.id));
+              return [...pending, ...mapped];
+            });
+          })
+          .catch(err => console.warn('No se pudo refrescar la solución:', err));
+      }
 
     } else if (msg.type === 'STORAGE_UPDATE') {
       const update = msg as BackendStorageUpdate;
@@ -252,8 +316,8 @@ export function useSimulation(): UseSimulationReturn {
     } else if (msg.type === 'SIMULATION_FINISHED') {
       const finished = msg as BackendSimulationFinished;
       setIsRunning(false);
-      setSimulationComplete(true);
-      setDaysElapsed(5);
+      setSimulationComplete(mode === '5day');
+      setDaysElapsed(mode === '5day' ? 5 : daysElapsed);
       clockBaseRef.current = null; // parar el reloj
 
       setEvents(prev => [{
@@ -266,7 +330,7 @@ export function useSimulation(): UseSimulationReturn {
 
       // Cargar resultados finales del archivo JSON
       const id = simIdRef.current;
-      if (id) {
+      if (id && mode === '5day') {
         getSimulationResults(id)
           .then(results => {
             setDaySnapshots(mapDaySnapshots(results));
@@ -277,11 +341,11 @@ export function useSimulation(): UseSimulationReturn {
       // Desconectar WebSocket
       wsRef.current?.disconnect();
     }
-  }, [startDate, applyAirportCapacities]);
+  }, [startDate, mode, daysElapsed, applyAirportCapacities]);
 
   // ===== RELOJ SIMULADO: avanza a K× en tiempo real =====
   useEffect(() => {
-    if (mode !== '5day') return;
+    if (!isBackendMode(mode)) return;
     const tick = setInterval(() => {
       const base = clockBaseRef.current;
       if (!base) return;
@@ -293,7 +357,7 @@ export function useSimulation(): UseSimulationReturn {
   }, [mode]);
 
 
-  // ===== MOCK LOOP (realtime / collapse) =====
+  // ===== MOCK LOOP (collapse) =====
 
   const simStartMs = startDate.getTime();
   const presets    = buildPresetSnapshots(startDate);
@@ -302,7 +366,7 @@ export function useSimulation(): UseSimulationReturn {
   const getTimeStep = useCallback(() => mode === 'collapse' ? 900000 : 60000, [mode]);
 
   useEffect(() => {
-    if (!isRunning || mode === '5day') {
+    if (!isRunning || mode !== 'collapse') {
       if (intervalRef.current) clearInterval(intervalRef.current);
       return;
     }
@@ -388,8 +452,11 @@ export function useSimulation(): UseSimulationReturn {
   // ===== ACCIONES PRINCIPALES =====
 
   const start = useCallback(async () => {
-    if (mode === '5day') {
-      // Modo backend real
+    if (isBackendMode(mode)) {
+      const isFiveDay = mode === '5day';
+      const runDate = isFiveDay ? startDate : new Date();
+      const startDateStr = formatApiDate(runDate);
+
       setIsRunning(true);
       setSimulationComplete(false);
       setDaysElapsed(0);
@@ -397,29 +464,40 @@ export function useSimulation(): UseSimulationReturn {
       setActiveFlights([]);
       setFlightPlanFlights([]);
       setLastCycleUpdate(null);
+      setHasReplanned(false);
+      setShipments([]);
+      setFlights([]);
+
+      if (!isFiveDay) {
+        setStartDate(runDate);
+      }
 
       try {
-        const startDateStr = startDate.toISOString().split('T')[0];
-
         setEvents(prev => [{
           id: `loading-${Date.now()}`,
           type: 'info',
-          message: 'Cargando aeropuertos y plan de vuelos...',
+          message: isFiveDay
+            ? 'Cargando aeropuertos y plan de vuelos para 5 días...'
+            : 'Cargando operación día a día con datos reales...',
           time: new Date(),
           severity: 'info',
         }, ...prev.slice(0, 19)]);
 
         // 1. Cargar datos base antes de iniciar el reloj/algoritmo
+        const flightPlanDays = isFiveDay ? 5 : 1;
         const [backendAirports, projectedFlights] = await Promise.all([
           fetchAirports(),
-          fetchFlightPlan(startDateStr, 5),
+          fetchFlightPlan(startDateStr, flightPlanDays),
         ]);
         setAirports(mapAirports(backendAirports));
         setFlightPlanFlights(projectedFlights);
+        setFlights(mapFlightPlanFlights(projectedFlights));
         console.log(`✓ Cargados ${projectedFlights.length} vuelos del plan de vuelos`);
 
         // 2. Iniciar simulación en el backend (retorna K, simStartTime, etc.)
-        const res = await startSimulation('PERIOD_SIMULATION', startDateStr);
+        const res = isFiveDay
+          ? await startSimulation('PERIOD_SIMULATION', startDateStr)
+          : await startDayToDaySimulation(startDateStr);
         simIdRef.current = res.simulationId;
 
         // 3. Guardar K del backend y anclar el reloj
@@ -439,10 +517,20 @@ export function useSimulation(): UseSimulationReturn {
         setEvents(prev => [{
           id: `start-${Date.now()}`,
           type: 'info',
-          message: `Simulación iniciada — K=${K}× — Duración: ${res.totalRealMinutes?.toFixed(0) ?? '?'} min reales`,
+          message: isFiveDay
+            ? `Simulación iniciada — K=${K}× — Duración: ${res.totalRealMinutes?.toFixed(0) ?? '?'} min reales`
+            : `Operación día a día iniciada — ${startDateStr} — K=${K}×`,
           time: new Date(),
           severity: 'info',
         }, ...prev.slice(0, 19)]);
+
+        getSimulationStatus(res.simulationId)
+          .then(status => {
+            if (status.simulatedTime) {
+              setSimulationTime(new Date(status.simulatedTime));
+            }
+          })
+          .catch(err => console.warn('No se pudo cargar estado inicial:', err));
 
       } catch (err) {
         console.error('Error iniciando simulación:', err);
@@ -456,27 +544,27 @@ export function useSimulation(): UseSimulationReturn {
         }, ...prev.slice(0, 19)]);
       }
     } else {
-      // Modos realtime / collapse — lógica local original
+      // Modo collapse — lógica local original
       setIsRunning(true);
     }
   }, [mode, startDate, handle5DayWsMessage]);
 
   const pause = useCallback(async () => {
-    if (mode === '5day' && simIdRef.current) {
+    if (isBackendMode(mode) && simIdRef.current) {
       await pauseSimulation(simIdRef.current).catch(console.warn);
     }
     setIsRunning(false);
   }, [mode]);
 
   const resume = useCallback(async () => {
-    if (mode === '5day' && simIdRef.current) {
+    if (isBackendMode(mode) && simIdRef.current) {
       await resumeSimulation(simIdRef.current).catch(console.warn);
     }
     setIsRunning(true);
   }, [mode]);
 
   const reset = useCallback(async () => {
-    if (mode === '5day' && simIdRef.current) {
+    if (isBackendMode(mode) && simIdRef.current) {
       await stopSimulation(simIdRef.current).catch(console.warn);
       wsRef.current?.disconnect();
       simIdRef.current = null;
@@ -486,9 +574,15 @@ export function useSimulation(): UseSimulationReturn {
     const now = new Date();
     now.setHours(8, 0, 0, 0);
     setIsRunning(false);
-    setShipments(INITIAL_SHIPMENTS);
-    setFlights(INITIAL_FLIGHTS);
-    setAirports(INITIAL_AIRPORTS);
+    setShipments(mode === 'collapse' ? INITIAL_SHIPMENTS : []);
+    setFlights(mode === 'collapse' ? INITIAL_FLIGHTS : []);
+    if (mode === 'collapse') {
+      setAirports(INITIAL_AIRPORTS);
+    } else {
+      fetchAirports()
+        .then(data => setAirports(mapAirports(data)))
+        .catch(() => setAirports([]));
+    }
     setStartDate(now);
     setSimulationTime(now);
     setHasReplanned(false);
@@ -505,6 +599,17 @@ export function useSimulation(): UseSimulationReturn {
   }, [mode]);
 
   const replan = useCallback(() => {
+    if (isBackendMode(mode)) {
+      setEvents(prev => [{
+        id: `replan-info-${Date.now()}`,
+        type: 'info',
+        message: 'La replanificación real se ejecuta al cancelar un vuelo específico',
+        time: new Date(),
+        severity: 'info',
+      }, ...prev.slice(0, 19)]);
+      return;
+    }
+
     setHasReplanned(true);
     setShipments(prev => prev.map(s => s.status !== 'on-time' ? { ...s, isReplanned: true, status: 'on-time' as const } : s));
     setFlights(prev => prev.map(f => f.status !== 'normal' ? { ...f, isReplanned: true, status: 'normal' as const, load: Math.floor(f.load * 0.82) } : f));
@@ -516,7 +621,7 @@ export function useSimulation(): UseSimulationReturn {
       return a;
     }));
     setEvents(prev => [{ id:`replan-${Date.now()}`, type:'replan', message:'Replanificación de rutas completa', time:new Date(), severity:'info' }, ...prev.slice(0,19)]);
-  }, []);
+  }, [mode]);
 
   const skipToComplete = useCallback(() => {
     // Solo aplica para modos mock; en 5day real no hay skip
@@ -561,7 +666,47 @@ export function useSimulation(): UseSimulationReturn {
     });
   }, []);
 
-  const addShipment = useCallback((data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
+  const refreshSolution = useCallback(async (time = simulationTime) => {
+    const id = simIdRef.current;
+    if (!id) return;
+
+    const solution = await getSimulationSolution(id);
+    const mapped = mapSolutionToShipments(solution, time);
+    setShipments(prev => {
+      const mappedIds = new Set(mapped.map(s => s.id));
+      const pending = prev.filter(s => s.currentFlightId === 'PENDING' && !mappedIds.has(s.id));
+      return [...pending, ...mapped];
+    });
+  }, [simulationTime]);
+
+  const addShipment = useCallback(async (data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
+    if (isBackendMode(mode)) {
+      if (!simIdRef.current || !isRunning) {
+        throw new Error('Inicia la operación día a día antes de registrar maletas');
+      }
+
+      const response = await createShipment(simIdRef.current, {
+        clientId: data.airlineId || 'UI',
+        originId: data.origin,
+        destinationId: data.destination,
+        quantity: data.luggageCount,
+        ingressTime: simClock.toISOString(),
+      });
+
+      const shipment = mapShipmentResponseToShipment(response);
+      setShipments(prev => [shipment, ...prev.filter(s => s.id !== shipment.id)]);
+      setEvents(prev => [{
+        id: `shipment-${response.batchId}`,
+        type: 'info',
+        message: `${response.quantity} maletas registradas ${response.originId}→${response.destinationId}`,
+        time: new Date(),
+        severity: 'info',
+      }, ...prev.slice(0, 19)]);
+
+      await refreshSolution(simClock).catch(err => console.warn('Solución aún no disponible para el nuevo lote:', err));
+      return;
+    }
+
     const found = INITIAL_FLIGHTS.find(f => f.from === data.origin && f.to === data.destination) || INITIAL_FLIGHTS[0];
     const now = new Date(simulationTime);
     now.setHours(now.getHours() + 8);
@@ -574,7 +719,48 @@ export function useSimulation(): UseSimulationReturn {
       estimatedDelivery: now.toISOString().slice(0,16).replace('T',' '),
     };
     setShipments(prev => [newShipment, ...prev]);
-  }, [simulationTime]);
+  }, [mode, isRunning, simClock, simulationTime, refreshSolution]);
+
+  const cancelFlight = useCallback(async (flightId: string, day: string) => {
+    if (!isBackendMode(mode)) {
+      setEvents(prev => [{
+        id: `cancel-mock-${Date.now()}`,
+        type: 'alert',
+        message: `Vuelo ${flightId} marcado como cancelado en modo local`,
+        time: new Date(),
+        severity: 'warning',
+      }, ...prev.slice(0, 19)]);
+      setHasReplanned(true);
+      return;
+    }
+
+    if (!simIdRef.current || !isRunning) {
+      throw new Error('Inicia una simulación activa antes de cancelar vuelos');
+    }
+
+    const baseFlightId = stripProjectedDaySuffix(flightId);
+    const result = await cancelFlightRequest(simIdRef.current, baseFlightId, day);
+    setHasReplanned(true);
+    setFlights(prev => prev.map(f => f.id === flightId || f.id === result.cancelledFlightId
+      ? { ...f, status: 'critical', isReplanned: true }
+      : f
+    ));
+    setEvents(prev => [{
+      id: `cancel-${Date.now()}`,
+      type: 'replan',
+      message: `Vuelo ${baseFlightId} cancelado — ${result.replannedBatches} lotes replanificados`,
+      time: new Date(),
+      severity: result.unreplannableBatches > 0 ? 'warning' : 'info',
+    }, ...prev.slice(0, 19)]);
+
+    const [status] = await Promise.all([
+      getSimulationStatus(simIdRef.current),
+      refreshSolution(simClock),
+    ]);
+    if (status.simulatedTime) {
+      setSimulationTime(new Date(status.simulatedTime));
+    }
+  }, [mode, isRunning, simClock, refreshSolution]);
 
   return {
     startDate, setStartDate,
@@ -583,7 +769,7 @@ export function useSimulation(): UseSimulationReturn {
     hasReplanned, daySnapshots, simulationComplete, daysElapsed,
     collapseComplete, collapseMetrics,
     setMode, start, pause: pause as () => void, reset,
-    replan, skipToComplete, skipToCollapseComplete, addShipment,
+    replan, skipToComplete, skipToCollapseComplete, addShipment, cancelFlight,
     setAirports, setFlights, setShipments,
     simClock, activeFlights, flightPlanFlights,
     lastCycleUpdate,

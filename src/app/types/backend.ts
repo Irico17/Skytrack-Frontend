@@ -154,3 +154,76 @@ export interface BackendSimulationResults {
   algorithmUsed: string;
   daySnapshots: BackendDaySnapshot[];
 }
+
+export interface BackendSimulationStatus {
+  simulationId: string;
+  status: 'RUNNING' | 'PAUSED' | 'STOPPED' | 'COMPLETED';
+  scenario: string;
+  currentCycle: number;
+  simulatedTime: string | null;
+  batchesProcessed: number;
+  batchesFailed: number;
+  batchesPending: number;
+  currentFitness: number;
+  collapseLevel: string;
+  isCollapsed: boolean;
+  semaphores: BackendSemaphore;
+}
+
+export interface BackendFlightSegment {
+  flightId: string;
+  originId: string;
+  destinationId: string;
+  departureTime: string;
+  arrivalTime: string;
+  capacity: number;
+}
+
+export interface BackendRoute {
+  batchId: string;
+  clientId: string;
+  originId: string;
+  destinationId: string;
+  quantity: number;
+  meetsSLA: boolean;
+  slaSlack: string;
+  finalArrivalTime: string;
+  flights: BackendFlightSegment[];
+}
+
+export interface BackendSolution {
+  totalRoutes: number;
+  totalBags: number;
+  fitness: number;
+  routesMeetingSLA: number;
+  slaCompliancePercent: number;
+  routes: BackendRoute[];
+}
+
+export interface BackendShipmentRequest {
+  clientId?: string;
+  originId: string;
+  destinationId: string;
+  quantity: number;
+  ingressTime?: string;
+}
+
+export interface BackendShipmentResponse {
+  batchId: string;
+  clientId: string;
+  originId: string;
+  destinationId: string;
+  quantity: number;
+  ingressTime: string;
+  deadline: string;
+  status: string;
+}
+
+export interface BackendCancellationResult {
+  cancelledFlightId: string;
+  affectedBatches: number;
+  replannedBatches: number;
+  unreplannableBatches: number;
+  newFitness: number;
+  unreplannableBatchIds: string[];
+}
