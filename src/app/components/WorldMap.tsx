@@ -96,6 +96,11 @@ export function WorldMap({
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   const [geoFeatures, setGeoFeatures] = useState<any[]>([]);
   const [hoveredCountry, setHoveredCountry] = useState<string | null>(null);
+  const [flightFilter, setFlightFilter] = useState({
+    showSlaOk: true,
+    showSlaFail: true,
+    showEmpty: true,
+  });
 
   // Load world TopoJSON
   useEffect(() => {
@@ -263,23 +268,36 @@ export function WorldMap({
       const cx = (1-t)*(1-t)*ox + 2*(1-t)*t*cpx + t*t*dx;
       const cy = (1-t)*(1-t)*oy + 2*(1-t)*t*cpy + t*t*dy;
 
+      // Tangente de la curva bezier en t → ángulo de rotación del avión
+      const tanX = 2*(1-t)*(cpx - ox) + 2*t*(dx - cpx);
+      const tanY = 2*(1-t)*(cpy - oy) + 2*t*(dy - cpy);
+      const angle = Math.atan2(tanY, tanX) * (180 / Math.PI);
+
       // Color: con maletas = azul/ámbar, sin maletas = gris tenue
       const bags = bagsMap.get(f.flightId);
       const hasBags = bags && bags.bagsCount > 0;
+      const meetsSla = hasBags ? bags!.meetsSla : false;
       const color = hasBags
-        ? (bags!.meetsSla ? '#4DA6FF' : '#FFC857')
+        ? (meetsSla ? '#4DA6FF' : '#FFC857')
         : '#3A4A5E'; // gris tenue para vuelos vacíos
 
       return [{
-        flightId: f.flightId, cx, cy, color, t,
+        flightId: f.flightId, cx, cy, color, t, angle,
         pathD: `M ${ox} ${oy} Q ${cpx} ${cpy} ${dx} ${dy}`,
         bagsCount: hasBags ? bags!.bagsCount : 0,
         originId: f.originId,
         destinationId: f.destinationId,
         hasBags: !!hasBags,
+        meetsSla,
       }];
     });
   }, [simClock, activeFlights, flightPlanFlights, airportById]);
+
+  // Filtered active flight dots based on the on-map filter panel
+  const filteredFlightDots = useMemo(() => activeFlightDots.filter(dot => {
+    if (dot.hasBags) return dot.meetsSla ? flightFilter.showSlaOk : flightFilter.showSlaFail;
+    return flightFilter.showEmpty;
+  }), [activeFlightDots, flightFilter]);
 
   // Flight SVG paths
   const flightPaths = useMemo(() =>
@@ -522,8 +540,8 @@ export function WorldMap({
           );
         })}
 
-        {/* ── Route Lines ── */}
-        {toggles.showRoutes && flightPaths.map(f => {
+        {/* ── Route Lines (fallback estático: solo cuando no hay datos animados del backend) ── */}
+        {toggles.showRoutes && activeFlightDots.length === 0 && flightPaths.map(f => {
           const isSelected = selectedEntity?.type === 'flight' && selectedEntity.id === f.id;
           const color = getRouteColor(f.status, f.isReplanned);
 
@@ -557,8 +575,8 @@ export function WorldMap({
           );
         })}
 
-        {/* ── Airport Markers ── */}
-        {airportPositions.map(a => {
+        {/* ── Airport Markers (fallback estático o con datos reales del backend) ── */}
+        {(!simClock || activeFlightDots.length > 0) && airportPositions.map(a => {
           const isSelected = selectedEntity?.type === 'airport' && selectedEntity.id === a.id;
           const color = getStatusColor(a.status);
           const [px, py] = a.svgPos;
@@ -641,8 +659,8 @@ export function WorldMap({
           );
         })}
 
-        {/* ── Shipment Airplanes ── */}
-        {shipmentData.map(s => {
+        {/* ── Shipment Airplanes (fallback estático: solo cuando no hay datos animados del backend) ── */}
+        {activeFlightDots.length === 0 && shipmentData.map(s => {
           const isSelected = selectedEntity?.type === 'shipment' && selectedEntity.id === s.id;
           const color = getStatusColor(s.status);
           const [px, py] = s.svgPos;
@@ -681,7 +699,7 @@ export function WorldMap({
         })}
 
         {/* ── Rutas activas con maletas asignadas ── */}
-        {toggles.showRoutes && activeFlightDots.filter(dot => dot.hasBags).map(dot => (
+        {toggles.showRoutes && filteredFlightDots.filter(dot => dot.hasBags).map(dot => (
           <g key={`route-${dot.flightId}`} style={{ pointerEvents: 'none' }}>
             <path
               d={dot.pathD}
@@ -704,10 +722,10 @@ export function WorldMap({
         ))}
 
         {/* ── Vuelos Activos (backend solution, animados según simClock) ── */}
-        {activeFlightDots.map(dot => (
+        {filteredFlightDots.map(dot => (
           <g
             key={dot.flightId}
-            transform={`translate(${dot.cx},${dot.cy})`}
+            transform={`translate(${dot.cx},${dot.cy}) rotate(${dot.angle + 90})`}
             style={{ cursor: dot.hasBags ? 'pointer' : 'default', pointerEvents: dot.hasBags ? 'auto' : 'none' }}
             data-interactive={dot.hasBags ? 'true' : undefined}
             onClick={(e) => {
@@ -756,6 +774,50 @@ export function WorldMap({
           </g>
         ))}
       </svg>
+
+      {/* ── Flight filter panel ── */}
+      <div
+        data-interactive="true"
+        onMouseDown={e => e.stopPropagation()}
+        className="absolute z-10"
+        style={{
+          bottom: 30,
+          left: 12,
+          background: 'rgba(4,10,26,0.90)',
+          border: '1px solid #1E3058',
+          borderRadius: 10,
+          padding: '8px 10px',
+          backdropFilter: 'blur(6px)',
+          minWidth: 164,
+          userSelect: 'none',
+        }}
+      >
+        <div style={{ fontSize: 9, color: '#4A7098', marginBottom: 7, letterSpacing: '0.13em', fontWeight: 700, textTransform: 'uppercase' }}>
+          Filtros de vuelos
+        </div>
+        {([
+          { key: 'showSlaOk'   as const, color: '#4DA6FF', label: 'En ruta · cumple SLA' },
+          { key: 'showSlaFail' as const, color: '#FFC857', label: 'En ruta · sin SLA' },
+          { key: 'showEmpty'   as const, color: '#4A5E72', label: 'Sin carga asignada' },
+        ] as { key: keyof typeof flightFilter; color: string; label: string }[]).map(({ key, color, label }) => (
+          <div
+            key={key}
+            style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5, cursor: 'pointer' }}
+            onClick={() => setFlightFilter(prev => ({ ...prev, [key]: !prev[key] }))}
+          >
+            <div style={{
+              width: 10, height: 10, borderRadius: 2,
+              border: `1.5px solid ${color}`,
+              background: flightFilter[key] ? color : 'transparent',
+              flexShrink: 0,
+              transition: 'background 0.15s',
+            }} />
+            <span style={{ fontSize: 10, color: flightFilter[key] ? '#C8D8F0' : '#3A5070', transition: 'color 0.15s' }}>
+              {label}
+            </span>
+          </div>
+        ))}
+      </div>
 
       {/* Tooltip */}
       {tooltip && (

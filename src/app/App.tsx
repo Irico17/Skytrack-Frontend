@@ -10,7 +10,7 @@ import { CancelFlightModal } from './components/CancelFlightModal';
 import { FiveDayResults } from './components/FiveDayResults';
 import { CollapseResults } from './components/CollapseResults';
 import { ShipmentDetailPanel } from './components/ShipmentDetailPanel';
-import { useSimulation } from './hooks/useSimulation';
+import { useSimulation, SIMULATION_K } from './hooks/useSimulation';
 import { SimulationMode, Shipment } from './data/mockData';
 
 interface SelectedEntity {
