@@ -8,6 +8,7 @@ import type {
   BackendShipmentRequest,
   BackendShipmentResponse,
   BackendCancellationResult,
+  BackendStaticDataUploadResponse,
 } from '../types/backend';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '/api';
@@ -34,10 +35,10 @@ export function fetchAirports(): Promise<BackendAirport[]> {
 
 // ==================== PLAN DE VUELOS ====================
 
-/** Carga todos los vuelos del plan proyectados a un rango de fechas. */
-export async function fetchFlightPlan(startDate: string, days = 5): Promise<BackendFlightPlanFlight[]> {
+/** Carga todos los vuelos del plan proyectados a un rango de fecha/hora. */
+export async function fetchFlightPlan(startDateTime: string, days = 5): Promise<BackendFlightPlanFlight[]> {
   const res = await request<{ flights: BackendFlightPlanFlight[]; totalFlights: number }>(
-    `/data/flights?startDate=${startDate}&days=${days}`
+    `/data/flights?startDateTime=${encodeURIComponent(startDateTime)}&days=${days}`
   );
   return res.flights;
 }
@@ -46,21 +47,25 @@ export async function fetchFlightPlan(startDate: string, days = 5): Promise<Back
 
 /**
  * Inicia una simulación de 5 días.
- * @param startDate Fecha de inicio en formato "yyyy-MM-dd" (o undefined para usar todos los datos)
+ * @param startDateTime Fecha/hora de inicio en formato "yyyy-MM-ddTHH:mm" (o undefined para usar todos los datos)
  */
 export function startSimulation(
   scenario: 'PERIOD_SIMULATION' | 'DAY_TO_DAY' | 'COLLAPSE_SIMULATION',
-  startDate?: string
+  startDateTime?: string
 ): Promise<BackendStartResponse> {
   return request<BackendStartResponse>('/simulations/start', {
     method: 'POST',
-    body: JSON.stringify({ scenario, startDate: startDate ?? null }),
+    body: JSON.stringify({
+      scenario,
+      startDateTime: startDateTime ?? null,
+      startDate: startDateTime ? startDateTime.slice(0, 10) : null,
+    }),
   });
 }
 
 /** Inicia operación día a día usando la fecha actual de ejecución. */
-export function startDayToDaySimulation(startDate: string): Promise<BackendStartResponse> {
-  return startSimulation('DAY_TO_DAY', startDate);
+export function startDayToDaySimulation(startDateTime: string): Promise<BackendStartResponse> {
+  return startSimulation('DAY_TO_DAY', startDateTime);
 }
 
 export function stopSimulation(simId: string): Promise<void> {
@@ -110,4 +115,25 @@ export function cancelFlight(
     method: 'POST',
     body: JSON.stringify({ day }),
   });
+}
+
+export async function uploadStaticDataset(
+  airportsFile: File,
+  flightsFile: File,
+  shipmentFiles: File[]
+): Promise<BackendStaticDataUploadResponse> {
+  const form = new FormData();
+  form.append('airports', airportsFile);
+  form.append('flights', flightsFile);
+  shipmentFiles.forEach(file => form.append('shipments', file));
+
+  const res = await fetch(`${BASE}/data/static`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`HTTP ${res.status}: ${body}`);
+  }
+  return await res.json() as BackendStaticDataUploadResponse;
 }

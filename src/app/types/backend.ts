@@ -227,3 +227,15 @@ export interface BackendCancellationResult {
   newFitness: number;
   unreplannableBatchIds: string[];
 }
+
+export interface BackendStaticDataUploadResponse {
+  message: string;
+  airportsFile: string;
+  flightsFile: string;
+  shipmentFiles: number;
+  airportsLoaded: number;
+  flightsLoaded: number;
+  shipmentsLoaded: number;
+  dbAirportsImported: number;
+  dbFlightsImported: number;
+}

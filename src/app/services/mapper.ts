@@ -24,7 +24,7 @@ export function mapAirport(b: BackendAirport): Airport {
     country: b.country,
     coords: [b.longitude, b.latitude],   // [lon, lat] — formato del mapa
     capacity: b.storageCapacity,
-    occupancy: Math.round(b.storageCapacity * 0.5), // valor inicial neutral 50%
+    occupancy: 0,
     status: 'normal',
   };
 }

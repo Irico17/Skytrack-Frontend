@@ -2,7 +2,7 @@ import React from 'react';
 import {
   Filter, Route, Warehouse, AlertOctagon, Play, Pause,
   RotateCcw, Zap, PlusCircle, Search, X, ChevronDown, ChevronUp,
-  Plane, Package, Building2, FastForward, BarChart2, Calendar,
+  Plane, Package, Building2, FastForward, BarChart2, Calendar, Database,
 } from 'lucide-react';
 import { SimulationMode, AIRLINES, Airport } from '../data/mockData';
 
@@ -39,6 +39,7 @@ interface LeftSidebarProps {
   onReplan: () => void;
   onAddShipment: () => void;
   onCancelFlight: () => void;
+  onUploadStaticData: () => void;
   onSkipToComplete: () => void;
   onSkipToCollapseComplete: () => void;
   onViewResults: () => void;
@@ -121,7 +122,7 @@ export function LeftSidebar({
   daysElapsed, simulationComplete, collapseComplete, airports = [],
   onModeChange, onStartDateChange, onFilterChange, onToggleChange,
   onStart, onPause, onReset, onReplan, onAddShipment, onCancelFlight,
-  onSkipToComplete, onSkipToCollapseComplete, onViewResults, onViewCollapseResults,
+  onUploadStaticData, onSkipToComplete, onSkipToCollapseComplete, onViewResults, onViewCollapseResults,
 }: LeftSidebarProps) {
 
   const airlineOptions = mode === '5day' || mode === 'realtime'
@@ -144,14 +145,14 @@ export function LeftSidebar({
   });
   const currentDay = Math.min(Math.ceil(daysElapsed), 5);
 
-  const showDateSelector = mode === '5day' || mode === 'collapse';
+  const showDateSelector = true;
 
-  const formatInputDate = (date: Date): string => {
-    return date.toISOString().split('T')[0];
+  const formatInputDateTime = (date: Date): string => {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   };
 
   const formatDateDisplay = (date: Date): string => {
-    return `${String(date.getDate()).padStart(2, '0')} ${MONTHS_ES[date.getMonth()]} ${date.getFullYear()}`;
+    return `${String(date.getDate()).padStart(2, '0')} ${MONTHS_ES[date.getMonth()]} ${date.getFullYear()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   };
 
   return (
@@ -175,6 +176,15 @@ export function LeftSidebar({
         >
           <Plane className="w-4 h-4" />
           Cancelar Vuelo
+        </button>
+        <button
+          onClick={onUploadStaticData}
+          disabled={isRunning}
+          className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+          style={{ fontWeight: 600 }}
+        >
+          <Database className="w-4 h-4" />
+          Cargar Datos
         </button>
       </div>
 
@@ -201,16 +211,18 @@ export function LeftSidebar({
         </div>
       </Section>
 
-      {/* Date Selector — visible for 5day and collapse modes */}
+      {/* Date/time selector */}
       {showDateSelector && (
-        <Section title="FECHA DE INICIO" icon={<Calendar className="w-3 h-3" />}>
+        <Section title="FECHA Y HORA DE INICIO" icon={<Calendar className="w-3 h-3" />}>
           <div className="flex flex-col gap-2">
             <div className="relative">
               <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[#4A6080] pointer-events-none" />
               <input
-                type="date"
-                value={formatInputDate(startDate)}
-                onChange={e => onStartDateChange(new Date(e.target.value + 'T08:00:00'))}
+                type="datetime-local"
+                value={formatInputDateTime(startDate)}
+                onChange={e => {
+                  if (e.target.value) onStartDateChange(new Date(e.target.value));
+                }}
                 disabled={isRunning}
                 className="w-full bg-[#0D1E38] border border-[#1E3058] rounded-lg pl-7 pr-2 py-2 text-[10px] text-[#C8D8F0] focus:outline-none focus:border-[#4DA6FF]/60 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}

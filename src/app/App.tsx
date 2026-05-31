@@ -7,10 +7,11 @@ import { BottomPanel } from './components/BottomPanel';
 import { RightPanel } from './components/RightPanel';
 import { AddShipmentModal } from './components/AddShipmentModal';
 import { CancelFlightModal } from './components/CancelFlightModal';
+import { StaticDataUploadModal } from './components/StaticDataUploadModal';
 import { FiveDayResults } from './components/FiveDayResults';
 import { CollapseResults } from './components/CollapseResults';
 import { ShipmentDetailPanel } from './components/ShipmentDetailPanel';
-import { useSimulation, SIMULATION_K } from './hooks/useSimulation';
+import { useSimulation } from './hooks/useSimulation';
 import { SimulationMode, Shipment } from './data/mockData';
 
 interface SelectedEntity {
@@ -60,6 +61,7 @@ export default function App() {
   });
   const [showAddShipment, setShowAddShipment] = useState(false);
   const [showCancelFlight, setShowCancelFlight] = useState(false);
+  const [showStaticDataUpload, setShowStaticDataUpload] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [showCollapseResults, setShowCollapseResults] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -67,7 +69,29 @@ export default function App() {
   const [bottomCollapsed, setBottomCollapsed] = useState(false);
   const [mapExpanded, setMapExpanded] = useState(false);
 
-  const simClockDisplay = formatSimulationClock(simulation.simClock);
+  const displayedSimulationTime = simulation.mode === 'collapse'
+    ? simulation.simulationTime
+    : simulation.simClock;
+  const latestMapClockRef = React.useRef(displayedSimulationTime);
+  const [mapSimulationTime, setMapSimulationTime] = React.useState(displayedSimulationTime);
+
+  React.useEffect(() => {
+    latestMapClockRef.current = displayedSimulationTime;
+  }, [displayedSimulationTime]);
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => {
+      const next = latestMapClockRef.current;
+      setMapSimulationTime(prev => prev.getTime() === next.getTime() ? prev : next);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  React.useEffect(() => {
+    if (!simulation.isRunning) setMapSimulationTime(displayedSimulationTime);
+  }, [displayedSimulationTime, simulation.isRunning]);
+
+  const simClockDisplay = formatSimulationClock(displayedSimulationTime);
   const hidePanels = mapExpanded;
 
   // Auto-show results when 5day simulation completes
@@ -167,7 +191,7 @@ export default function App() {
       <TopBar
         isRunning={simulation.isRunning}
         mode={simulation.mode}
-        simulationTime={simulation.simulationTime}
+        simulationTime={displayedSimulationTime}
         events={simulation.events}
         onStart={simulation.start}
         onPause={simulation.pause}
@@ -204,6 +228,7 @@ export default function App() {
             onReplan={simulation.replan}
             onAddShipment={() => setShowAddShipment(true)}
             onCancelFlight={() => setShowCancelFlight(true)}
+            onUploadStaticData={() => setShowStaticDataUpload(true)}
             onSkipToComplete={simulation.skipToComplete}
             onSkipToCollapseComplete={simulation.skipToCollapseComplete}
             onViewResults={() => setShowResults(true)}
@@ -224,7 +249,7 @@ export default function App() {
               onSelectFlight={handleSelectFlight}
               onSelectShipment={handleSelectShipment}
               toggles={toggles}
-              simClock={simulation.simClock}
+              simClock={mapSimulationTime}
               activeFlights={filteredActiveFlights}
               flightPlanFlights={filteredFlightPlanFlights}
               isExpanded={mapExpanded}
@@ -275,7 +300,7 @@ export default function App() {
                 }}>
                   <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#4DA6FF', boxShadow: '0 0 6px #4DA6FF', animation: simulation.isRunning ? 'pulse 2s infinite' : 'none' }} />
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontSize: 9, color: '#4A6080', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Tiempo simulado · K={SIMULATION_K}×</span>
+                    <span style={{ fontSize: 9, color: '#4A6080', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Tiempo simulado · K={simulation.simulationK}×</span>
                     <span style={{ fontSize: 15, fontFamily: 'monospace', fontWeight: 700, color: '#E2E8F8', letterSpacing: '0.05em' }}>
                       {simClockDisplay.date}
                       {' '}
@@ -399,7 +424,7 @@ export default function App() {
             shipments={simulation.shipments}
             events={simulation.events}
             isRunning={simulation.isRunning}
-            simulationTime={simulation.simulationTime}
+            simulationTime={displayedSimulationTime}
             mode={simulation.mode}
             activeFlights={filteredActiveFlights}
             flightPlanFlights={filteredFlightPlanFlights}
@@ -423,7 +448,14 @@ export default function App() {
           onCancel={simulation.cancelFlight}
           flightPlanFlights={filteredFlightPlanFlights.length > 0 ? filteredFlightPlanFlights : simulation.flightPlanFlights}
           activeFlights={filteredActiveFlights.length > 0 ? filteredActiveFlights : simulation.activeFlights}
-          defaultDay={formatApiDate(simulation.simClock)}
+          defaultDay={formatApiDate(displayedSimulationTime)}
+        />
+      )}
+
+      {showStaticDataUpload && (
+        <StaticDataUploadModal
+          onClose={() => setShowStaticDataUpload(false)}
+          onUpload={simulation.uploadStaticData}
         />
       )}
 
@@ -459,7 +491,7 @@ export default function App() {
           flights={simulation.flights}
           airports={simulation.airports}
           onClose={() => setSelectedEntity(null)}
-          simulationTime={simulation.simulationTime}
+          simulationTime={displayedSimulationTime}
         />
       )}
     </div>
