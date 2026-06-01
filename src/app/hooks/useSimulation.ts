@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, Dispatch, SetStateAction } from 'react';
+import { useState, useEffect, useRef, useCallback, Dispatch, SetStateAction, startTransition } from 'react';
 import {
   Airport, Flight, Shipment, SimEvent, SimulationMode,
   INITIAL_AIRPORTS, INITIAL_FLIGHTS, INITIAL_SHIPMENTS,
@@ -29,7 +29,7 @@ import {
   mapSolutionToShipments,
   mapShipmentResponseToShipment,
 } from '../services/mapper';
-import type { BackendCycleUpdate, BackendSimulationFinished, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendStaticDataUploadResponse } from '../types/backend';
+import type { BackendCycleUpdate, BackendSimulationFinished, BackendSimulationError, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendSolution, BackendStaticDataUploadResponse } from '../types/backend';
 
 /** Factor de aceleración del tiempo simulado: 1 min real = K min simulados */
 export const SIMULATION_K = 120;
@@ -119,7 +119,25 @@ const DISRUPTION_MESSAGES = [
 ];
 
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+const PLAYBACK_DELAY_MS = 500;
+const PLAYBACK_TICK_MS = 50;
+const PLAYBACK_MAX_FRAMES = 240;
+const SOLUTION_REFRESH_DELAY_MS = 1_200;
+const SOLUTION_MAPPING_CHUNK_SIZE = 250;
 const MONTHS_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+type BackendPlaybackMessage = BackendCycleUpdate | BackendStorageUpdate;
+
+interface PlaybackFrame {
+  receivedAtMs: number;
+  simulatedMs: number;
+  simulatedTime: string;
+  daysElapsed: number;
+  cycle: number;
+  airportCapacities: BackendAirportCapacity[];
+  operationalMetrics?: BackendCycleUpdate['operationalMetrics'];
+  cycleUpdate?: BackendCycleUpdate;
+}
 
 function isBackendMode(mode: SimulationMode): boolean {
   return mode === 'realtime' || mode === '5day';
@@ -133,6 +151,34 @@ function parseApiDateTimeAsUtc(value: string): Date {
   const hasZone = /(?:Z|[+-]\d{2}:\d{2})$/.test(value);
   const parsed = new Date(hasZone ? value : `${value}Z`);
   return Number.isNaN(parsed.getTime()) ? new Date(value) : parsed;
+}
+
+function parseBackendSimMs(value?: string | null): number | null {
+  if (!value) return null;
+  const normalized = value.replace(/\[[^\]]+\]$/, '');
+  const parsed = new Date(normalized);
+  const ms = parsed.getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, 0));
+}
+
+async function mapSolutionToShipmentsCooperatively(solution: BackendSolution, simulatedTime: Date): Promise<Shipment[]> {
+  if (solution.routes.length <= SOLUTION_MAPPING_CHUNK_SIZE) {
+    return mapSolutionToShipments(solution, simulatedTime);
+  }
+
+  const mapped: Shipment[] = [];
+  for (let start = 0; start < solution.routes.length; start += SOLUTION_MAPPING_CHUNK_SIZE) {
+    const chunk = solution.routes.slice(start, start + SOLUTION_MAPPING_CHUNK_SIZE);
+    mapped.push(...mapSolutionToShipments({ ...solution, routes: chunk }, simulatedTime));
+    if (start + SOLUTION_MAPPING_CHUNK_SIZE < solution.routes.length) {
+      await yieldToBrowser();
+    }
+  }
+  return mapped;
 }
 
 function stripProjectedDaySuffix(flightId: string): string {
@@ -193,8 +239,12 @@ export function useSimulation(): UseSimulationReturn {
   // ===== RELOJ SIMULADO (corre a K× en tiempo real) =====
   const [simClock, setSimClock] = useState<Date>(today);
   const [simulationK, setSimulationK] = useState(SIMULATION_K);
-  // Base FIJA del reloj: se establece al iniciar la simulación y NO cambia con WebSocket
+  // Base interpolada del reloj: el backend la reancla y el frontend suaviza entre updates.
   const clockBaseRef = useRef<{ simMs: number; realMs: number; K: number } | null>(null);
+  const playbackBufferRef = useRef<PlaybackFrame[]>([]);
+  const lastAppliedPlaybackKeyRef = useRef<string | null>(null);
+  const solutionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const solutionRefreshSeqRef = useRef(0);
 
   // Vuelos activos (con maletas) del backend
   const [activeFlights, setActiveFlights] = useState<BackendActiveFlight[]>([]);
@@ -220,6 +270,93 @@ export function useSimulation(): UseSimulationReturn {
       });
     });
   }, []);
+
+  const resetPlaybackBuffer = useCallback(() => {
+    playbackBufferRef.current = [];
+    lastAppliedPlaybackKeyRef.current = null;
+  }, []);
+
+  const pushPlaybackFrame = useCallback((update: BackendPlaybackMessage) => {
+    const simulatedMs = parseBackendSimMs(update.simulatedTime);
+    if (simulatedMs === null) return null;
+
+    const frame: PlaybackFrame = {
+      receivedAtMs: Date.now(),
+      simulatedMs,
+      simulatedTime: update.simulatedTime,
+      daysElapsed: update.daysElapsed,
+      cycle: update.cycle,
+      airportCapacities: update.airportCapacities ?? [],
+      operationalMetrics: update.operationalMetrics,
+      cycleUpdate: update.type === 'CYCLE_UPDATE' ? update : undefined,
+    };
+
+    const buffer = playbackBufferRef.current;
+    const last = buffer[buffer.length - 1];
+    if (last && simulatedMs < last.simulatedMs) {
+      buffer.length = 0;
+      lastAppliedPlaybackKeyRef.current = null;
+    }
+
+    const previous = buffer[buffer.length - 1];
+    if (previous
+        && previous.simulatedMs === frame.simulatedMs
+        && previous.cycle === frame.cycle
+        && Boolean(previous.cycleUpdate) === Boolean(frame.cycleUpdate)) {
+      buffer[buffer.length - 1] = frame;
+    } else {
+      buffer.push(frame);
+    }
+
+    if (buffer.length > PLAYBACK_MAX_FRAMES) {
+      buffer.splice(0, buffer.length - PLAYBACK_MAX_FRAMES);
+    }
+
+    return new Date(simulatedMs);
+  }, []);
+
+  const applyMappedShipments = useCallback((mapped: Shipment[]) => {
+    startTransition(() => {
+      setShipments(prev => {
+        const mappedIds = new Set(mapped.map(s => s.id));
+        const pending = prev.filter(s => s.currentFlightId === 'PENDING' && !mappedIds.has(s.id));
+        return [...pending, ...mapped];
+      });
+    });
+  }, []);
+
+  const cancelScheduledSolutionRefresh = useCallback(() => {
+    solutionRefreshSeqRef.current += 1;
+    if (solutionRefreshTimerRef.current) {
+      clearTimeout(solutionRefreshTimerRef.current);
+      solutionRefreshTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleSolutionRefresh = useCallback((simulatedTime: Date) => {
+    const id = simIdRef.current;
+    if (!id) return;
+
+    cancelScheduledSolutionRefresh();
+    const seq = solutionRefreshSeqRef.current;
+    solutionRefreshTimerRef.current = setTimeout(() => {
+      solutionRefreshTimerRef.current = null;
+      getSimulationSolution(id)
+        .then(async solution => {
+          if (seq !== solutionRefreshSeqRef.current) return;
+          if (solution.routes.length === 0 && solution.totalRoutes === 0) {
+            startTransition(() => setShipments(prev => prev.length > 0 ? prev : []));
+            return;
+          }
+          const mapped = await mapSolutionToShipmentsCooperatively(solution, simulatedTime);
+          if (seq !== solutionRefreshSeqRef.current) return;
+          applyMappedShipments(mapped);
+        })
+        .catch(err => console.warn('No se pudo refrescar la solución:', err));
+    }, SOLUTION_REFRESH_DELAY_MS);
+  }, [applyMappedShipments, cancelScheduledSolutionRefresh]);
+
+  useEffect(() => () => cancelScheduledSolutionRefresh(), [cancelScheduledSolutionRefresh]);
 
   // ===== CARGAR AEROPUERTOS REALES PARA MODOS BACKEND =====
   useEffect(() => {
@@ -256,23 +393,7 @@ export function useSimulation(): UseSimulationReturn {
   const handle5DayWsMessage = useCallback((msg: any) => {
     if (msg.type === 'CYCLE_UPDATE') {
       const update = msg as BackendCycleUpdate;
-      setLastCycleUpdate(update);
-      const t = update.simulatedTime ? new Date(update.simulatedTime) : null;
-      if (t) {
-        setSimulationTime(t);
-        // NO re-anclamos el reloj aquí: el reloj se ancló al iniciar la simulación
-        // y corre continuamente a K×. Solo actualizamos simulationTime para referencia.
-      }
-      setDaysElapsed(update.daysElapsed);
-
-      // Actualizar vuelos activos (con maletas asignadas por el planificador)
-      if (update.activeFlights) {
-        setActiveFlights(update.activeFlights);
-        setFlights(prev => mergeActiveFlightLoads(prev, update.activeFlights));
-      }
-
-      // Actualizar capacidad de aeropuertos desde los datos del backend
-      applyAirportCapacities(update.airportCapacities);
+      const t = pushPlaybackFrame(update);
 
       // Actualizar snapshot del día para la simulación de 5 días
       const snap = mode === '5day' ? buildCycleDaySnapshot(update, startDate) : null;
@@ -298,34 +419,29 @@ export function useSimulation(): UseSimulationReturn {
                 : update.semaphores.sla === 'AMBER' ? 'warning' : 'info',
       }, ...prev.slice(0, 19)]);
 
-      const id = simIdRef.current;
-      const simulated = t ?? new Date();
-      if (id) {
-        getSimulationSolution(id)
-          .then(solution => {
-            const mapped = mapSolutionToShipments(solution, simulated);
-            setShipments(prev => {
-              const mappedIds = new Set(mapped.map(s => s.id));
-              const pending = prev.filter(s => s.currentFlightId === 'PENDING' && !mappedIds.has(s.id));
-              return [...pending, ...mapped];
-            });
-          })
-          .catch(err => console.warn('No se pudo refrescar la solución:', err));
-      }
+      scheduleSolutionRefresh(t ?? new Date());
 
     } else if (msg.type === 'STORAGE_UPDATE') {
       const update = msg as BackendStorageUpdate;
-      if (update.simulatedTime) {
-        setSimulationTime(new Date(update.simulatedTime));
-      }
-      setDaysElapsed(update.daysElapsed);
-      applyAirportCapacities(update.airportCapacities);
-      if (update.operationalMetrics) {
-        setLastCycleUpdate(prev => prev
-          ? { ...prev, simulatedTime: update.simulatedTime, daysElapsed: update.daysElapsed, airportCapacities: update.airportCapacities, operationalMetrics: update.operationalMetrics }
-          : prev
-        );
-      }
+      pushPlaybackFrame(update);
+
+    } else if (msg.type === 'SIMULATION_ERROR') {
+      const failed = msg as BackendSimulationError;
+      setIsRunning(false);
+      setSimulationComplete(false);
+      clockBaseRef.current = null;
+      cancelScheduledSolutionRefresh();
+      resetPlaybackBuffer();
+
+      setEvents(prev => [{
+        id: `sim-error-${Date.now()}`,
+        type: 'alert',
+        message: `Simulación detenida por error — ciclo ${failed.currentCycle}: ${failed.message}`,
+        time: new Date(),
+        severity: 'critical',
+      }, ...prev.slice(0, 19)]);
+
+      wsRef.current?.disconnect();
 
     } else if (msg.type === 'SIMULATION_FINISHED') {
       const finished = msg as BackendSimulationFinished;
@@ -333,6 +449,14 @@ export function useSimulation(): UseSimulationReturn {
       setSimulationComplete(mode === '5day');
       setDaysElapsed(mode === '5day' ? 5 : daysElapsed);
       clockBaseRef.current = null; // parar el reloj
+      cancelScheduledSolutionRefresh();
+      resetPlaybackBuffer();
+
+      if (mode === '5day') {
+        const finalTime = new Date(parseApiDateTimeAsUtc(formatApiDateTime(startDate)).getTime() + FIVE_DAYS_MS);
+        setSimulationTime(finalTime);
+        setSimClock(finalTime);
+      }
 
       setEvents(prev => [{
         id: `finish-${Date.now()}`,
@@ -355,20 +479,73 @@ export function useSimulation(): UseSimulationReturn {
       // Desconectar WebSocket
       wsRef.current?.disconnect();
     }
-  }, [startDate, mode, daysElapsed, applyAirportCapacities]);
+  }, [startDate, mode, daysElapsed, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, cancelScheduledSolutionRefresh]);
 
-  // ===== RELOJ SIMULADO: avanza a K× en tiempo real =====
+  // En modos backend, el mapa y los almacenes se renderizan desde el mismo frame atrasado.
   useEffect(() => {
     if (!isBackendMode(mode) || !isRunning) return;
+
     const tick = setInterval(() => {
-      const base = clockBaseRef.current;
-      if (!base) return;
-      const realElapsedMs = Date.now() - base.realMs;
-      const simElapsedMs = realElapsedMs * base.K;
-      setSimClock(new Date(base.simMs + simElapsedMs));
-    }, 100);
+      const buffer = playbackBufferRef.current;
+      if (buffer.length === 0) return;
+
+      const renderAtMs = Date.now() - PLAYBACK_DELAY_MS;
+      let nextIndex = buffer.findIndex(frame => frame.receivedAtMs > renderAtMs);
+      let frame: PlaybackFrame;
+      let renderSimMs: number;
+
+      if (nextIndex > 0) {
+        const previousFrame = buffer[nextIndex - 1];
+        const nextFrame = buffer[nextIndex];
+        const frameSpanMs = Math.max(1, nextFrame.receivedAtMs - previousFrame.receivedAtMs);
+        const ratio = Math.min(Math.max((renderAtMs - previousFrame.receivedAtMs) / frameSpanMs, 0), 1);
+        frame = previousFrame;
+        renderSimMs = previousFrame.simulatedMs + (nextFrame.simulatedMs - previousFrame.simulatedMs) * ratio;
+      } else if (nextIndex === 0) {
+        frame = buffer[0];
+        renderSimMs = frame.simulatedMs;
+      } else {
+        frame = buffer[buffer.length - 1];
+        renderSimMs = frame.simulatedMs;
+      }
+
+      while (buffer.length > 2 && buffer[1].receivedAtMs <= renderAtMs) {
+        buffer.shift();
+      }
+
+      const nextDate = new Date(renderSimMs);
+      setSimulationTime(nextDate);
+      setSimClock(prev => Math.abs(prev.getTime() - renderSimMs) < 1 ? prev : nextDate);
+      setDaysElapsed(frame.daysElapsed);
+
+      const frameKey = `${frame.cycle}:${frame.simulatedMs}:${frame.cycleUpdate ? 'cycle' : 'storage'}:${frame.operationalMetrics?.deliveredBags ?? ''}:${frame.airportCapacities.length}`;
+      if (lastAppliedPlaybackKeyRef.current === frameKey) return;
+      lastAppliedPlaybackKeyRef.current = frameKey;
+
+      if (frame.cycleUpdate) {
+        setLastCycleUpdate(frame.cycleUpdate);
+        setActiveFlights(frame.cycleUpdate.activeFlights ?? []);
+        startTransition(() => {
+          setFlights(prev => mergeActiveFlightLoads(prev, frame.cycleUpdate?.activeFlights ?? []));
+        });
+      } else if (frame.operationalMetrics) {
+        setLastCycleUpdate(prev => prev
+          ? {
+              ...prev,
+              simulatedTime: frame.simulatedTime,
+              daysElapsed: frame.daysElapsed,
+              airportCapacities: frame.airportCapacities,
+              operationalMetrics: frame.operationalMetrics,
+            }
+          : prev
+        );
+      }
+
+      applyAirportCapacities(frame.airportCapacities);
+    }, PLAYBACK_TICK_MS);
+
     return () => clearInterval(tick);
-  }, [mode, isRunning]);
+  }, [mode, isRunning, applyAirportCapacities]);
 
 
   // ===== MOCK LOOP (collapse) =====
@@ -486,6 +663,8 @@ export function useSimulation(): UseSimulationReturn {
       setSimClock(optimisticStart);
       setSimulationTime(optimisticStart);
       clockBaseRef.current = null;
+      cancelScheduledSolutionRefresh();
+      resetPlaybackBuffer();
 
       try {
         setEvents(prev => [{
@@ -547,7 +726,7 @@ export function useSimulation(): UseSimulationReturn {
           id: `start-${Date.now()}`,
           type: 'info',
           message: isFiveDay
-            ? `Simulación iniciada — K=${K}× — Duración: ${res.totalRealMinutes?.toFixed(0) ?? '?'} min reales`
+            ? `Simulación iniciada — K=${K}× — Sa=${res.Sa ?? '?'} min — Sc=${res.Sc ? `${Math.round(res.Sc / 60)} h` : '?'} — Duración: ${res.totalRealMinutes?.toFixed(0) ?? '?'} min reales`
             : `Operación día a día iniciada — ${startDateTimeStr} — K=${K}×`,
           time: new Date(),
           severity: 'info',
@@ -565,6 +744,8 @@ export function useSimulation(): UseSimulationReturn {
         console.error('Error iniciando simulación:', err);
         setIsRunning(false);
         clockBaseRef.current = null;
+        cancelScheduledSolutionRefresh();
+        resetPlaybackBuffer();
         setEvents(prev => [{
           id: `err-${Date.now()}`,
           type: 'alert',
@@ -577,21 +758,18 @@ export function useSimulation(): UseSimulationReturn {
       // Modo collapse — lógica local original
       setIsRunning(true);
     }
-  }, [mode, startDate, handle5DayWsMessage]);
+  }, [mode, startDate, handle5DayWsMessage, resetPlaybackBuffer, cancelScheduledSolutionRefresh]);
 
   const pause = useCallback(async () => {
     if (isBackendMode(mode) && simIdRef.current) {
       await pauseSimulation(simIdRef.current).catch(console.warn);
-      const base = clockBaseRef.current;
-      if (base) {
-        const frozen = new Date(base.simMs + (Date.now() - base.realMs) * base.K);
-        setSimClock(frozen);
-        setSimulationTime(frozen);
-        clockBaseRef.current = null;
-      }
+      setSimulationTime(simClock);
+      clockBaseRef.current = null;
+      cancelScheduledSolutionRefresh();
+      resetPlaybackBuffer();
     }
     setIsRunning(false);
-  }, [mode]);
+  }, [mode, simClock, resetPlaybackBuffer, cancelScheduledSolutionRefresh]);
 
   const resume = useCallback(async () => {
     if (isBackendMode(mode) && simIdRef.current) {
@@ -617,6 +795,8 @@ export function useSimulation(): UseSimulationReturn {
     setActiveFlights([]);
     setFlightPlanFlights([]);
     clockBaseRef.current = null;
+    cancelScheduledSolutionRefresh();
+    resetPlaybackBuffer();
     setSimulationK(SIMULATION_K);
     if (mode === 'collapse') {
       setAirports(INITIAL_AIRPORTS);
@@ -639,7 +819,7 @@ export function useSimulation(): UseSimulationReturn {
     tickCountRef.current = 0;
     collapseTickRef.current = 0;
     setEvents(buildInitEvents(now));
-  }, [mode]);
+  }, [mode, resetPlaybackBuffer, cancelScheduledSolutionRefresh]);
 
   const replan = useCallback(() => {
     if (isBackendMode(mode)) {
@@ -714,13 +894,9 @@ export function useSimulation(): UseSimulationReturn {
     if (!id) return;
 
     const solution = await getSimulationSolution(id);
-    const mapped = mapSolutionToShipments(solution, time);
-    setShipments(prev => {
-      const mappedIds = new Set(mapped.map(s => s.id));
-      const pending = prev.filter(s => s.currentFlightId === 'PENDING' && !mappedIds.has(s.id));
-      return [...pending, ...mapped];
-    });
-  }, [simulationTime]);
+    const mapped = await mapSolutionToShipmentsCooperatively(solution, time);
+    applyMappedShipments(mapped);
+  }, [simulationTime, applyMappedShipments]);
 
   const addShipment = useCallback(async (data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
     if (isBackendMode(mode)) {
@@ -733,7 +909,6 @@ export function useSimulation(): UseSimulationReturn {
         originId: data.origin,
         destinationId: data.destination,
         quantity: data.luggageCount,
-        ingressTime: simClock.toISOString(),
       });
 
       const shipment = mapShipmentResponseToShipment(response);

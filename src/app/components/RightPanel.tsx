@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer,
   PieChart, Pie, Cell
@@ -130,26 +130,32 @@ export function RightPanel({
   const storedBags = isBackendStatsMode ? backendMetrics?.storedBags ?? DASH : airports.reduce((acc, a) => acc + a.occupancy, 0);
   const replanCount: number | string = isBackendStatsMode ? DASH : shipments.filter(s => s.isReplanned).length;
 
-  const backendTotal = lastCycleUpdate
+  const backendSlaTotal = lastCycleUpdate
+    ? lastCycleUpdate.batchSummary.onTime + lastCycleUpdate.batchSummary.delayed
+    : 0;
+  const backendVisibleTotal = lastCycleUpdate
     ? lastCycleUpdate.batchSummary.onTime + lastCycleUpdate.batchSummary.delayed + lastCycleUpdate.batchSummary.unrouted
     : 0;
   const punctualityPct = hasBackendStats
-    ? Math.round((onTimeCount / Math.max(backendTotal, 1)) * 100)
+    ? Math.round((onTimeCount / Math.max(backendSlaTotal, 1)) * 100)
     : Math.round((onTimeCount / Math.max(shipments.length, 1)) * 100);
   const avgOccupancy = airports.length > 0
     ? Math.round(airports.reduce((acc, a) => acc + getOccupancyPercent(a.occupancy, a.capacity), 0) / airports.length)
     : 0;
-  const criticalAirports = airports.filter(a => a.status === 'critical');
-  const criticalFlights = hasBackendStats ? activeFlights.filter(f => !f.meetsSla) : flights.filter(f => f.status === 'critical');
+  const criticalAirports = useMemo(() => airports.filter(a => a.status === 'critical'), [airports]);
+  const criticalFlights = useMemo(
+    () => hasBackendStats ? activeFlights.filter(f => !f.meetsSla) : flights.filter(f => f.status === 'critical'),
+    [hasBackendStats, activeFlights, flights]
+  );
 
   // Warehouse data for chart
-  const warehouseData = airports
+  const warehouseData = useMemo(() => airports
     .map(a => ({ id: a.id, pct: getOccupancyPercent(a.occupancy, a.capacity), occupancy: a.occupancy, capacity: a.capacity }))
     .sort((a, b) => b.pct - a.pct)
-    .slice(0, 8);
+    .slice(0, 8), [airports]);
 
   // Shipment status distribution
-  const statusData = hasBackendStats
+  const statusData = useMemo(() => hasBackendStats
     ? [
         { name: 'A Tiempo', value: onTimeCount, color: '#00FF9C' },
         { name: 'Retrasado', value: delayedCount, color: '#FFC857' },
@@ -159,7 +165,7 @@ export function RightPanel({
         { name: 'A Tiempo', value: onTimeCount, color: '#00FF9C' },
         { name: 'Retrasado', value: delayedCount, color: '#FFC857' },
         { name: 'Crítico', value: criticalCount, color: '#FF4D4D' },
-      ].filter(d => d.value > 0);
+      ].filter(d => d.value > 0), [hasBackendStats, onTimeCount, delayedCount, criticalCount, lastCycleUpdate]);
 
   const tabs = [
     { id: 'kpi' as const, label: 'KPIs', icon: <Activity className="w-3 h-3" /> },
@@ -167,7 +173,10 @@ export function RightPanel({
     { id: 'reports' as const, label: 'Reportes', icon: <FileText className="w-3 h-3" /> },
   ];
 
-  const recentReplanned = shipments.filter(s => s.isReplanned);
+  const recentEvents = useMemo(() => events.slice(0, 6), [events]);
+  const recentReplanned = useMemo(() => shipments.filter(s => s.isReplanned), [shipments]);
+  const sortedAirports = useMemo(() => [...airports]
+    .sort((a, b) => getOccupancyPercent(b.occupancy, b.capacity) - getOccupancyPercent(a.occupancy, a.capacity)), [airports]);
 
   return (
     <div className="w-80 bg-[#080F1E] border-l border-[#1E3058] flex flex-col h-full overflow-hidden">
@@ -208,7 +217,7 @@ export function RightPanel({
                 value={deliveredBags}
                 color="#00FF9C"
                 icon={<CheckCircle className="w-3.5 h-3.5" />}
-                trend={hasBackendStats ? 'Retiro confirmado por reloj' : undefined}
+                trend={hasBackendStats ? 'Llegada a destino confirmada' : undefined}
                 trendDir="up"
               />
               <KPICard
@@ -216,7 +225,7 @@ export function RightPanel({
                 value={pendingBags}
                 color={delayedCount > 0 ? '#FFC857' : '#00FF9C'}
                 icon={<AlertTriangle className="w-3.5 h-3.5" />}
-                trend={hasBackendStats ? `${delayedCount} lotes con SLA vencido` : undefined}
+                trend={hasBackendStats ? `${delayedCount} rutas fuera de SLA` : undefined}
                 trendDir={delayedCount > 0 ? 'down' : 'neutral'}
               />
               <KPICard
@@ -233,7 +242,7 @@ export function RightPanel({
                 unit="%"
                 color={punctualityPct >= 85 ? '#00FF9C' : punctualityPct >= 70 ? '#FFC857' : '#FF4D4D'}
                 icon={<Clock className="w-3.5 h-3.5" />}
-                trend={`${onTimeCount}/${Math.max(hasBackendStats ? backendTotal : shipments.length, 1)} a tiempo`}
+                trend={`${onTimeCount}/${Math.max(hasBackendStats ? backendSlaTotal : shipments.length, 1)} rutas SLA ok`}
                 trendDir={punctualityPct >= 85 ? 'up' : 'down'}
               />
               <KPICard
@@ -268,7 +277,7 @@ export function RightPanel({
               <TrafficLight
                 label="Envíos Críticos"
                 value={criticalCount}
-                max={Math.max(hasBackendStats ? backendTotal : shipments.length, 1)}
+                max={Math.max(hasBackendStats ? backendVisibleTotal : shipments.length, 1)}
                 thresholdWarn={5}
                 thresholdCrit={15}
               />
@@ -326,7 +335,7 @@ export function RightPanel({
                 EVENTOS RECIENTES
               </div>
               <div className="flex flex-col gap-1.5 max-h-32 overflow-y-auto">
-                {events.slice(0, 6).map(event => (
+                {recentEvents.map(event => (
                   <div key={event.id} className="flex items-start gap-2">
                     <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0
                       ${event.severity === 'critical' ? 'bg-[#FF4D4D]' :
@@ -400,9 +409,7 @@ export function RightPanel({
                 <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>TODOS LOS AEROPUERTOS</span>
               </div>
               <div className="max-h-48 overflow-y-auto">
-                {airports
-                  .sort((a, b) => getOccupancyPercent(b.occupancy, b.capacity) - getOccupancyPercent(a.occupancy, a.capacity))
-                  .map(a => {
+                {sortedAirports.map(a => {
                     const pct = getOccupancyPercent(a.occupancy, a.capacity);
                     const color = getStatusColor(a.status);
                     return (

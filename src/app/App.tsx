@@ -83,7 +83,7 @@ export default function App() {
     const timer = window.setInterval(() => {
       const next = latestMapClockRef.current;
       setMapSimulationTime(prev => prev.getTime() === next.getTime() ? prev : next);
-    }, 250);
+    }, 100);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -467,6 +467,7 @@ export default function App() {
           shipments={simulation.shipments}
           events={simulation.events}
           airports={simulation.airports}
+          lastCycleUpdate={simulation.lastCycleUpdate}
           onClose={() => setShowResults(false)}
           onReset={handleReset}
         />

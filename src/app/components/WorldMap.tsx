@@ -18,6 +18,7 @@ interface Tooltip {
   x: number;
   y: number;
   content: React.ReactNode;
+  airportId?: string;
 }
 
 interface Toggles {
@@ -152,8 +153,8 @@ function drawPlaneMarker(
   zoomLevel: number,
 ) {
   const zoomBoost = hasBags
-    ? Math.min(1.85, 1 + Math.max(0, zoomLevel - 1) * 0.28)
-    : Math.min(1.65, 1 + Math.max(0, zoomLevel - 1) * 0.22);
+    ? Math.min(2.05, 1.12 + Math.max(0, zoomLevel - 1) * 0.32)
+    : Math.min(1.82, 1.1 + Math.max(0, zoomLevel - 1) * 0.26);
 
   ctx.save();
   ctx.translate(x, y);
@@ -487,7 +488,8 @@ function WorldMapComponent({
         {coords.map((ringSet: any, ri: number) =>
           ringSet.map((ring: number[][], ri2: number) => {
             const d = ring
-              .map(([lng, lat]: [number, number], j: number) => {
+              .map((point: number[], j: number) => {
+                const [lng, lat] = point;
                 const [x, y] = project(lng, lat);
                 return `${j === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
               })
@@ -510,9 +512,11 @@ function WorldMapComponent({
   }), [geoFeatures, hoveredCountry]);
 
   // ===== GEOMETRÍA ESTÁTICA DEL PLAN (calculada una sola vez al cambiar vuelos o aeropuertos) =====
+  const geometryFlights = flightPlanFlights.length > 0 ? flightPlanFlights : activeFlights;
+
   const flightPlanGeometry = useMemo(() => {
     type FlightSource = { flightId: string; originId: string; destinationId: string; departureTime: string; arrivalTime: string };
-    const source: FlightSource[] = flightPlanFlights.length > 0 ? flightPlanFlights : activeFlights;
+    const source: FlightSource[] = geometryFlights;
     if (source.length === 0) return [];
 
     const geometry: PlannedFlightGeometry[] = [];
@@ -546,7 +550,7 @@ function WorldMapComponent({
 
     geometry.sort((a, b) => a.dep - b.dep);
     return geometry;
-  }, [flightPlanFlights, activeFlights, airportById]);
+  }, [geometryFlights, airportById]);
 
   const maxFlightDuration = useMemo(() => {
     let maxDuration = 0;
@@ -684,8 +688,9 @@ function WorldMapComponent({
   }, [filteredFlightDots, hasBackendFlightData, toggles.showRoutes, viewBox, canvasSizeVersion]);
 
   // Flight SVG paths
-  const flightPaths = useMemo(() =>
-    flights.map(f => {
+  const flightPaths = useMemo(() => {
+    if (!shouldShowStaticFallback) return [];
+    return flights.map(f => {
       const origin = airports.find(a => a.id === f.from);
       const dest = airports.find(a => a.id === f.to);
       if (!origin || !dest) return null;
@@ -700,12 +705,12 @@ function WorldMapComponent({
       const cpy = my + (dx / dist) * curve;
       const pathD = `M ${fx} ${fy} Q ${cpx} ${cpy} ${tx} ${ty}`;
       return { ...f, pathD, midX: cpx, midY: cpy, origin, dest };
-    }).filter((f): f is NonNullable<typeof f> => f !== null),
-    [flights, airports]
-  );
+    }).filter((f): f is NonNullable<typeof f> => f !== null);
+  }, [flights, airports, shouldShowStaticFallback]);
 
   // Shipment paths and current positions
   const shipmentData = useMemo(() => {
+    if (!shouldShowStaticFallback) return [];
     return shipments.map(s => {
       const origin = airports.find(a => a.id === s.origin);
       const dest = airports.find(a => a.id === s.destination);
@@ -726,10 +731,10 @@ function WorldMapComponent({
       const angle = Math.atan2(2 * (1 - t) * (cpy - fy) + 2 * t * (ty - cpy), 2 * (1 - t) * (cpx - fx) + 2 * t * (tx - cpx)) * (180 / Math.PI);
       return { ...s, svgPos: [cx, cy] as [number, number], pathD, angle, originPos: [fx, fy] as [number, number], destPos: [tx, ty] as [number, number] };
     }).filter((s): s is (Shipment & { svgPos: [number, number]; pathD: string; angle: number; originPos: [number, number]; destPos: [number, number] }) => s !== null);
-  }, [shipments, airports]);
+  }, [shipments, airports, shouldShowStaticFallback]);
 
   // ── Tooltips ───────────────────────────────────────────────────────────
-  const makeAirportTooltip = (airport: Airport) => {
+  const makeAirportTooltip = useCallback((airport: Airport) => {
     const pct = getOccupancyPercent(airport.occupancy, airport.capacity);
     const color = getStatusColor(airport.status);
     return (
@@ -749,7 +754,7 @@ function WorldMapComponent({
         </div>
       </div>
     );
-  };
+  }, []);
 
   const makeFlightTooltip = (flight: Flight) => {
     const loadPct = Math.round((flight.load / flight.capacity) * 100);
@@ -811,6 +816,19 @@ function WorldMapComponent({
       </div>
     );
   };
+
+  useEffect(() => {
+    if (!tooltip?.airportId) return;
+    const airport = airportPositions.find(a => a.id === tooltip.airportId);
+    if (!airport) {
+      setTooltip(null);
+      return;
+    }
+    setTooltip(prev => prev?.airportId === airport.id
+      ? { ...prev, content: makeAirportTooltip(airport) }
+      : prev
+    );
+  }, [airportPositions, makeAirportTooltip, tooltip?.airportId]);
 
   const viewBoxStr = `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`;
   const zoomLevel = BASE_W / viewBox.w;
@@ -962,7 +980,7 @@ function WorldMapComponent({
                 e.stopPropagation();
                 const rect = containerRef.current?.getBoundingClientRect();
                 if (!rect) return;
-                setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, content: makeAirportTooltip(a) });
+                setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, content: makeAirportTooltip(a), airportId: a.id });
               }}
               onMouseLeave={() => setTooltip(null)}
             >

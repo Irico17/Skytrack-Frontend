@@ -76,13 +76,13 @@ export function mapDaySnapshots(results: BackendSimulationResults): DaySnapshot[
   return results.daySnapshots.map(s => ({
     day: s.day,
     date: formatDate(s.date),
-    onTimePct: results.totalBatches > 0
-      ? Math.round((s.batchesOnTime / results.totalBatches) * 100)
+    onTimePct: s.routesCompleted > 0
+      ? Math.round((s.batchesOnTime / s.routesCompleted) * 100)
       : 0,
     delayed:   s.batchesDelayed,
     critical:  s.batchesCritical,
     completed: s.routesCompleted,
-    totalBags: 0,  // no tenemos este dato por día en el resumen
+    totalBags: s.totalBags ?? 0,
     newEvents: 0,
     avgOccupancy: 0,
     replanned: 0,
@@ -107,7 +107,7 @@ export function buildCycleDaySnapshot(
   const d = new Date(startDate);
   d.setDate(d.getDate() + day);
 
-  const total = update.batchesProcessed + update.batchSummary.unrouted;
+  const total = update.batchSummary.onTime + update.batchSummary.delayed;
   const onTimePct = total > 0
     ? Math.round((update.batchSummary.onTime / total) * 100)
     : 0;
@@ -189,21 +189,22 @@ export function mapSolutionToShipments(solution: BackendSolution, simulatedTime:
   const now = simulatedTime.getTime();
 
   return solution.routes.map(route => {
-    const orderedFlights = [...route.flights].sort((a, b) =>
-      new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime()
-    );
-    const firstDeparture = orderedFlights[0]?.departureTime;
+    const orderedFlights = route.flights
+      .map(f => ({
+        ...f,
+        depMs: new Date(f.departureTime).getTime(),
+        arrMs: new Date(f.arrivalTime).getTime(),
+      }))
+      .sort((a, b) => a.depMs - b.depMs);
     const finalArrival = route.finalArrivalTime;
-    const startMs = firstDeparture ? new Date(firstDeparture).getTime() : now;
+    const startMs = orderedFlights[0]?.depMs ?? now;
     const endMs = new Date(finalArrival).getTime();
     const progress = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
       ? clamp((now - startMs) / (endMs - startMs))
       : 0;
-    const activeFlight = orderedFlights.find(f => {
-      const dep = new Date(f.departureTime).getTime();
-      const arr = new Date(f.arrivalTime).getTime();
-      return now >= dep && now <= arr;
-    }) ?? orderedFlights.find(f => new Date(f.arrivalTime).getTime() >= now) ?? orderedFlights[orderedFlights.length - 1];
+    const activeFlight = orderedFlights.find(f => now >= f.depMs && now <= f.arrMs)
+      ?? orderedFlights.find(f => f.arrMs >= now)
+      ?? orderedFlights[orderedFlights.length - 1];
 
     return {
       id: route.batchId,
@@ -216,7 +217,7 @@ export function mapSolutionToShipments(solution: BackendSolution, simulatedTime:
       status: route.meetsSLA ? 'on-time' : 'delayed',
       progress,
       estimatedDelivery: formatDelivery(finalArrival),
-      isReplanned: orderedFlights.length > 1,
+      isReplanned: false,
     };
   });
 }

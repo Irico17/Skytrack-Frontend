@@ -108,13 +108,23 @@ export interface BackendSimulationFinished {
   collapseLevel: string;
 }
 
+export interface BackendSimulationError {
+  type: 'SIMULATION_ERROR';
+  simulationId: string;
+  simulationComplete: false;
+  message: string;
+  currentCycle: number;
+  batchesProcessed: number;
+  collapseLevel: string;
+}
+
 export interface BackendConnected {
   type: 'CONNECTED';
   message: string;
   simulationId: string;
 }
 
-export type BackendWsMessage = BackendConnected | BackendCycleUpdate | BackendStorageUpdate | BackendSimulationFinished;
+export type BackendWsMessage = BackendConnected | BackendCycleUpdate | BackendStorageUpdate | BackendSimulationFinished | BackendSimulationError;
 
 export interface BackendStartResponse {
   simulationId: string;
@@ -132,6 +142,7 @@ export interface BackendDaySnapshot {
   day: number;
   date: string;
   routesCompleted: number;
+  totalBags?: number;
   batchesOnTime: number;
   batchesDelayed: number;
   batchesCritical: number;
