@@ -54,6 +54,14 @@ interface FlightHitTarget {
   dot: FlightDot;
 }
 
+interface FlightFilterState {
+  showSlaOk: boolean;
+  showSlaFail: boolean;
+  showEmpty: boolean;
+}
+
+type ActiveFlightBags = Map<string, { bagsCount: number; meetsSla: boolean }>;
+
 interface PlannedFlightGeometry {
   flightId: string;
   originId: string;
@@ -81,6 +89,8 @@ interface WorldMapProps {
   toggles: Toggles;
   /** Reloj del tiempo simulado para animar vuelos activos */
   simClock?: Date;
+  /** Reloj mutable para animación canvas sin forzar renders de React */
+  simClockRef?: { current: Date };
   /** Vuelos con maletas asignadas por el planificador */
   activeFlights?: BackendActiveFlight[];
   /** TODOS los vuelos del plan de vuelos (independientes del planificador) */
@@ -119,6 +129,54 @@ function upperBoundDeparture(flights: PlannedFlightGeometry[], time: number): nu
     else hi = mid;
   }
   return lo;
+}
+
+function buildActiveFlightDots(
+  now: number,
+  flightPlanGeometry: PlannedFlightGeometry[],
+  maxFlightDuration: number,
+  activeFlightBagsById: ActiveFlightBags,
+  flightFilter: FlightFilterState,
+): FlightDot[] {
+  if (flightPlanGeometry.length === 0) return [];
+
+  const dots: FlightDot[] = [];
+  const startIndex = lowerBoundDeparture(flightPlanGeometry, now - maxFlightDuration);
+  const endIndex = upperBoundDeparture(flightPlanGeometry, now);
+
+  for (let i = startIndex; i < endIndex; i += 1) {
+    const f = flightPlanGeometry[i];
+    if (now > f.arr) continue;
+
+    const t = (now - f.dep) / f.duration;
+    if (t < 0 || t > 1) continue;
+
+    const { ox, oy, dx, dy, cpx, cpy } = f;
+    const cx = (1-t)*(1-t)*ox + 2*(1-t)*t*cpx + t*t*dx;
+    const cy = (1-t)*(1-t)*oy + 2*(1-t)*t*cpy + t*t*dy;
+
+    const tanX = 2*(1-t)*(cpx - ox) + 2*t*(dx - cpx);
+    const tanY = 2*(1-t)*(cpy - oy) + 2*t*(dy - cpy);
+    const angle = Math.atan2(tanY, tanX) * (180 / Math.PI);
+
+    const bags = activeFlightBagsById.get(f.flightId);
+    const hasBags = bags !== undefined && bags.bagsCount > 0;
+    const meetsSla = hasBags ? bags!.meetsSla : false;
+    if (hasBags && meetsSla && !flightFilter.showSlaOk) continue;
+    if (hasBags && !meetsSla && !flightFilter.showSlaFail) continue;
+    if (!hasBags && !flightFilter.showEmpty) continue;
+
+    const color = hasBags ? (meetsSla ? '#4DA6FF' : '#FFC857') : '#3A4A5E';
+
+    dots.push({
+      flightId: f.flightId, cx, cy, color, t, angle, pathD: f.pathD,
+      bagsCount: hasBags ? bags!.bagsCount : 0,
+      originId: f.originId, destinationId: f.destinationId,
+      hasBags, meetsSla, ox, oy, dx, dy, cpx, cpy,
+    });
+  }
+
+  return dots;
 }
 
 function drawRouteBatch(
@@ -256,7 +314,7 @@ const GraticuleLines = React.memo(function GraticuleLines() {
 function WorldMapComponent({
   airports, flights, shipments, selectedEntity,
   onSelectAirport, onSelectFlight, onSelectShipment, toggles,
-  simClock, activeFlights = [], flightPlanFlights = [],
+  simClock, simClockRef, activeFlights = [], flightPlanFlights = [],
   isExpanded = false, onToggleExpanded,
 }: WorldMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -266,9 +324,8 @@ function WorldMapComponent({
   const didDragRef = useRef(false);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   const [geoFeatures, setGeoFeatures] = useState<any[]>([]);
-  const [canvasSizeVersion, setCanvasSizeVersion] = useState(0);
   const [hoveredCountry, setHoveredCountry] = useState<string | null>(null);
-  const [flightFilter, setFlightFilter] = useState({
+  const [flightFilter, setFlightFilter] = useState<FlightFilterState>({
     showSlaOk: true,
     showSlaFail: true,
     showEmpty: true,
@@ -317,14 +374,6 @@ function WorldMapComponent({
         setGeoFeatures(geo.features);
       })
       .catch(() => setGeoFeatures([]));
-  }, []);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => setCanvasSizeVersion(v => (v + 1) % 100000));
-    observer.observe(el);
-    return () => observer.disconnect();
   }, []);
 
   // Pan/zoom state
@@ -487,13 +536,17 @@ function WorldMapComponent({
       >
         {coords.map((ringSet: any, ri: number) =>
           ringSet.map((ring: number[][], ri2: number) => {
-            const d = ring
-              .map((point: number[], j: number) => {
-                const [lng, lat] = point;
+            const pathSegments: string[] = [];
+            for (let j = 0; j < ring.length; j += 1) {
+              const point = ring[j];
+              const lng = point[0];
+              const lat = point[1];
+              if (lng !== undefined && lat !== undefined) {
                 const [x, y] = project(lng, lat);
-                return `${j === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
-              })
-              .join(' ') + ' Z';
+                pathSegments.push(`${j === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`);
+              }
+            }
+            const d = `${pathSegments.join(' ')} Z`;
             return (
               <path
                 key={`${ri}-${ri2}`}
@@ -568,124 +621,140 @@ function WorldMapComponent({
     return bagsMap;
   }, [activeFlights]);
 
-  // ===== VUELOS EN VUELO AHORA (liviano: sólo depende del reloj + culling de viewport) =====
-  const activeFlightDots = useMemo(() => {
-    if (!simClock || flightPlanGeometry.length === 0) return [];
-    const now = simClock.getTime();
-
-    // Viewport culling: omitir vuelos fuera del área visible (margen del 8%)
-    const pad = Math.max(viewBox.w, viewBox.h) * 0.08;
-    const vx0 = viewBox.x - pad, vx1 = viewBox.x + viewBox.w + pad;
-    const vy0 = viewBox.y - pad, vy1 = viewBox.y + viewBox.h + pad;
-
-    const dots: FlightDot[] = [];
-
-    const startIndex = lowerBoundDeparture(flightPlanGeometry, now - maxFlightDuration);
-    const endIndex = upperBoundDeparture(flightPlanGeometry, now);
-
-    for (let i = startIndex; i < endIndex; i += 1) {
-      const f = flightPlanGeometry[i];
-      if (now > f.arr) continue;
-
-      const t = (now - f.dep) / f.duration;
-      if (t < 0 || t > 1) continue;
-
-      const { ox, oy, dx, dy, cpx, cpy } = f;
-      const cx = (1-t)*(1-t)*ox + 2*(1-t)*t*cpx + t*t*dx;
-      const cy = (1-t)*(1-t)*oy + 2*(1-t)*t*cpy + t*t*dy;
-
-      if (cx < vx0 || cx > vx1 || cy < vy0 || cy > vy1) continue;
-
-      const tanX = 2*(1-t)*(cpx - ox) + 2*t*(dx - cpx);
-      const tanY = 2*(1-t)*(cpy - oy) + 2*t*(dy - cpy);
-      const angle = Math.atan2(tanY, tanX) * (180 / Math.PI);
-
-      const bags = activeFlightBagsById.get(f.flightId);
-      const hasBags = bags !== undefined && bags.bagsCount > 0;
-      const meetsSla = hasBags ? bags!.meetsSla : false;
-      const color = hasBags ? (meetsSla ? '#4DA6FF' : '#FFC857') : '#3A4A5E';
-
-      dots.push({
-        flightId: f.flightId, cx, cy, color, t, angle, pathD: f.pathD,
-        bagsCount: hasBags ? bags!.bagsCount : 0,
-        originId: f.originId, destinationId: f.destinationId,
-        hasBags, meetsSla, ox, oy, dx, dy, cpx, cpy,
-      });
-    }
-    return dots;
-  }, [simClock, activeFlightBagsById, flightPlanGeometry, maxFlightDuration, viewBox]);
-
-  // Filtered active flight dots based on the on-map filter panel
-  const filteredFlightDots = useMemo(() => activeFlightDots.filter(dot => {
-    if (dot.hasBags) return dot.meetsSla ? flightFilter.showSlaOk : flightFilter.showSlaFail;
-    return flightFilter.showEmpty;
-  }), [activeFlightDots, flightFilter]);
-
   // True cuando el backend ya ha mandado datos de vuelos (plan o activos)
   const hasBackendFlightData = flightPlanFlights.length > 0 || activeFlights.length > 0;
   // Solo mostramos el fallback estático si NO hay ningún dato del backend
   const shouldShowStaticFallback = !hasBackendFlightData;
 
+  const fallbackClockRef = useRef(simClock);
+  const viewBoxRef = useRef(viewBox);
+  const flightPlanGeometryRef = useRef(flightPlanGeometry);
+  const maxFlightDurationRef = useRef(maxFlightDuration);
+  const activeFlightBagsByIdRef = useRef(activeFlightBagsById);
+  const flightFilterRef = useRef(flightFilter);
+  const showRoutesRef = useRef(toggles.showRoutes);
+  const paintVersionRef = useRef(0);
+
+  fallbackClockRef.current = simClock;
+  viewBoxRef.current = viewBox;
+  flightPlanGeometryRef.current = flightPlanGeometry;
+  maxFlightDurationRef.current = maxFlightDuration;
+  activeFlightBagsByIdRef.current = activeFlightBagsById;
+  flightFilterRef.current = flightFilter;
+  showRoutesRef.current = toggles.showRoutes;
+
+  useEffect(() => {
+    paintVersionRef.current += 1;
+  }, [flightPlanGeometry, maxFlightDuration, activeFlightBagsById, flightFilter, toggles.showRoutes]);
+
   useEffect(() => {
     const canvas = flightCanvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const width = Math.max(1, Math.floor(rect.width * dpr));
-    const height = Math.max(1, Math.floor(rect.height * dpr));
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
+    if (!canvas || !hasBackendFlightData) {
+      flightHitTargetsRef.current = [];
+      return;
     }
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    let frameId = 0;
+    let lastPaintClockMs = Number.NaN;
+    let lastPaintViewBox = viewBoxRef.current;
+    let lastPaintVersion = -1;
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, rect.width, rect.height);
-    flightHitTargetsRef.current = [];
+    const paint = () => {
+      frameId = requestAnimationFrame(paint);
 
-    if (!hasBackendFlightData || rect.width <= 0 || rect.height <= 0 || filteredFlightDots.length === 0) return;
+      const clockDate = simClockRef?.current ?? fallbackClockRef.current;
+      const nowMs = clockDate?.getTime();
+      if (!Number.isFinite(nowMs)) return;
 
-    const toCanvasX = (x: number) => (x - viewBox.x) / viewBox.w * rect.width;
-    const toCanvasY = (y: number) => (y - viewBox.y) / viewBox.h * rect.height;
-    const routeColors = ['#4DA6FF', '#FFC857'];
-    const canvasZoomLevel = BASE_W / viewBox.w;
-    const routeWidthScale = Math.min(1.7, 1 + Math.max(0, canvasZoomLevel - 1) * 0.16);
+      const vb = viewBoxRef.current;
+      const viewChanged = vb.x !== lastPaintViewBox.x || vb.y !== lastPaintViewBox.y || vb.w !== lastPaintViewBox.w || vb.h !== lastPaintViewBox.h;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
 
-    if (toggles.showRoutes) {
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 0.035;
-      ctx.lineWidth = 1.55 * routeWidthScale;
-      for (const color of routeColors) {
-        ctx.strokeStyle = color;
-        drawRouteBatch(ctx, filteredFlightDots, color, toCanvasX, toCanvasY);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(1, Math.floor(rect.width * dpr));
+      const height = Math.max(1, Math.floor(rect.height * dpr));
+      const canvasSizeChanged = canvas.width !== width || canvas.height !== height;
+      const paintVersion = paintVersionRef.current;
+      const dataChanged = paintVersion !== lastPaintVersion;
+      if (!viewChanged && !canvasSizeChanged && !dataChanged && Number.isFinite(lastPaintClockMs) && Math.abs(nowMs - lastPaintClockMs) < 15) return;
+      lastPaintClockMs = nowMs;
+      lastPaintViewBox = vb;
+      lastPaintVersion = paintVersion;
+
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
       }
 
-      ctx.setLineDash([4, 10]);
-      ctx.globalAlpha = 0.64;
-      ctx.lineWidth = 0.68 * routeWidthScale;
-      for (const color of routeColors) {
-        ctx.strokeStyle = color;
-        drawRouteBatch(ctx, filteredFlightDots, color, toCanvasX, toCanvasY);
-      }
-      ctx.restore();
-    }
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    const denseMode = filteredFlightDots.length > 2500 && BASE_W / viewBox.w < 1.7;
-    const hitTargets: FlightHitTarget[] = [];
-    for (const dot of filteredFlightDots) {
-      const x = toCanvasX(dot.cx);
-      const y = toCanvasY(dot.cy);
-      drawPlaneMarker(ctx, x, y, dot.angle, dot.color, dot.hasBags, denseMode, canvasZoomLevel);
-      if (dot.hasBags) hitTargets.push({ x, y, dot });
-    }
-    flightHitTargetsRef.current = hitTargets;
-  }, [filteredFlightDots, hasBackendFlightData, toggles.showRoutes, viewBox, canvasSizeVersion]);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      const dots = buildActiveFlightDots(
+        nowMs,
+        flightPlanGeometryRef.current,
+        maxFlightDurationRef.current,
+        activeFlightBagsByIdRef.current,
+        flightFilterRef.current,
+      );
+
+      if (dots.length === 0) {
+        flightHitTargetsRef.current = [];
+        return;
+      }
+
+      const toCanvasX = (x: number) => (x - vb.x) / vb.w * rect.width;
+      const toCanvasY = (y: number) => (y - vb.y) / vb.h * rect.height;
+      const pad = Math.max(vb.w, vb.h) * 0.08;
+      const vx0 = vb.x - pad, vx1 = vb.x + vb.w + pad;
+      const vy0 = vb.y - pad, vy1 = vb.y + vb.h + pad;
+      const visibleDots = dots.filter(dot => dot.cx >= vx0 && dot.cx <= vx1 && dot.cy >= vy0 && dot.cy <= vy1);
+      const canvasZoomLevel = BASE_W / vb.w;
+      const routeWidthScale = Math.min(1.7, 1 + Math.max(0, canvasZoomLevel - 1) * 0.16);
+      const routeColors = ['#4DA6FF', '#FFC857'];
+
+      if (showRoutesRef.current) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.035;
+        ctx.lineWidth = 1.55 * routeWidthScale;
+        for (const color of routeColors) {
+          ctx.strokeStyle = color;
+          drawRouteBatch(ctx, visibleDots, color, toCanvasX, toCanvasY);
+        }
+
+        ctx.setLineDash([4, 10]);
+        ctx.globalAlpha = 0.64;
+        ctx.lineWidth = 0.68 * routeWidthScale;
+        for (const color of routeColors) {
+          ctx.strokeStyle = color;
+          drawRouteBatch(ctx, visibleDots, color, toCanvasX, toCanvasY);
+        }
+        ctx.restore();
+      }
+
+      const denseMode = visibleDots.length > 2500 && canvasZoomLevel < 1.7;
+      const hitTargets: FlightHitTarget[] = [];
+      for (const dot of visibleDots) {
+        const x = toCanvasX(dot.cx);
+        const y = toCanvasY(dot.cy);
+        drawPlaneMarker(ctx, x, y, dot.angle, dot.color, dot.hasBags, denseMode, canvasZoomLevel);
+        if (dot.hasBags) hitTargets.push({ x, y, dot });
+      }
+      flightHitTargetsRef.current = hitTargets;
+    };
+
+    frameId = requestAnimationFrame(paint);
+    return () => {
+      cancelAnimationFrame(frameId);
+      flightHitTargetsRef.current = [];
+    };
+  }, [hasBackendFlightData, simClockRef]);
 
   // Flight SVG paths
   const flightPaths = useMemo(() => {

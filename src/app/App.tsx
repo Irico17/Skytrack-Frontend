@@ -72,24 +72,6 @@ export default function App() {
   const displayedSimulationTime = simulation.mode === 'collapse'
     ? simulation.simulationTime
     : simulation.simClock;
-  const latestMapClockRef = React.useRef(displayedSimulationTime);
-  const [mapSimulationTime, setMapSimulationTime] = React.useState(displayedSimulationTime);
-
-  React.useEffect(() => {
-    latestMapClockRef.current = displayedSimulationTime;
-  }, [displayedSimulationTime]);
-
-  React.useEffect(() => {
-    const timer = window.setInterval(() => {
-      const next = latestMapClockRef.current;
-      setMapSimulationTime(prev => prev.getTime() === next.getTime() ? prev : next);
-    }, 100);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  React.useEffect(() => {
-    if (!simulation.isRunning) setMapSimulationTime(displayedSimulationTime);
-  }, [displayedSimulationTime, simulation.isRunning]);
 
   const simClockDisplay = formatSimulationClock(displayedSimulationTime);
   const hidePanels = mapExpanded;
@@ -249,7 +231,8 @@ export default function App() {
               onSelectFlight={handleSelectFlight}
               onSelectShipment={handleSelectShipment}
               toggles={toggles}
-              simClock={mapSimulationTime}
+              simClock={displayedSimulationTime}
+              simClockRef={simulation.simClockRef}
               activeFlights={filteredActiveFlights}
               flightPlanFlights={filteredFlightPlanFlights}
               isExpanded={mapExpanded}

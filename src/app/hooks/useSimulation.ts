@@ -32,7 +32,7 @@ import {
 import type { BackendCycleUpdate, BackendSimulationFinished, BackendSimulationError, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendSolution, BackendStaticDataUploadResponse, BackendSimulationResults } from '../types/backend';
 
 /** Factor de aceleración del tiempo simulado: 1 min real = K min simulados */
-export const SIMULATION_K = 120;
+export const SIMULATION_K = 240;
 
 export interface DaySnapshot {
   day: number;
@@ -99,6 +99,8 @@ interface UseSimulationReturn extends SimulationState {
   setShipments: Dispatch<SetStateAction<Shipment[]>>;
   /** Reloj del tiempo simulado, actualizado en tiempo real (corre a K× velocidad) */
   simClock: Date;
+  /** Reloj mutable para animaciones canvas sin forzar render de React */
+  simClockRef: { current: Date };
   /** Factor K activo recibido del backend */
   simulationK: number;
   /** Vuelos activos del backend con sus tiempos de salida/llegada */
@@ -243,10 +245,13 @@ export function useSimulation(): UseSimulationReturn {
   const [simulationK, setSimulationK] = useState(SIMULATION_K);
   // Base interpolada del reloj: el backend la reancla y el frontend suaviza entre updates.
   const clockBaseRef = useRef<{ simMs: number; realMs: number; K: number } | null>(null);
+  const simClockRef = useRef<Date>(today);
   const playbackBufferRef = useRef<PlaybackFrame[]>([]);
   const lastAppliedPlaybackKeyRef = useRef<string | null>(null);
   const solutionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const solutionRefreshSeqRef = useRef(0);
+  const backendAirportsRef = useRef<Airport[]>([]);
+  const backendAirportsLoadedRef = useRef(false);
 
   // Vuelos activos (con maletas) del backend
   const [activeFlights, setActiveFlights] = useState<BackendActiveFlight[]>([]);
@@ -292,6 +297,24 @@ export function useSimulation(): UseSimulationReturn {
       });
     });
   }, []);
+
+  const commitBackendAirports = useCallback((mappedAirports: Airport[]) => {
+    backendAirportsRef.current = mappedAirports;
+    backendAirportsLoadedRef.current = mappedAirports.length > 0;
+    setAirports(mappedAirports);
+  }, []);
+
+  const ensureBackendAirports = useCallback(async () => {
+    if (backendAirportsLoadedRef.current && backendAirportsRef.current.length > 0) {
+      setAirports(backendAirportsRef.current);
+      return backendAirportsRef.current;
+    }
+
+    const data = await fetchAirports();
+    const mapped = mapAirports(data);
+    commitBackendAirports(mapped);
+    return mapped;
+  }, [commitBackendAirports]);
 
   const resetPlaybackBuffer = useCallback(() => {
     playbackBufferRef.current = [];
@@ -383,11 +406,10 @@ export function useSimulation(): UseSimulationReturn {
   // ===== CARGAR AEROPUERTOS REALES PARA MODOS BACKEND =====
   useEffect(() => {
     if (isBackendMode(mode)) {
-      fetchAirports()
-        .then(data => setAirports(mapAirports(data)))
+      ensureBackendAirports()
         .catch(err => console.warn('No se pudieron cargar aeropuertos del backend:', err));
     }
-  }, [mode]);
+  }, [mode, ensureBackendAirports]);
 
   useEffect(() => {
     if (isRunning) return;
@@ -403,9 +425,11 @@ export function useSimulation(): UseSimulationReturn {
 
   // Sync tiempo y eventos cuando cambia startDate
   useEffect(() => {
-    setSimulationTime(new Date(startDate));
+    const nextStart = new Date(startDate);
+    setSimulationTime(nextStart);
     if (!clockBaseRef.current) {
-      setSimClock(new Date(startDate));
+      simClockRef.current = nextStart;
+      setSimClock(nextStart);
     }
     setEvents(buildInitEvents(startDate));
   }, [startDate]);
@@ -476,6 +500,7 @@ export function useSimulation(): UseSimulationReturn {
 
       if (mode === '5day') {
         const finalTime = new Date(parseApiDateTimeAsUtc(formatApiDateTime(startDate)).getTime() + FIVE_DAYS_MS);
+        simClockRef.current = finalTime;
         setSimulationTime(finalTime);
         setSimClock(finalTime);
       }
@@ -537,6 +562,7 @@ export function useSimulation(): UseSimulationReturn {
       }
 
       const nextDate = new Date(renderSimMs);
+      simClockRef.current = nextDate;
       setSimulationTime(nextDate);
       setSimClock(prev => Math.abs(prev.getTime() - renderSimMs) < 1 ? prev : nextDate);
       setDaysElapsed(frame.daysElapsed);
@@ -685,7 +711,7 @@ export function useSimulation(): UseSimulationReturn {
       setHasReplanned(false);
       setShipments([]);
       setFlights([]);
-      setAirports([]);
+      simClockRef.current = optimisticStart;
       setSimClock(optimisticStart);
       setSimulationTime(optimisticStart);
       clockBaseRef.current = null;
@@ -705,16 +731,29 @@ export function useSimulation(): UseSimulationReturn {
 
         // 1. Cargar datos base en paralelo, pero pintar cada uno apenas llegue.
         const flightPlanDays = isFiveDay ? 5 : 1;
-        const airportsPromise = fetchAirports()
-          .then(backendAirports => {
-            setAirports(mapAirports(backendAirports));
-            return backendAirports;
+        const airportsPromise = ensureBackendAirports()
+          .then(mappedAirports => {
+            setEvents(prev => [{
+              id: `progress-airports-${Date.now()}`,
+              type: 'info',
+              message: `✓ Aeropuertos listos (${mappedAirports.length})`,
+              time: new Date(),
+              severity: 'info',
+            }, ...prev.slice(0, 19)]);
+            return mappedAirports;
           });
         const flightPlanPromise = fetchFlightPlan(startDateTimeStr, flightPlanDays)
           .then(projectedFlights => {
             setFlightPlanFlights(projectedFlights);
             setFlights(mapFlightPlanFlights(projectedFlights));
             console.log(`✓ Cargados ${projectedFlights.length} vuelos del plan de vuelos`);
+            setEvents(prev => [{
+              id: `progress-flights-${Date.now()}`,
+              type: 'info',
+              message: `✓ Plan de vuelos cargado (${projectedFlights.length})`,
+              time: new Date(),
+              severity: 'info',
+            }, ...prev.slice(0, 19)]);
             return projectedFlights;
           })
           .catch(err => {
@@ -726,6 +765,13 @@ export function useSimulation(): UseSimulationReturn {
         void flightPlanPromise;
 
         await airportsPromise;
+        setEvents(prev => [{
+          id: `progress-sim-${Date.now()}`,
+          type: 'info',
+          message: 'Iniciando motor de simulación...',
+          time: new Date(),
+          severity: 'info',
+        }, ...prev.slice(0, 19)]);
 
         // 2. Iniciar simulación en el backend (retorna K, simStartTime, etc.)
         const res = isFiveDay
@@ -738,15 +784,25 @@ export function useSimulation(): UseSimulationReturn {
         simKRef.current = K;
         setSimulationK(K);
         const simStartMs = new Date(res.simStartTime).getTime();
+        const simStartDate = new Date(simStartMs);
         clockBaseRef.current = { simMs: simStartMs, realMs: Date.now(), K };
-        setSimClock(new Date(simStartMs));
-        setSimulationTime(new Date(simStartMs));
+        simClockRef.current = simStartDate;
+        setSimClock(simStartDate);
+        setSimulationTime(simStartDate);
 
         // 4. Abrir WebSocket
         const ws = new SimulationWebSocket();
         wsRef.current = ws;
         ws.onMessage(handle5DayWsMessage);
         ws.connect();
+
+        setEvents(prev => [{
+          id: `progress-ws-${Date.now()}`,
+          type: 'info',
+          message: '✓ Motor iniciado y canal WebSocket solicitado',
+          time: new Date(),
+          severity: 'info',
+        }, ...prev.slice(0, 19)]);
 
         setEvents(prev => [{
           id: `start-${Date.now()}`,
@@ -761,7 +817,9 @@ export function useSimulation(): UseSimulationReturn {
         getSimulationStatus(res.simulationId)
           .then(status => {
             if (status.simulatedTime) {
-              setSimulationTime(new Date(status.simulatedTime));
+              const statusTime = new Date(status.simulatedTime);
+              simClockRef.current = statusTime;
+              setSimulationTime(statusTime);
             }
           })
           .catch(err => console.warn('No se pudo cargar estado inicial:', err));
@@ -784,11 +842,12 @@ export function useSimulation(): UseSimulationReturn {
       // Modo collapse — lógica local original
       setIsRunning(true);
     }
-  }, [mode, startDate, handle5DayWsMessage, resetPlaybackBuffer, cancelScheduledSolutionRefresh]);
+  }, [mode, startDate, handle5DayWsMessage, resetPlaybackBuffer, cancelScheduledSolutionRefresh, ensureBackendAirports]);
 
   const pause = useCallback(async () => {
     if (isBackendMode(mode) && simIdRef.current) {
       await pauseSimulation(simIdRef.current).catch(console.warn);
+      simClockRef.current = simClock;
       setSimulationTime(simClock);
       clockBaseRef.current = null;
       cancelScheduledSolutionRefresh();
@@ -800,6 +859,7 @@ export function useSimulation(): UseSimulationReturn {
   const resume = useCallback(async () => {
     if (isBackendMode(mode) && simIdRef.current) {
       await resumeSimulation(simIdRef.current).catch(console.warn);
+      simClockRef.current = simClock;
       clockBaseRef.current = { simMs: simClock.getTime(), realMs: Date.now(), K: simKRef.current };
     }
     setIsRunning(true);
@@ -827,11 +887,15 @@ export function useSimulation(): UseSimulationReturn {
     if (mode === 'collapse') {
       setAirports(INITIAL_AIRPORTS);
     } else {
-      fetchAirports()
-        .then(data => setAirports(mapAirports(data)))
-        .catch(() => setAirports([]));
+      ensureBackendAirports()
+        .catch(() => {
+          backendAirportsRef.current = [];
+          backendAirportsLoadedRef.current = false;
+          setAirports([]);
+        });
     }
     setStartDate(now);
+    simClockRef.current = now;
     setSimulationTime(now);
     setSimClock(now);
     setHasReplanned(false);
@@ -846,7 +910,7 @@ export function useSimulation(): UseSimulationReturn {
     tickCountRef.current = 0;
     collapseTickRef.current = 0;
     setEvents(buildInitEvents(now));
-  }, [mode, resetPlaybackBuffer, cancelScheduledSolutionRefresh]);
+  }, [mode, resetPlaybackBuffer, cancelScheduledSolutionRefresh, ensureBackendAirports]);
 
   const replan = useCallback(() => {
     if (isBackendMode(mode)) {
@@ -878,6 +942,7 @@ export function useSimulation(): UseSimulationReturn {
     if (mode !== '5day') {
       const endTime = new Date(startDate.getTime() + FIVE_DAYS_MS);
       setIsRunning(false);
+      simClockRef.current = endTime;
       setSimulationTime(endTime);
       setDaysElapsed(5);
       setDaySnapshots(presets);
@@ -1023,7 +1088,7 @@ export function useSimulation(): UseSimulationReturn {
 
     const response = await uploadStaticDataset(airportsFile, flightsFile, shipmentFiles);
     const backendAirports = await fetchAirports();
-    setAirports(mapAirports(backendAirports));
+    commitBackendAirports(mapAirports(backendAirports));
     setShipments([]);
     setActiveFlights([]);
     setDaySnapshots([]);
@@ -1050,7 +1115,7 @@ export function useSimulation(): UseSimulationReturn {
     }, ...prev.slice(0, 19)]);
 
     return response;
-  }, [isRunning, mode, startDate]);
+  }, [isRunning, mode, startDate, commitBackendAirports]);
 
   return {
     startDate, setStartDate,
@@ -1061,7 +1126,7 @@ export function useSimulation(): UseSimulationReturn {
     setMode, start, pause: pause as () => void, reset,
     replan, skipToComplete, skipToCollapseComplete, addShipment, cancelFlight, uploadStaticData,
     setAirports, setFlights, setShipments,
-    simClock, activeFlights, flightPlanFlights,
+    simClock, simClockRef, activeFlights, flightPlanFlights,
     simulationK,
     lastCycleUpdate,
   };
