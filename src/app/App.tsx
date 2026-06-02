@@ -231,7 +231,7 @@ export default function App() {
               onSelectFlight={handleSelectFlight}
               onSelectShipment={handleSelectShipment}
               toggles={toggles}
-              simClock={displayedSimulationTime}
+              simClock={simulation.mode === 'collapse' ? displayedSimulationTime : undefined}
               simClockRef={simulation.simClockRef}
               activeFlights={filteredActiveFlights}
               flightPlanFlights={filteredFlightPlanFlights}

@@ -658,6 +658,7 @@ function WorldMapComponent({
     let lastPaintClockMs = Number.NaN;
     let lastPaintViewBox = viewBoxRef.current;
     let lastPaintVersion = -1;
+    let hasPaintedFlights = false;
 
     const paint = () => {
       frameId = requestAnimationFrame(paint);
@@ -691,7 +692,6 @@ function WorldMapComponent({
       if (!ctx) return;
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, rect.width, rect.height);
 
       const dots = buildActiveFlightDots(
         nowMs,
@@ -703,6 +703,18 @@ function WorldMapComponent({
 
       if (dots.length === 0) {
         flightHitTargetsRef.current = [];
+        const filter = flightFilterRef.current;
+        const allFlightCategoriesHidden = !filter.showSlaOk && !filter.showSlaFail && !filter.showEmpty;
+        const shouldPreserveLastPaint = hasPaintedFlights
+          && !allFlightCategoriesHidden
+          && !viewChanged
+          && !canvasSizeChanged
+          && !dataChanged
+          && flightPlanGeometryRef.current.length > 0;
+        if (!shouldPreserveLastPaint) {
+          hasPaintedFlights = false;
+          ctx.clearRect(0, 0, rect.width, rect.height);
+        }
         return;
       }
 
@@ -715,6 +727,13 @@ function WorldMapComponent({
       const canvasZoomLevel = BASE_W / vb.w;
       const routeWidthScale = Math.min(1.7, 1 + Math.max(0, canvasZoomLevel - 1) * 0.16);
       const routeColors = ['#4DA6FF', '#FFC857'];
+
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      if (visibleDots.length === 0) {
+        hasPaintedFlights = false;
+        flightHitTargetsRef.current = [];
+        return;
+      }
 
       if (showRoutesRef.current) {
         ctx.save();
@@ -746,6 +765,7 @@ function WorldMapComponent({
         drawPlaneMarker(ctx, x, y, dot.angle, dot.color, dot.hasBags, denseMode, canvasZoomLevel);
         if (dot.hasBags) hitTargets.push({ x, y, dot });
       }
+      hasPaintedFlights = true;
       flightHitTargetsRef.current = hitTargets;
     };
 
