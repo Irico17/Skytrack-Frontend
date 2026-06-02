@@ -29,7 +29,7 @@ import {
   mapSolutionToShipments,
   mapShipmentResponseToShipment,
 } from '../services/mapper';
-import type { BackendCycleUpdate, BackendSimulationFinished, BackendSimulationError, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendSolution, BackendStaticDataUploadResponse } from '../types/backend';
+import type { BackendCycleUpdate, BackendSimulationFinished, BackendSimulationError, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendSolution, BackendStaticDataUploadResponse, BackendSimulationResults } from '../types/backend';
 
 /** Factor de aceleración del tiempo simulado: 1 min real = K min simulados */
 export const SIMULATION_K = 120;
@@ -78,6 +78,7 @@ interface SimulationState {
   daysElapsed: number;
   collapseComplete: boolean;
   collapseMetrics: CollapseMetrics | null;
+  simulationResults: BackendSimulationResults | null;
 }
 
 interface UseSimulationReturn extends SimulationState {
@@ -225,6 +226,7 @@ export function useSimulation(): UseSimulationReturn {
   const [daysElapsed, setDaysElapsed] = useState(0);
   const [collapseComplete, setCollapseComplete] = useState(false);
   const [collapseMetrics, setCollapseMetrics] = useState<CollapseMetrics | null>(null);
+  const [simulationResults, setSimulationResults] = useState<BackendSimulationResults | null>(null);
 
   // Refs para el modo 5day (backend)
   const simIdRef  = useRef<string | null>(null);
@@ -256,8 +258,9 @@ export function useSimulation(): UseSimulationReturn {
   // K dinámico recibido del backend
   const simKRef = useRef(SIMULATION_K);
 
-  const applyAirportCapacities = useCallback((capacities: BackendAirportCapacity[]) => {
+  const applyAirportCapacities = useCallback((capacities: BackendAirportCapacity[], daysElapsedVal?: number) => {
     if (!capacities || capacities.length === 0) return;
+    const currentDay = daysElapsedVal !== undefined ? Math.ceil(daysElapsedVal) : 1;
     setAirports(prev => {
       const capacityMap = new Map(capacities.map(c => [c.airportId, c]));
       return prev.map(a => {
@@ -266,7 +269,26 @@ export function useSimulation(): UseSimulationReturn {
         const pct = cap.occupancyRatio;
         const status = pct >= 0.9 ? 'critical' as const
                      : pct >= 0.7 ? 'warning' as const : 'normal' as const;
-        return { ...a, occupancy: cap.currentBags, capacity: cap.maxCapacity, status };
+        const currentOccupancy = cap.currentBags;
+        const previousPeak = a.peakOccupancy ?? 0;
+        const peakOccupancy = Math.max(previousPeak, currentOccupancy);
+
+        const overloadedDaysSet = new Set(a.overloadedDaysList ?? []);
+        if (pct >= 0.9) {
+          overloadedDaysSet.add(currentDay);
+        }
+        const overloadedDaysList = Array.from(overloadedDaysSet);
+        const daysOverloaded = overloadedDaysList.length;
+
+        return {
+          ...a,
+          occupancy: currentOccupancy,
+          capacity: cap.maxCapacity,
+          status,
+          peakOccupancy,
+          overloadedDaysList,
+          daysOverloaded,
+        };
       });
     });
   }, []);
@@ -471,6 +493,7 @@ export function useSimulation(): UseSimulationReturn {
       if (id && mode === '5day') {
         getSimulationResults(id)
           .then(results => {
+            setSimulationResults(results);
             setDaySnapshots(mapDaySnapshots(results));
           })
           .catch(err => console.warn('No se pudieron cargar resultados finales:', err));
@@ -541,7 +564,7 @@ export function useSimulation(): UseSimulationReturn {
         );
       }
 
-      applyAirportCapacities(frame.airportCapacities);
+      applyAirportCapacities(frame.airportCapacities, frame.daysElapsed);
     }, PLAYBACK_TICK_MS);
 
     return () => clearInterval(tick);
@@ -630,8 +653,10 @@ export function useSimulation(): UseSimulationReturn {
           const newOccupancy = Math.max(0, Math.min(airport.capacity, airport.occupancy + delta));
           const pct = newOccupancy / airport.capacity;
           const newStatus = pct >= 0.9 ? 'critical' : pct >= 0.7 ? 'warning' : 'normal';
+          const previousPeak = airport.peakOccupancy ?? 0;
+          const peakOccupancy = Math.max(previousPeak, newOccupancy);
           const updated = [...prev];
-          updated[idx] = { ...airport, occupancy: newOccupancy, status: newStatus };
+          updated[idx] = { ...airport, occupancy: newOccupancy, status: newStatus, peakOccupancy };
           return updated;
         });
       }
@@ -653,6 +678,7 @@ export function useSimulation(): UseSimulationReturn {
       setSimulationComplete(false);
       setDaysElapsed(0);
       setDaySnapshots([]);
+      setSimulationResults(null);
       setActiveFlights([]);
       setFlightPlanFlights([]);
       setLastCycleUpdate(null);
@@ -810,6 +836,7 @@ export function useSimulation(): UseSimulationReturn {
     setSimClock(now);
     setHasReplanned(false);
     setDaySnapshots([]);
+    setSimulationResults(null);
     setLastCycleUpdate(null);
     setSimulationComplete(false);
     setDaysElapsed(0);
@@ -866,9 +893,14 @@ export function useSimulation(): UseSimulationReturn {
     collapseTickRef.current = 350;
     setAirports(ap => {
       const updated = ap.map((a, i) => {
-        if (i < 6) return { ...a, occupancy: Math.floor(a.capacity * 0.96), status: 'critical' as const };
-        if (i < 12) return { ...a, occupancy: Math.floor(a.capacity * 0.85), status: 'warning' as const };
-        return a;
+        const occupancy = i < 6 ? Math.floor(a.capacity * 0.96) : i < 12 ? Math.floor(a.capacity * 0.85) : a.occupancy;
+        const status = occupancy / a.capacity >= 0.9 ? 'critical' as const : occupancy / a.capacity >= 0.7 ? 'warning' as const : 'normal' as const;
+        return {
+          ...a,
+          occupancy,
+          status,
+          peakOccupancy: Math.max(a.peakOccupancy ?? 0, occupancy)
+        };
       });
       const criticalCount = updated.filter(a => a.status === 'critical').length;
       const peakAirport = updated.reduce((max, a) => (a.occupancy/a.capacity) > (max.occupancy/max.capacity) ? a : max, updated[0]);
@@ -995,6 +1027,7 @@ export function useSimulation(): UseSimulationReturn {
     setShipments([]);
     setActiveFlights([]);
     setDaySnapshots([]);
+    setSimulationResults(null);
     setLastCycleUpdate(null);
     setSimulationComplete(false);
     setCollapseComplete(false);
@@ -1024,7 +1057,7 @@ export function useSimulation(): UseSimulationReturn {
     airports, flights, shipments,
     isRunning, mode, simulationTime, events,
     hasReplanned, daySnapshots, simulationComplete, daysElapsed,
-    collapseComplete, collapseMetrics,
+    collapseComplete, collapseMetrics, simulationResults,
     setMode, start, pause: pause as () => void, reset,
     replan, skipToComplete, skipToCollapseComplete, addShipment, cancelFlight, uploadStaticData,
     setAirports, setFlights, setShipments,

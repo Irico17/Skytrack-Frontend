@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { DaySnapshot } from '../hooks/useSimulation';
 import { Shipment, SimEvent, Airport } from '../data/mockData';
-import type { BackendCycleUpdate } from '../types/backend';
+import type { BackendCycleUpdate, BackendSimulationResults } from '../types/backend';
 
 interface FiveDayResultsProps {
   startDate: Date;
@@ -20,6 +20,7 @@ interface FiveDayResultsProps {
   events: SimEvent[];
   airports: Airport[];
   lastCycleUpdate?: BackendCycleUpdate | null;
+  results?: BackendSimulationResults | null;
   onClose: () => void;
   onReset: () => void;
 }
@@ -88,12 +89,14 @@ function buildAirportImpactFromAirports(airports: Airport[]) {
   if (airports.length === 0) return [];
   return airports
     .map(a => {
-      const peakOccupancy = Math.round((a.occupancy / Math.max(a.capacity, 1)) * 100);
+      const peakVal = a.peakOccupancy !== undefined ? a.peakOccupancy : a.occupancy;
+      const peakOccupancy = Math.round((peakVal / Math.max(a.capacity, 1)) * 100);
+      const daysOverloaded = a.daysOverloaded ?? (peakOccupancy >= 90 ? 2 : peakOccupancy >= 80 ? 1 : 0);
       return {
         id: a.id,
         city: a.city,
         peakOccupancy,
-        daysOverloaded: peakOccupancy >= 90 ? 1 : 0,
+        daysOverloaded,
         color: peakOccupancy >= 90 ? '#FF4D4D' : peakOccupancy >= 70 ? '#FFC857' : '#00FF9C',
       };
     })
@@ -286,7 +289,7 @@ const CustomBagsTooltip = ({ active, payload, label }: { active?: boolean; paylo
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export function FiveDayResults({ startDate, daySnapshots, shipments, events, airports, lastCycleUpdate, onClose, onReset }: FiveDayResultsProps) {
+export function FiveDayResults({ startDate, daySnapshots, shipments, events, airports, lastCycleUpdate, results, onClose, onReset }: FiveDayResultsProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'days' | 'airlines' | 'incidents'>('overview');
 
   const reportSnapshots: DaySnapshot[] = daySnapshots.length > 0 ? daySnapshots : (lastCycleUpdate ? [{
@@ -324,16 +327,18 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
 
   // Computed totals
   const totalBags = dailyBags.reduce((acc, d) => acc + d.bags, 0);
-  const finalOnTimeRate = reportSnapshots[reportSnapshots.length - 1]?.onTimePct ?? 0;
+  const finalOnTimeRate = results?.slaCompliancePercent != null
+    ? Math.round(results.slaCompliancePercent)
+    : (reportSnapshots[reportSnapshots.length - 1]?.onTimePct ?? 0);
   const firstOnTimeRate = reportSnapshots[0]?.onTimePct ?? finalOnTimeRate;
   const punctualityDelta = finalOnTimeRate - firstOnTimeRate;
 
   // KPIs reales (preferimos métricas del backend; si faltan, derivamos de envíos/snapshots)
-  const realTotalBags = om?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? (shipmentsBags > 0 ? shipmentsBags : totalBags);
+  const realTotalBags = results?.totalBatches ?? om?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? (shipmentsBags > 0 ? shipmentsBags : totalBags);
   const deliveredBags = om?.deliveredBags ?? 0;
-  const totalShipments = shipments.length > 0
+  const totalShipments = results?.routedBatches ?? (shipments.length > 0
     ? shipments.length
-    : lastCycleUpdate?.totalRoutes ?? reportSnapshots.reduce((acc, s) => acc + s.completed, 0);
+    : lastCycleUpdate?.totalRoutes ?? reportSnapshots.reduce((acc, s) => acc + s.completed, 0));
   const replannedCount = shipments.filter(s => s.isReplanned).length;
   const totalIncidents = incidentSummary.critical + incidentSummary.warning;
   const peakAirport = airportImpact[0];
@@ -944,7 +949,15 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
       <div className="flex-shrink-0 h-12 bg-[#0A1628] border-t border-[#1E3058] flex items-center px-6 gap-4">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-[#00FF9C]" />
-          <span className="text-[10px] text-[#4A6080]">Período: {fmtDateRange(startDate, 0)} – {fmtDateRange(startDate, 5)} · Modo: Planificación 5 días · {totalShipments} envíos · {airlinePerformance.length} aerolíneas · {airports.length} aeropuertos</span>
+          <span className="text-[10px] text-[#4A6080]">
+            Período: {fmtDateRange(startDate, 0)} – {fmtDateRange(startDate, 5)} · 
+            Modo: Planificación 5 días · 
+            Algoritmo: {results?.algorithmUsed ?? 'GATS'} · 
+            Ciclos: {results?.totalCycles ?? lastCycleUpdate?.cycle ?? 0} · 
+            Envíos: {results?.totalBatches ?? totalShipments} · 
+            Aerolíneas: {airlinePerformance.length} · 
+            Aeropuertos: {airports.length}
+          </span>
         </div>
         <div className="flex-1" />
         <button

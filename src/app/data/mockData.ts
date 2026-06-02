@@ -15,6 +15,9 @@ export interface Airport {
   capacity: number;
   occupancy: number;
   status: AirportStatus;
+  peakOccupancy?: number;
+  daysOverloaded?: number;
+  overloadedDaysList?: number[];
 }
 
 export interface Flight {

@@ -468,6 +468,7 @@ export default function App() {
           events={simulation.events}
           airports={simulation.airports}
           lastCycleUpdate={simulation.lastCycleUpdate}
+          results={simulation.simulationResults}
           onClose={() => setShowResults(false)}
           onReset={handleReset}
         />
