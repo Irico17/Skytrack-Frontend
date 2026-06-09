@@ -350,7 +350,8 @@ function WorldMapComponent({
     const x = clientX - rect.left;
     const y = clientY - rect.top;
     let closest: FlightHitTarget | null = null;
-    let closestDistance = 64;
+    const hitRadiusPx = 22;
+    let closestDistance = hitRadiusPx * hitRadiusPx;
 
     for (const target of flightHitTargetsRef.current) {
       const dx = target.x - x;
@@ -379,6 +380,7 @@ function WorldMapComponent({
   // Pan/zoom state
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: BASE_W, h: BASE_H });
   const dragRef = useRef<{ startX: number; startY: number; startVB: typeof viewBox } | null>(null);
+  const lastFocusedSelectionRef = useRef<string | null>(null);
 
   // Zoom on wheel
   const handleWheel = useCallback((e: WheelEvent) => {
@@ -516,6 +518,17 @@ function WorldMapComponent({
     return m;
   }, [airports]);
 
+  const airportGeometryKey = useMemo(() =>
+    airports.map(a => `${a.id}:${a.coords[0]}:${a.coords[1]}`).join('|'),
+    [airports]
+  );
+
+  const airportGeometryById = useMemo(() => {
+    const m: Record<string, { svgPos: [number, number] }> = {};
+    airports.forEach(a => { m[a.id] = { svgPos: project(a.coords[0], a.coords[1]) }; });
+    return m;
+  }, [airportGeometryKey]);
+
   // Airport SVG positions array for rendering
   const airportPositions = useMemo(() =>
     airports.map(a => ({ ...a, svgPos: project(a.coords[0], a.coords[1]) })),
@@ -575,8 +588,8 @@ function WorldMapComponent({
     const geometry: PlannedFlightGeometry[] = [];
 
     for (const f of source) {
-      const origin = airportById[f.originId];
-      const dest   = airportById[f.destinationId];
+      const origin = airportGeometryById[f.originId];
+      const dest   = airportGeometryById[f.destinationId];
       if (!origin || !dest) continue;
 
       const dep = new Date(f.departureTime).getTime();
@@ -603,7 +616,78 @@ function WorldMapComponent({
 
     geometry.sort((a, b) => a.dep - b.dep);
     return geometry;
-  }, [geometryFlights, airportById]);
+  }, [geometryFlights, airportGeometryById]);
+
+  const selectedFlightGeometry = useMemo(() => {
+    if (selectedEntity?.type !== 'flight') return null;
+    const selectedId = selectedEntity.id;
+    const selectedBaseId = selectedId.replace(/-D\d+$/, '');
+    return flightPlanGeometry.find(f =>
+      f.flightId === selectedId || f.flightId.replace(/-D\d+$/, '') === selectedBaseId
+    ) ?? null;
+  }, [selectedEntity, flightPlanGeometry]);
+
+  useEffect(() => {
+    if (!selectedEntity) return;
+    const key = `${selectedEntity.type}:${selectedEntity.id}`;
+    if (lastFocusedSelectionRef.current === key) return;
+    lastFocusedSelectionRef.current = key;
+
+    const fitBounds = (minX: number, minY: number, maxX: number, maxY: number, padding: number) => {
+      const targetRatio = BASE_W / BASE_H;
+      let w = Math.max(maxX - minX + padding * 2, 150);
+      let h = Math.max(maxY - minY + padding * 2, 90);
+      if (w / h > targetRatio) {
+        h = w / targetRatio;
+      } else {
+        w = h * targetRatio;
+      }
+      w = Math.min(Math.max(w, 120), BASE_W);
+      h = Math.min(Math.max(h, 70), BASE_H);
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      setViewBox({
+        x: Math.max(-60, Math.min(cx - w / 2, BASE_W - w + 60)),
+        y: Math.max(-40, Math.min(cy - h / 2, BASE_H - h + 40)),
+        w,
+        h,
+      });
+    };
+
+    if (selectedEntity.type === 'airport') {
+      const airport = airportById[selectedEntity.id];
+      if (!airport) return;
+      const [x, y] = airport.svgPos;
+      fitBounds(x, y, x, y, 55);
+      return;
+    }
+
+    if (selectedFlightGeometry) {
+      fitBounds(
+        Math.min(selectedFlightGeometry.ox, selectedFlightGeometry.dx, selectedFlightGeometry.cpx),
+        Math.min(selectedFlightGeometry.oy, selectedFlightGeometry.dy, selectedFlightGeometry.cpy),
+        Math.max(selectedFlightGeometry.ox, selectedFlightGeometry.dx, selectedFlightGeometry.cpx),
+        Math.max(selectedFlightGeometry.oy, selectedFlightGeometry.dy, selectedFlightGeometry.cpy),
+        45,
+      );
+      return;
+    }
+
+    if (selectedEntity.type === 'shipment') {
+      const shipment = shipments.find(s => s.id === selectedEntity.id);
+      if (!shipment) return;
+      const origin = airportById[shipment.origin];
+      const dest = airportById[shipment.destination];
+      if (!origin || !dest) return;
+      fitBounds(
+        Math.min(origin.svgPos[0], dest.svgPos[0]),
+        Math.min(origin.svgPos[1], dest.svgPos[1]),
+        Math.max(origin.svgPos[0], dest.svgPos[0]),
+        Math.max(origin.svgPos[1], dest.svgPos[1]),
+        50,
+      );
+    }
+  }, [selectedEntity, airportById, selectedFlightGeometry, shipments]);
 
   const maxFlightDuration = useMemo(() => {
     let maxDuration = 0;
@@ -1031,6 +1115,27 @@ function WorldMapComponent({
             </g>
           );
         })}
+
+        {toggles.showRoutes && selectedFlightGeometry && (
+          <g style={{ pointerEvents: 'none' }}>
+            <path
+              d={selectedFlightGeometry.pathD}
+              stroke="#4DA6FF"
+              strokeWidth={7}
+              strokeOpacity={0.14}
+              fill="none"
+              filter="url(#glow)"
+            />
+            <path
+              d={selectedFlightGeometry.pathD}
+              stroke="#4DA6FF"
+              strokeWidth={1.8}
+              strokeOpacity={0.95}
+              fill="none"
+              strokeDasharray="5 5"
+            />
+          </g>
+        )}
 
         {/* ── Vuelos backend en canvas: evita miles de nodos SVG por frame ── */}
         {hasBackendFlightData && (

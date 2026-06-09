@@ -12,6 +12,7 @@ import {
   stopSimulation,
   pauseSimulation,
   resumeSimulation,
+  getActiveSimulation,
   getSimulationResults,
   getSimulationStatus,
   getSimulationSolution,
@@ -28,7 +29,7 @@ import {
   mapSolutionToShipments,
   mapShipmentResponseToShipment,
 } from '../services/mapper';
-import type { BackendCycleUpdate, BackendSimulationFinished, BackendSimulationError, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendSolution, BackendStaticDataUploadResponse, BackendSimulationResults, BackendSimulationStatus } from '../types/backend';
+import type { BackendCycleUpdate, BackendSimulationFinished, BackendSimulationError, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendSolution, BackendStaticDataUploadResponse, BackendSimulationResults, BackendSimulationStatus, BackendActiveSimulation } from '../types/backend';
 
 /** Factor de aceleración del tiempo simulado: 1 min real = K min simulados */
 export const SIMULATION_K = 240;
@@ -226,6 +227,25 @@ function stripProjectedDaySuffix(flightId: string): string {
   return flightId.replace(/-D\d+$/, '');
 }
 
+function scenarioToMode(scenario?: string | null): SimulationMode {
+  if (scenario === 'DAY_TO_DAY') return 'realtime';
+  if (scenario === 'COLLAPSE_SIMULATION') return 'collapse';
+  return '5day';
+}
+
+function activeSimulationToStored(active: BackendActiveSimulation): StoredActiveSimulation | null {
+  if (!active.simulationId || !active.canJoin) return null;
+  const startDateTime = active.startDateTime ?? active.simulatedTime;
+  if (!startDateTime) return null;
+  return {
+    simulationId: active.simulationId,
+    mode: scenarioToMode(active.scenario),
+    startDateTime,
+    K: active.K || SIMULATION_K,
+    savedAt: Date.now(),
+  };
+}
+
 function buildPresetSnapshots(startDate: Date): DaySnapshot[] {
   const fmt = (d: Date) => `${String(d.getDate()).padStart(2,'0')} ${MONTHS_ES[d.getMonth()]}`;
   const offset = (n: number) => { const d = new Date(startDate); d.setDate(d.getDate() + n); return d; };
@@ -271,6 +291,9 @@ export function useSimulation(): UseSimulationReturn {
   // Refs para el modo 5day (backend)
   const simIdRef  = useRef<string | null>(null);
   const wsRef     = useRef<SimulationWebSocket | null>(null);
+  const wsSimulationIdRef = useRef<string | null>(null);
+  const activeDiscoveryWsRef = useRef<SimulationWebSocket | null>(null);
+  const activeDiscoveryInFlightRef = useRef(false);
 
   // Refs para el mock (realtime / collapse)
   const intervalRef    = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -406,7 +429,18 @@ export function useSimulation(): UseSimulationReturn {
     }
 
     if (buffer.length > PLAYBACK_MAX_FRAMES) {
-      buffer.splice(0, buffer.length - PLAYBACK_MAX_FRAMES);
+      const removed = buffer.splice(0, buffer.length - PLAYBACK_MAX_FRAMES);
+      let lastDroppedCycleUpdate: BackendCycleUpdate | undefined;
+      for (let i = removed.length - 1; i >= 0; i--) {
+        if (removed[i].cycleUpdate) {
+          lastDroppedCycleUpdate = removed[i].cycleUpdate;
+          break;
+        }
+      }
+      if (lastDroppedCycleUpdate && buffer.length > 0) {
+        // Preservar el último CYCLE_UPDATE en el frame más viejo que queda, para no perder los activeFlights
+        buffer[0] = { ...buffer[0], cycleUpdate: lastDroppedCycleUpdate };
+      }
     }
 
     return new Date(simulatedMs);
@@ -491,6 +525,7 @@ export function useSimulation(): UseSimulationReturn {
   const handle5DayWsMessage = useCallback((msg: any) => {
     if (msg.type === 'CYCLE_UPDATE') {
       const update = msg as BackendCycleUpdate;
+      setIsRunning(true);
       const t = pushPlaybackFrame(update);
 
       // Actualizar snapshot del día para la simulación de 5 días
@@ -541,6 +576,7 @@ export function useSimulation(): UseSimulationReturn {
       }, ...prev.slice(0, 19)]);
 
       wsRef.current?.disconnect();
+      wsSimulationIdRef.current = null;
 
     } else if (msg.type === 'SIMULATION_FINISHED') {
       const finished = msg as BackendSimulationFinished;
@@ -579,17 +615,25 @@ export function useSimulation(): UseSimulationReturn {
 
       // Desconectar WebSocket
       wsRef.current?.disconnect();
+      wsSimulationIdRef.current = null;
     }
   }, [startDate, mode, daysElapsed, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, cancelScheduledSolutionRefresh, commitClockState]);
 
-  const connectSimulationStream = useCallback(() => {
-    if (wsRef.current?.isConnected) return;
+  const connectSimulationStream = useCallback((simulationId = simIdRef.current) => {
+    if (!simulationId) return;
+    if (wsRef.current?.isConnected && wsSimulationIdRef.current === simulationId) return;
     wsRef.current?.disconnect();
-    const ws = new SimulationWebSocket();
+    const ws = new SimulationWebSocket(simulationId);
     wsRef.current = ws;
+    wsSimulationIdRef.current = simulationId;
     ws.onMessage(handle5DayWsMessage);
     ws.connect();
   }, [handle5DayWsMessage]);
+
+  const disconnectActiveDiscoveryStream = useCallback(() => {
+    activeDiscoveryWsRef.current?.disconnect();
+    activeDiscoveryWsRef.current = null;
+  }, []);
 
   const applyBackendStatusClock = useCallback((status: BackendSimulationStatus) => {
     if (!status.simulatedTime) return;
@@ -619,23 +663,18 @@ export function useSimulation(): UseSimulationReturn {
       .catch(err => console.warn('No se pudieron recuperar resultados finales:', err));
   }, []);
 
-  const hydrateStoredSimulation = useCallback(async () => {
-    if (hasHydratedStoredSessionRef.current || simIdRef.current) return;
-    hasHydratedStoredSessionRef.current = true;
-
-    const stored = readStoredActiveSimulation();
-    if (!stored || !isBackendMode(stored.mode)) return;
-
-    const restoredStartDate = parseApiDateTimeAsUtc(stored.startDateTime);
-    setMode(stored.mode);
+  const restoreBackendSession = useCallback(async (session: StoredActiveSimulation, sourceLabel: string) => {
+    disconnectActiveDiscoveryStream();
+    const restoredStartDate = parseApiDateTimeAsUtc(session.startDateTime);
+    setMode(session.mode);
     setStartDate(restoredStartDate);
     setSimulationComplete(false);
     setSimulationResults(null);
     setLastCycleUpdate(null);
     setActiveFlights([]);
-    simIdRef.current = stored.simulationId;
-    simKRef.current = stored.K;
-    setSimulationK(stored.K);
+    simIdRef.current = session.simulationId;
+    simKRef.current = session.K;
+    setSimulationK(session.K);
     simClockRef.current = restoredStartDate;
     commitClockState(restoredStartDate, true);
     cancelScheduledSolutionRefresh();
@@ -644,31 +683,35 @@ export function useSimulation(): UseSimulationReturn {
     setEvents(prev => [{
       id: `restore-${Date.now()}`,
       type: 'info',
-      message: 'Restaurando simulación activa del backend...',
+      message: `Uniéndose a simulación ${sourceLabel}...`,
       time: new Date(),
       severity: 'info',
     }, ...prev.slice(0, 19)]);
 
     try {
-      const statusPromise = getSimulationStatus(stored.simulationId);
+      const statusPromise = getSimulationStatus(session.simulationId);
       void ensureBackendAirports().catch(err => console.warn('No se pudieron restaurar aeropuertos:', err));
-      void loadProjectedFlightPlan(stored.startDateTime, stored.mode)
+      void loadProjectedFlightPlan(session.startDateTime, session.mode)
         .catch(err => console.warn('No se pudo restaurar el plan de vuelos:', err));
 
       const status = await statusPromise;
       applyBackendStatusClock(status);
 
-      if (status.status === 'RUNNING') {
-        setIsRunning(true);
-        connectSimulationStream();
-        storeActiveSimulation({ ...stored, savedAt: Date.now() });
+      if (status.status === 'RUNNING' || status.status === 'PAUSED') {
+        setIsRunning(status.status === 'RUNNING');
+        if (status.status === 'PAUSED') {
+          clockBaseRef.current = null;
+        }
+        connectSimulationStream(session.simulationId);
+        storeActiveSimulation({ ...session, savedAt: Date.now() });
       } else {
         setIsRunning(false);
         clockBaseRef.current = null;
         wsRef.current?.disconnect();
+        wsSimulationIdRef.current = null;
+        clearStoredActiveSimulation();
         if (status.status === 'COMPLETED' || status.status === 'STOPPED') {
-          clearStoredActiveSimulation();
-          recoverFinishedSimulation(stored.simulationId, stored.mode);
+          recoverFinishedSimulation(session.simulationId, session.mode);
         }
       }
     } catch (err) {
@@ -677,7 +720,78 @@ export function useSimulation(): UseSimulationReturn {
       simIdRef.current = null;
       setIsRunning(false);
     }
-  }, [applyBackendStatusClock, cancelScheduledSolutionRefresh, commitClockState, connectSimulationStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, resetPlaybackBuffer]);
+  }, [applyBackendStatusClock, cancelScheduledSolutionRefresh, commitClockState, connectSimulationStream, disconnectActiveDiscoveryStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, resetPlaybackBuffer]);
+
+  const joinActiveSimulationFromBackend = useCallback(async (sourceLabel: string) => {
+    if (simIdRef.current || activeDiscoveryInFlightRef.current) return;
+    activeDiscoveryInFlightRef.current = true;
+    try {
+      const active = await getActiveSimulation();
+      const activeSession = active ? activeSimulationToStored(active) : null;
+      if (activeSession && isBackendMode(activeSession.mode)) {
+        await restoreBackendSession(activeSession, sourceLabel);
+      }
+    } catch (err) {
+      console.warn('No se pudo unir a la simulación compartida anunciada:', err);
+    } finally {
+      activeDiscoveryInFlightRef.current = false;
+    }
+  }, [restoreBackendSession]);
+
+  const connectActiveDiscoveryStream = useCallback(() => {
+    if (activeDiscoveryWsRef.current || simIdRef.current || !isBackendMode(mode)) return;
+
+    const ws = new SimulationWebSocket(null);
+    activeDiscoveryWsRef.current = ws;
+    ws.onMessage(msg => {
+      if (simIdRef.current) return;
+      if (msg.type === 'SIMULATION_STARTED') {
+        const announced = activeSimulationToStored(msg.activeSimulation);
+        if (announced && isBackendMode(announced.mode)) {
+          void restoreBackendSession(announced, 'iniciada en otro cliente');
+        }
+        return;
+      }
+      if (msg.type === 'CONNECTED' && msg.simulationId && msg.simulationId !== 'N/A') {
+        void joinActiveSimulationFromBackend('activa compartida');
+        return;
+      }
+      if (msg.type === 'CYCLE_UPDATE' || msg.type === 'STORAGE_UPDATE') {
+        void joinActiveSimulationFromBackend('activa compartida');
+      }
+    });
+    ws.connect();
+  }, [joinActiveSimulationFromBackend, mode, restoreBackendSession]);
+
+  useEffect(() => {
+    if (isBackendMode(mode) && !isRunning && !simIdRef.current) {
+      connectActiveDiscoveryStream();
+    } else {
+      disconnectActiveDiscoveryStream();
+    }
+  }, [mode, isRunning, connectActiveDiscoveryStream, disconnectActiveDiscoveryStream]);
+
+  useEffect(() => () => disconnectActiveDiscoveryStream(), [disconnectActiveDiscoveryStream]);
+
+  const hydrateStoredSimulation = useCallback(async () => {
+    if (hasHydratedStoredSessionRef.current || simIdRef.current) return;
+    hasHydratedStoredSessionRef.current = true;
+
+    try {
+      const active = await getActiveSimulation();
+      const activeSession = active ? activeSimulationToStored(active) : null;
+      if (activeSession && isBackendMode(activeSession.mode)) {
+        await restoreBackendSession(activeSession, 'activa compartida');
+        return;
+      }
+    } catch (err) {
+      console.warn('No se pudo consultar la simulación activa del backend:', err);
+    }
+
+    const stored = readStoredActiveSimulation();
+    if (!stored || !isBackendMode(stored.mode)) return;
+    await restoreBackendSession(stored, 'guardada localmente');
+  }, [restoreBackendSession]);
 
   useEffect(() => {
     void hydrateStoredSimulation();
@@ -777,8 +891,12 @@ export function useSimulation(): UseSimulationReturn {
         renderSimMs = frame.simulatedMs;
       }
 
+      let skippedCycleUpdate: BackendCycleUpdate | undefined;
       while (buffer.length > 2 && buffer[1].receivedAtMs <= renderAtMs) {
-        buffer.shift();
+        const removed = buffer.shift();
+        if (removed && removed.cycleUpdate) {
+          skippedCycleUpdate = removed.cycleUpdate;
+        }
       }
 
       const nextDate = new Date(renderSimMs);
@@ -788,13 +906,18 @@ export function useSimulation(): UseSimulationReturn {
       }
 
       const frameKey = `${frame.cycle}:${frame.simulatedMs}:${frame.cycleUpdate ? 'cycle' : 'storage'}:${frame.operationalMetrics?.deliveredBags ?? ''}:${frame.airportCapacities.length}`;
-      if (lastAppliedPlaybackKeyRef.current === frameKey) return;
+      if (lastAppliedPlaybackKeyRef.current === frameKey && !skippedCycleUpdate) return;
       lastAppliedPlaybackKeyRef.current = frameKey;
 
       if (frame.cycleUpdate) {
         setLastCycleUpdate(frame.cycleUpdate);
         startTransition(() => {
           setActiveFlights(frame.cycleUpdate?.activeFlights ?? []);
+        });
+      } else if (skippedCycleUpdate) {
+        setLastCycleUpdate(skippedCycleUpdate);
+        startTransition(() => {
+          setActiveFlights(skippedCycleUpdate?.activeFlights ?? []);
         });
       } else if (frame.operationalMetrics) {
         setLastCycleUpdate(prev => prev
@@ -914,6 +1037,7 @@ export function useSimulation(): UseSimulationReturn {
 
   const start = useCallback(async () => {
     if (isBackendMode(mode)) {
+      disconnectActiveDiscoveryStream();
       const isFiveDay = mode === '5day';
       const runDate = startDate;
       const startDateTimeStr = formatApiDateTime(runDate);
@@ -1071,7 +1195,7 @@ export function useSimulation(): UseSimulationReturn {
       // Modo collapse — lógica local original
       setIsRunning(true);
     }
-  }, [mode, startDate, resetPlaybackBuffer, cancelScheduledSolutionRefresh, ensureBackendAirports, commitClockState, connectSimulationStream]);
+  }, [mode, startDate, resetPlaybackBuffer, cancelScheduledSolutionRefresh, disconnectActiveDiscoveryStream, ensureBackendAirports, commitClockState, connectSimulationStream]);
 
   const pause = useCallback(async () => {
     if (isBackendMode(mode) && simIdRef.current) {
@@ -1099,8 +1223,10 @@ export function useSimulation(): UseSimulationReturn {
     if (isBackendMode(mode) && simIdRef.current) {
       await stopSimulation(simIdRef.current).catch(console.warn);
       wsRef.current?.disconnect();
+      wsSimulationIdRef.current = null;
       simIdRef.current = null;
       wsRef.current = null;
+      wsSimulationIdRef.current = null;
     }
 
     clearStoredActiveSimulation();

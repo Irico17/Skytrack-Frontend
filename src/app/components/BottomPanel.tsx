@@ -27,6 +27,9 @@ interface BottomPanelProps {
 }
 
 const DASH = '—';
+const SHIPMENT_GRID_STYLE: React.CSSProperties = {
+  gridTemplateColumns: '14px minmax(84px,0.7fr) minmax(120px,1fr) minmax(150px,1.25fr) minmax(96px,0.8fr) minmax(150px,1fr)',
+};
 
 function StatusBadge({ status }: { status: string }) {
   const configs: Record<string, { bg: string; text: string; icon: React.ReactNode; label: string }> = {
@@ -324,19 +327,21 @@ function ShipmentListRow({ s, onClick }: { s: Shipment; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[#1A2E4A]/40 transition-colors border-b border-[#1E3058]/30 text-left"
+      className="w-full grid items-center gap-3 px-4 py-2.5 hover:bg-[#1A2E4A]/40 transition-colors border-b border-[#1E3058]/30 text-left"
+      style={SHIPMENT_GRID_STYLE}
     >
       <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-      <span className="text-[11px] text-[#7090B0] w-14">{s.id}</span>
-      <span className="text-[11px] text-[#A8C0E0] w-28 truncate">{s.airline}</span>
-      <span className="text-[11px] text-[#7090B0] flex items-center gap-1">
+      <span className="text-[11px] text-[#7090B0] truncate">{s.id}</span>
+      <span className="text-[11px] text-[#A8C0E0] truncate">{s.airline}</span>
+      <span className="text-[11px] text-[#7090B0] flex items-center gap-1 min-w-0 truncate">
         {s.origin} <ArrowRight className="w-2.5 h-2.5" /> {s.destination}
       </span>
-      <span className="text-[11px] text-[#4DA6FF] w-12">{s.luggageCount} bolsas</span>
-      <div className="flex-1" />
-      <span className="text-[11px] font-mono text-[#4A6080]">{Math.round(s.progress * 100)}%</span>
-      <div className="w-16 h-1.5 rounded-full bg-[#1E3058] overflow-hidden">
-        <div className="h-full rounded-full" style={{ width: `${s.progress * 100}%`, backgroundColor: color }} />
+      <span className="text-[11px] text-[#4DA6FF] truncate">{s.luggageCount} bolsas</span>
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-[11px] font-mono text-[#4A6080] w-9 text-right">{Math.round(s.progress * 100)}%</span>
+        <div className="flex-1 h-1.5 rounded-full bg-[#1E3058] overflow-hidden">
+          <div className="h-full rounded-full" style={{ width: `${s.progress * 100}%`, backgroundColor: color }} />
+        </div>
       </div>
     </button>
   );
@@ -459,12 +464,12 @@ export function BottomPanel({
 
         {activeTab === 'shipments' && (
           <div className="h-full overflow-y-auto">
-            <div className="sticky top-0 bg-[#080F1E] px-4 py-2 flex items-center gap-4 text-[10px] text-[#4A6080] border-b border-[#1E3058]/50" style={{ letterSpacing: '0.1em' }}>
-              <span className="w-14">ID</span>
-              <span className="w-28">AEROLÍNEA</span>
+            <div className="sticky top-0 bg-[#080F1E] px-4 py-2 grid items-center gap-3 text-[10px] text-[#4A6080] border-b border-[#1E3058]/50" style={{ ...SHIPMENT_GRID_STYLE, letterSpacing: '0.1em' }}>
+              <span />
+              <span>ID</span>
+              <span>AEROLÍNEA</span>
               <span>RUTA</span>
-              <span className="w-12">BOLSAS</span>
-              <div className="flex-1" />
+              <span>BOLSAS</span>
               <span>PROGRESO</span>
             </div>
             {isBackendStatsMode && shipments.length > 0 ? shipments.map(s => (
@@ -473,17 +478,17 @@ export function BottomPanel({
               <button
                 key={f.flightId}
                 onClick={() => undefined}
-                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[#1A2E4A]/40 transition-colors border-b border-[#1E3058]/30 text-left"
+                className="w-full grid items-center gap-3 px-4 py-2.5 hover:bg-[#1A2E4A]/40 transition-colors border-b border-[#1E3058]/30 text-left"
+                style={SHIPMENT_GRID_STYLE}
               >
                 <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: f.meetsSla ? '#00FF9C' : '#FFC857' }} />
-                <span className="text-[11px] text-[#7090B0] w-14">{f.flightId}</span>
-                <span className="text-[11px] text-[#A8C0E0] w-28 truncate">{DASH}</span>
-                <span className="text-[11px] text-[#7090B0] flex items-center gap-1">
+                <span className="text-[11px] text-[#7090B0] truncate">{f.flightId}</span>
+                <span className="text-[11px] text-[#A8C0E0] truncate">{DASH}</span>
+                <span className="text-[11px] text-[#7090B0] flex items-center gap-1 min-w-0 truncate">
                   {f.originId} <ArrowRight className="w-2.5 h-2.5" /> {f.destinationId}
                 </span>
-                <span className="text-[11px] text-[#4DA6FF] w-16">{f.bagsCount} bolsas</span>
-                <div className="flex-1" />
-                <span className="text-[11px] font-mono" style={{ color: f.meetsSla ? '#00FF9C' : '#FFC857' }}>{f.meetsSla ? 'SLA OK' : 'SLA Riesgo'}</span>
+                <span className="text-[11px] text-[#4DA6FF] truncate">{f.bagsCount} bolsas</span>
+                <span className="text-[11px] font-mono truncate" style={{ color: f.meetsSla ? '#00FF9C' : '#FFC857' }}>{f.meetsSla ? 'SLA OK' : 'SLA Riesgo'}</span>
               </button>
             )) : shipments.map(s => (
               <ShipmentListRow key={s.id} s={s} onClick={() => onSelectShipment?.(s.id)} />

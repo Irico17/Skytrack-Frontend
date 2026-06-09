@@ -124,10 +124,81 @@ export interface BackendConnected {
   simulationId: string;
 }
 
-export type BackendWsMessage = BackendConnected | BackendCycleUpdate | BackendStorageUpdate | BackendSimulationFinished | BackendSimulationError;
+export interface BackendSimulationStarted {
+  type: 'SIMULATION_STARTED';
+  simulationId: string;
+  activeSimulation: BackendActiveSimulation;
+}
+
+export type BackendWsMessage = BackendConnected | BackendSimulationStarted | BackendCycleUpdate | BackendStorageUpdate | BackendSimulationFinished | BackendSimulationError;
+
+export interface BackendActiveSimulation {
+  simulationId: string;
+  scenario: 'DAY_TO_DAY' | 'PERIOD_SIMULATION' | 'COLLAPSE_SIMULATION' | string;
+  scenarioDescription: string;
+  status: 'RUNNING' | 'PAUSED' | 'STOPPED' | 'COMPLETED';
+  startDateTime: string | null;
+  simulatedTime: string | null;
+  currentCycle: number;
+  daysElapsed: number;
+  K: number;
+  Ta: number;
+  Sa: number;
+  Sc: number;
+  connectedClients: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  canJoin: boolean;
+}
+
+export interface BackendSimulationSnapshot {
+  activeSimulation: BackendActiveSimulation | null;
+  status: BackendSimulationStatus;
+}
+
+export interface BackendOperationalState {
+  simulationId: string;
+  simulatedTime: string | null;
+  transportUnits: Array<{
+    flightId: string;
+    originId: string;
+    destinationId: string;
+    departureTime: string;
+    arrivalTime: string;
+    capacity: number;
+    bagsCount: number;
+    occupancyRatio: number;
+    empty: boolean;
+    meetsSla: boolean;
+  }>;
+  warehouses: Array<{
+    airportId: string;
+    city: string;
+    country: string;
+    currentBags: number;
+    maxCapacity: number;
+    occupancyRatio: number;
+    semaphore: 'GREEN' | 'AMBER' | 'RED' | string;
+  }>;
+  shipments: Array<{
+    batchId: string;
+    clientId: string;
+    originId: string;
+    destinationId: string;
+    quantity: number;
+    state: string;
+    currentFlightId: string | null;
+    meetsSla: boolean;
+    progress: number;
+    virtualProductStart: string;
+    virtualProductEnd: string;
+  }>;
+}
 
 export interface BackendStartResponse {
   simulationId: string;
+  joinedExisting?: boolean;
+  activeSimulation?: BackendActiveSimulation;
   message: string;
   scenario: string;
   K: number;

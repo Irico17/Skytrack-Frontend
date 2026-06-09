@@ -19,6 +19,8 @@ interface SelectedEntity {
   id: string;
 }
 
+type MapEntityFilter = SelectedEntity;
+
 interface Filters {
   airline: string;
   origin: string;
@@ -44,6 +46,18 @@ function formatApiDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+function sameEntity(a: SelectedEntity | null, b: SelectedEntity | null): boolean {
+  return Boolean(a && b && a.type === b.type && a.id === b.id);
+}
+
+function stripProjectedDaySuffix(flightId: string): string {
+  return flightId.replace(/-D\d+$/, '');
+}
+
+function sameFlightId(candidate: string, selected: string): boolean {
+  return candidate === selected || stripProjectedDaySuffix(candidate) === stripProjectedDaySuffix(selected);
+}
+
 export default function App() {
   const simulation = useSimulation();
   const [realClock, setRealClock] = React.useState(new Date());
@@ -53,6 +67,7 @@ export default function App() {
   }, []);
 
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
+  const [mapFilter, setMapFilter] = useState<MapEntityFilter | null>(null);
   const [filters, setFilters] = useState<Filters>({ airline: '', origin: '', destination: '' });
   const [toggles, setToggles] = useState<Toggles>({
     showRoutes: true,
@@ -65,8 +80,8 @@ export default function App() {
   const [showResults, setShowResults] = useState(false);
   const [showCollapseResults, setShowCollapseResults] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
-  const [bottomCollapsed, setBottomCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(true);
+  const [bottomCollapsed, setBottomCollapsed] = useState(true);
   const [mapExpanded, setMapExpanded] = useState(false);
 
   const displayedSimulationTime = simulation.mode === 'collapse'
@@ -118,6 +133,11 @@ export default function App() {
     );
   }, []);
 
+  const handleToggleMapFilter = useCallback((filter: MapEntityFilter) => {
+    setMapFilter(prev => sameEntity(prev, filter) ? null : filter);
+    setSelectedEntity(prev => sameEntity(prev, filter) ? prev : filter);
+  }, []);
+
   const filteredShipments = useMemo(() => {
     return simulation.shipments.filter(s => {
       if (filters.airline && s.airlineId !== filters.airline) return false;
@@ -152,6 +172,78 @@ export default function App() {
     });
   }, [simulation.activeFlights, filters.origin, filters.destination]);
 
+  const mapFilterShipment = useMemo(() => (
+    mapFilter?.type === 'shipment'
+      ? simulation.shipments.find(s => s.id === mapFilter.id) ?? null
+      : null
+  ), [mapFilter, simulation.shipments]);
+
+  const mapAirports = useMemo(() => {
+    if (!mapFilter) return simulation.airports;
+
+    const airportIds = new Set<string>();
+    if (mapFilter.type === 'airport') {
+      airportIds.add(mapFilter.id);
+    } else if (mapFilter.type === 'flight') {
+      const planned = simulation.flightPlanFlights.find(f => sameFlightId(f.flightId, mapFilter.id));
+      const active = simulation.activeFlights.find(f => sameFlightId(f.flightId, mapFilter.id));
+      const local = simulation.flights.find(f => sameFlightId(f.id, mapFilter.id));
+      const originId = planned?.originId ?? active?.originId ?? local?.from;
+      const destinationId = planned?.destinationId ?? active?.destinationId ?? local?.to;
+      if (originId) airportIds.add(originId);
+      if (destinationId) airportIds.add(destinationId);
+    } else if (mapFilterShipment) {
+      airportIds.add(mapFilterShipment.origin);
+      airportIds.add(mapFilterShipment.destination);
+    }
+
+    return simulation.airports.filter(a => airportIds.has(a.id));
+  }, [mapFilter, mapFilterShipment, simulation.activeFlights, simulation.airports, simulation.flightPlanFlights, simulation.flights]);
+
+  const mapFlights = useMemo(() => {
+    if (!mapFilter) return filteredFlights;
+    if (mapFilter.type === 'flight') {
+      return simulation.flights.filter(f => sameFlightId(f.id, mapFilter.id));
+    }
+    if (mapFilter.type === 'shipment' && mapFilterShipment?.currentFlightId && mapFilterShipment.currentFlightId !== 'PENDING') {
+      return simulation.flights.filter(f => sameFlightId(f.id, mapFilterShipment.currentFlightId));
+    }
+    return [];
+  }, [filteredFlights, mapFilter, mapFilterShipment, simulation.flights]);
+
+  const mapShipments = useMemo(() => {
+    if (!mapFilter) return filteredShipments;
+    if (mapFilter.type === 'shipment') {
+      return simulation.shipments.filter(s => s.id === mapFilter.id);
+    }
+    if (mapFilter.type === 'flight') {
+      return simulation.shipments.filter(s => sameFlightId(s.currentFlightId, mapFilter.id));
+    }
+    return [];
+  }, [filteredShipments, mapFilter, simulation.shipments]);
+
+  const mapFlightPlanFlights = useMemo(() => {
+    if (!mapFilter) return filteredFlightPlanFlights;
+    if (mapFilter.type === 'flight') {
+      return simulation.flightPlanFlights.filter(f => sameFlightId(f.flightId, mapFilter.id));
+    }
+    if (mapFilter.type === 'shipment' && mapFilterShipment?.currentFlightId && mapFilterShipment.currentFlightId !== 'PENDING') {
+      return simulation.flightPlanFlights.filter(f => sameFlightId(f.flightId, mapFilterShipment.currentFlightId));
+    }
+    return [];
+  }, [filteredFlightPlanFlights, mapFilter, mapFilterShipment, simulation.flightPlanFlights]);
+
+  const mapActiveFlights = useMemo(() => {
+    if (!mapFilter) return filteredActiveFlights;
+    if (mapFilter.type === 'flight') {
+      return simulation.activeFlights.filter(f => sameFlightId(f.flightId, mapFilter.id));
+    }
+    if (mapFilter.type === 'shipment' && mapFilterShipment?.currentFlightId && mapFilterShipment.currentFlightId !== 'PENDING') {
+      return simulation.activeFlights.filter(f => sameFlightId(f.flightId, mapFilterShipment.currentFlightId));
+    }
+    return [];
+  }, [filteredActiveFlights, mapFilter, mapFilterShipment, simulation.activeFlights]);
+
   const criticalCount = useMemo(() =>
     simulation.shipments.filter(s => s.status === 'critical').length,
     [simulation.shipments]
@@ -163,6 +255,8 @@ export default function App() {
 
   const handleReset = useCallback(() => {
     simulation.reset();
+    setMapFilter(null);
+    setSelectedEntity(null);
     setShowResults(false);
     setShowCollapseResults(false);
   }, [simulation]);
@@ -200,6 +294,8 @@ export default function App() {
             simulationComplete={simulation.simulationComplete}
             collapseComplete={simulation.collapseComplete}
             airports={simulation.airports}
+            simulationTime={displayedSimulationTime}
+            simulationK={simulation.simulationK}
             onModeChange={simulation.setMode}
             onStartDateChange={simulation.setStartDate}
             onFilterChange={handleFilterChange}
@@ -223,9 +319,9 @@ export default function App() {
           {/* World Map */}
           <div className="flex-1 overflow-hidden relative">
             <WorldMap
-              airports={simulation.airports}
-              flights={filteredFlights}
-              shipments={filteredShipments}
+              airports={mapAirports}
+              flights={mapFlights}
+              shipments={mapShipments}
               selectedEntity={selectedEntity}
               onSelectAirport={handleSelectAirport}
               onSelectFlight={handleSelectFlight}
@@ -233,8 +329,8 @@ export default function App() {
               toggles={toggles}
               simClock={simulation.mode === 'collapse' ? displayedSimulationTime : undefined}
               simClockRef={simulation.simClockRef}
-              activeFlights={filteredActiveFlights}
-              flightPlanFlights={filteredFlightPlanFlights}
+              activeFlights={mapActiveFlights}
+              flightPlanFlights={mapFlightPlanFlights}
               isExpanded={mapExpanded}
               onToggleExpanded={() => setMapExpanded(v => !v)}
             />
@@ -388,7 +484,7 @@ export default function App() {
               airports={simulation.airports}
               flights={simulation.flights}
               shipments={simulation.shipments}
-              onClearSelection={() => setSelectedEntity(null)}
+              onClearSelection={() => { setSelectedEntity(null); setMapFilter(null); }}
               onSelectShipment={handleSelectShipment}
               isRunning={simulation.isRunning}
               mode={simulation.mode}
@@ -412,6 +508,11 @@ export default function App() {
             activeFlights={filteredActiveFlights}
             flightPlanFlights={filteredFlightPlanFlights}
             lastCycleUpdate={simulation.lastCycleUpdate}
+            activeMapFilter={mapFilter}
+            onToggleMapFilter={handleToggleMapFilter}
+            onSelectAirport={handleSelectAirport}
+            onSelectFlight={handleSelectFlight}
+            onSelectShipment={handleSelectShipment}
           />
         )}
       </div>

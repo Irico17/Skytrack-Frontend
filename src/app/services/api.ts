@@ -1,9 +1,11 @@
 import type {
   BackendAirport,
+  BackendActiveSimulation,
   BackendStartResponse,
   BackendSimulationResults,
   BackendFlightPlanFlight,
   BackendSimulationStatus,
+  BackendOperationalState,
   BackendSolution,
   BackendShipmentRequest,
   BackendShipmentResponse,
@@ -51,9 +53,11 @@ export async function fetchFlightPlan(startDateTime: string, days = 5): Promise<
  */
 export function startSimulation(
   scenario: 'PERIOD_SIMULATION' | 'DAY_TO_DAY' | 'COLLAPSE_SIMULATION',
-  startDateTime?: string
+  startDateTime?: string,
+  replace = false
 ): Promise<BackendStartResponse> {
-  return request<BackendStartResponse>('/simulations/start', {
+  const query = replace ? '?replace=true' : '';
+  return request<BackendStartResponse>(`/simulations/start${query}`, {
     method: 'POST',
     body: JSON.stringify({
       scenario,
@@ -66,6 +70,18 @@ export function startSimulation(
 /** Inicia operación día a día usando la fecha actual de ejecución. */
 export function startDayToDaySimulation(startDateTime: string): Promise<BackendStartResponse> {
   return startSimulation('DAY_TO_DAY', startDateTime);
+}
+
+export async function getActiveSimulation(): Promise<BackendActiveSimulation | null> {
+  const res = await fetch(`${BASE}/simulations/active`, {
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (res.status === 204 || res.status === 404) return null;
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`HTTP ${res.status}: ${body}`);
+  }
+  return await res.json() as BackendActiveSimulation;
 }
 
 export function stopSimulation(simId: string): Promise<void> {
@@ -94,6 +110,10 @@ export function getSimulationStatus(simId: string): Promise<BackendSimulationSta
 
 export function getSimulationSolution(simId: string): Promise<BackendSolution> {
   return request<BackendSolution>(`/simulations/${simId}/solution`);
+}
+
+export function getOperationalState(simId: string, limit = 100): Promise<BackendOperationalState> {
+  return request<BackendOperationalState>(`/simulations/${simId}/operational-state?limit=${limit}`);
 }
 
 export function createShipment(

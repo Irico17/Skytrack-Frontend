@@ -3,6 +3,7 @@ import {
   Filter, Route, Warehouse, AlertOctagon, Play, Pause,
   RotateCcw, Zap, PlusCircle, Search, X, ChevronDown, ChevronUp,
   Plane, Package, Building2, FastForward, BarChart2, Calendar, Database,
+  Clock,
 } from 'lucide-react';
 import { SimulationMode, AIRLINES, Airport } from '../data/mockData';
 
@@ -21,6 +22,8 @@ interface Toggles {
 interface LeftSidebarProps {
   mode: SimulationMode;
   startDate: Date;
+  simulationTime: Date;
+  simulationK?: number;
   filters: Filters;
   toggles: Toggles;
   isRunning: boolean;
@@ -117,8 +120,16 @@ function SelectField({ label, value, onChange, options, disabled = false }: {
   );
 }
 
+function formatDurationHms(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 export function LeftSidebar({
-  mode, startDate, filters, toggles, isRunning, hasReplanned,
+  mode, startDate, simulationTime, simulationK = 240, filters, toggles, isRunning, hasReplanned,
   daysElapsed, simulationComplete, collapseComplete, airports = [],
   onModeChange, onStartDateChange, onFilterChange, onToggleChange,
   onStart, onPause, onReset, onReplan, onAddShipment, onCancelFlight,
@@ -144,6 +155,11 @@ export function LeftSidebar({
     return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]}`;
   });
   const currentDay = Math.min(Math.ceil(daysElapsed), 5);
+  const elapsedMs = mode === 'collapse'
+    ? Math.max(0, simulationTime.getTime() - startDate.getTime())
+    : Math.max(0, daysElapsed * 24 * 60 * 60 * 1000);
+  const elapsedHms = formatDurationHms(elapsedMs);
+  const displayedK = mode === 'collapse' ? 75 : mode === 'realtime' ? 1 : simulationK;
 
   const showDateSelector = true;
 
@@ -234,6 +250,17 @@ export function LeftSidebar({
           </div>
         </Section>
       )}
+
+      <Section title="TIEMPO TRANSCURRIDO" icon={<Clock className="w-3 h-3" />}>
+        <div className="rounded-lg border border-[#1E3058] bg-[#0D1E38] px-3 py-2.5">
+          <div className="text-[10px] text-[#4A6080] mb-1" style={{ letterSpacing: '0.1em' }}>SIMULADO</div>
+          <div className="text-xl font-mono text-[#E2E8F8]" style={{ fontWeight: 700 }}>{elapsedHms}</div>
+          <div className="mt-1 flex items-center justify-between text-[10px] text-[#4A6080]">
+            <span>K={displayedK}×</span>
+            <span>{isRunning ? 'En curso' : simulationComplete || collapseComplete ? 'Completo' : 'En espera'}</span>
+          </div>
+        </div>
+      </Section>
 
       {/* 5-Day Progress — only visible in 5day mode */}
       {mode === '5day' && (

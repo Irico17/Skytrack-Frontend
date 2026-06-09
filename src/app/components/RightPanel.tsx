@@ -5,10 +5,16 @@ import {
 } from 'recharts';
 import {
   TrendingUp, TrendingDown, Package, AlertTriangle, Warehouse,
-  Clock, FileText, Zap, CheckCircle, ChevronRight, Activity
+  Clock, FileText, Zap, CheckCircle, Activity,
+  Plane, Search, ArrowUpDown, MapPin, Luggage
 } from 'lucide-react';
 import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercent } from '../data/mockData';
 import type { BackendActiveFlight, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
+
+interface MapEntityFilter {
+  type: 'airport' | 'flight' | 'shipment';
+  id: string;
+}
 
 interface RightPanelProps {
   airports: Airport[];
@@ -21,6 +27,11 @@ interface RightPanelProps {
   activeFlights?: BackendActiveFlight[];
   flightPlanFlights?: BackendFlightPlanFlight[];
   lastCycleUpdate?: BackendCycleUpdate | null;
+  activeMapFilter?: MapEntityFilter | null;
+  onToggleMapFilter?: (filter: MapEntityFilter) => void;
+  onSelectAirport?: (id: string) => void;
+  onSelectFlight?: (id: string) => void;
+  onSelectShipment?: (id: string) => void;
 }
 
 function KPICard({ label, value, unit, color, icon, trend, trendDir }: {
@@ -88,6 +99,7 @@ const CUSTOM_TOOLTIP_STYLE = {
 };
 
 const DASH = '—';
+const VISIBLE_OPERATIONAL_ROWS = 80;
 
 function ReportRow({ label, value, color = '#C8D8F0' }: { label: string; value: React.ReactNode; color?: string }) {
   return (
@@ -113,8 +125,13 @@ function CustomBarTooltip({ active, payload, label }: { active?: boolean; payloa
 export function RightPanel({
   airports, flights, shipments, events, isRunning, simulationTime,
   mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
+  activeMapFilter = null, onToggleMapFilter,
+  onSelectAirport, onSelectFlight, onSelectShipment,
 }: RightPanelProps) {
-  const [activeTab, setActiveTab] = useState<'kpi' | 'warehouse' | 'reports'>('kpi');
+  const [activeTab, setActiveTab] = useState<'kpi' | 'transport' | 'warehouse' | 'shipments' | 'reports'>('kpi');
+  const [opsSearch, setOpsSearch] = useState('');
+  const [transportSort, setTransportSort] = useState<'load' | 'departure' | 'route'>('load');
+  const [shipmentSort, setShipmentSort] = useState<'progress' | 'bags' | 'route'>('progress');
   const isBackendStatsMode = mode === '5day' || mode === 'realtime';
   const hasBackendStats = isBackendStatsMode && lastCycleUpdate != null;
   const backendMetrics = hasBackendStats ? lastCycleUpdate?.operationalMetrics : undefined;
@@ -169,7 +186,9 @@ export function RightPanel({
 
   const tabs = [
     { id: 'kpi' as const, label: 'KPIs', icon: <Activity className="w-3 h-3" /> },
+    { id: 'transport' as const, label: 'UT', icon: <Plane className="w-3 h-3" /> },
     { id: 'warehouse' as const, label: 'Almacén', icon: <Warehouse className="w-3 h-3" /> },
+    { id: 'shipments' as const, label: 'Envíos', icon: <Luggage className="w-3 h-3" /> },
     { id: 'reports' as const, label: 'Reportes', icon: <FileText className="w-3 h-3" /> },
   ];
 
@@ -178,15 +197,95 @@ export function RightPanel({
   const sortedAirports = useMemo(() => [...airports]
     .sort((a, b) => getOccupancyPercent(b.occupancy, b.capacity) - getOccupancyPercent(a.occupancy, a.capacity)), [airports]);
 
+  const activeBagsByFlight = useMemo(() => {
+    const map = new Map<string, BackendActiveFlight>();
+    activeFlights.forEach(f => map.set(f.flightId, f));
+    return map;
+  }, [activeFlights]);
+
+  const transportUnits = useMemo(() => {
+    if (activeTab !== 'transport') return [];
+
+    const base = flightPlanFlights.length > 0
+      ? flightPlanFlights.map(f => {
+          const active = activeBagsByFlight.get(f.flightId);
+          const bags = active?.bagsCount ?? 0;
+          const pct = f.capacity > 0 ? Math.round((bags / f.capacity) * 100) : 0;
+          return {
+            flightId: f.flightId,
+            originId: f.originId,
+            destinationId: f.destinationId,
+            departureTime: f.departureTime,
+            arrivalTime: f.arrivalTime,
+            capacity: f.capacity,
+            bags,
+            pct,
+            meetsSla: active?.meetsSla ?? true,
+            empty: bags === 0,
+          };
+        })
+      : activeFlights.map(f => ({
+          flightId: f.flightId,
+          originId: f.originId,
+          destinationId: f.destinationId,
+          departureTime: f.departureTime,
+          arrivalTime: f.arrivalTime,
+          capacity: 0,
+          bags: f.bagsCount,
+          pct: 0,
+          meetsSla: f.meetsSla,
+          empty: f.bagsCount === 0,
+        }));
+
+    const query = opsSearch.trim().toLowerCase();
+    return base
+      .filter(f => !query || `${f.flightId} ${f.originId} ${f.destinationId}`.toLowerCase().includes(query))
+      .sort((a, b) => {
+        if (transportSort === 'departure') return new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime();
+        if (transportSort === 'route') return `${a.originId}-${a.destinationId}`.localeCompare(`${b.originId}-${b.destinationId}`);
+        return b.bags - a.bags;
+      });
+  }, [activeTab, flightPlanFlights, activeFlights, activeBagsByFlight, opsSearch, transportSort]);
+
+  const operationalShipments = useMemo(() => {
+    if (activeTab !== 'shipments') return [];
+
+    const query = opsSearch.trim().toLowerCase();
+    return shipments
+      .filter(s => !query || `${s.id} ${s.origin} ${s.destination} ${s.airlineId}`.toLowerCase().includes(query))
+      .sort((a, b) => {
+        if (shipmentSort === 'bags') return b.luggageCount - a.luggageCount;
+        if (shipmentSort === 'route') return `${a.origin}-${a.destination}`.localeCompare(`${b.origin}-${b.destination}`);
+        return a.progress - b.progress;
+      });
+  }, [activeTab, shipments, opsSearch, shipmentSort]);
+
+  const isFilterActive = (type: MapEntityFilter['type'], id: string) =>
+    activeMapFilter?.type === type && activeMapFilter.id === id;
+
+  const handleMapFilterClick = (filter: MapEntityFilter, fallback?: () => void) => {
+    if (onToggleMapFilter) {
+      onToggleMapFilter(filter);
+    } else {
+      fallback?.();
+    }
+  };
+
+  const mapFilterButtonClass = (active: boolean, size = 'w-7 h-7') => `${size} rounded-lg border flex items-center justify-center transition-colors ${
+    active
+      ? 'bg-[#4DA6FF]/20 border-[#4DA6FF] text-[#4DA6FF]'
+      : 'bg-[#0D1E38] border-[#1E3058] text-[#A8C0E0] hover:text-[#4DA6FF] hover:border-[#4DA6FF]/50'
+  }`;
+
   return (
     <div className="w-80 bg-[#080F1E] border-l border-[#1E3058] flex flex-col h-full overflow-hidden">
       {/* Tab bar */}
-      <div className="flex border-b border-[#1E3058] px-3 pt-2 gap-1 flex-shrink-0">
+      <div className="flex border-b border-[#1E3058] px-2 pt-2 gap-1 flex-shrink-0 overflow-x-auto">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-[11px] rounded-t-lg transition-colors
+            className={`flex items-center gap-1.5 px-2.5 py-2 text-[11px] rounded-t-lg transition-colors whitespace-nowrap
               ${activeTab === tab.id
                 ? 'text-[#4DA6FF] border-b-2 border-[#4DA6FF] bg-[#4DA6FF]/5'
                 : 'text-[#4A6080] hover:text-[#A8C0E0]'
@@ -356,6 +455,151 @@ export function RightPanel({
           </>
         )}
 
+        {/* Transport Units Tab */}
+        {activeTab === 'transport' && (
+          <>
+            <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex-1 relative">
+                  <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[#4A6080]" />
+                  <input
+                    value={opsSearch}
+                    onChange={e => setOpsSearch(e.target.value)}
+                    placeholder="Buscar UT o ruta"
+                    className="w-full h-8 rounded-lg bg-[#081426] border border-[#1E3058] pl-7 pr-2 text-[11px] text-[#C8D8F0] outline-none focus:border-[#4DA6FF]/60"
+                  />
+                </div>
+                <button
+                  onClick={() => setTransportSort(prev => prev === 'load' ? 'departure' : prev === 'departure' ? 'route' : 'load')}
+                  className="w-8 h-8 rounded-lg bg-[#081426] border border-[#1E3058] text-[#A8C0E0] flex items-center justify-center hover:border-[#4DA6FF]/60"
+                  title={`Orden: ${transportSort}`}
+                >
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
+                UNIDADES DE TRANSPORTE · {transportUnits.length}
+              </div>
+              <div className="max-h-[520px] overflow-y-auto flex flex-col gap-2">
+                {transportUnits.slice(0, VISIBLE_OPERATIONAL_ROWS).map(unit => {
+                  const color = !unit.meetsSla ? '#FFC857' : unit.pct >= 90 ? '#FF4D4D' : unit.pct >= 70 ? '#FFC857' : unit.empty ? '#4A6080' : '#00FF9C';
+                  const departure = new Date(unit.departureTime).toISOString().slice(11, 16);
+                  const arrival = new Date(unit.arrivalTime).toISOString().slice(11, 16);
+                  const active = isFilterActive('flight', unit.flightId);
+                  return (
+                    <div key={unit.flightId} className="rounded-lg border border-[#1E3058] bg-[#081426] p-2 hover:border-[#4DA6FF]/40 transition-colors">
+                      <div className="flex items-start gap-2">
+                        <div className="w-2 h-2 rounded-full mt-1.5" style={{ backgroundColor: color }} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-white truncate" style={{ fontWeight: 700 }}>{unit.flightId}</span>
+                            {unit.empty && <span className="text-[9px] text-[#4A6080] border border-[#1E3058] rounded px-1">VACÍO</span>}
+                            {!unit.meetsSla && <span className="text-[9px] text-[#FFC857] border border-[#FFC857]/30 rounded px-1">SLA</span>}
+                          </div>
+                          <div className="text-[10px] text-[#4A6080] mt-0.5">{unit.originId} → {unit.destinationId} · {departure}-{arrival}</div>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <div className="flex-1 h-1.5 rounded bg-[#1E3058] overflow-hidden">
+                              <div className="h-full rounded" style={{ width: `${Math.min(unit.pct, 100)}%`, backgroundColor: color }} />
+                            </div>
+                            <span className="text-[10px] font-mono" style={{ color }}>{unit.capacity > 0 ? `${unit.bags}/${unit.capacity}` : `${unit.bags}`}</span>
+                          </div>
+                          <div className="text-[10px] text-[#4A6080] mt-1">Producto virtual: {unit.flightId}-B0001</div>
+                        </div>
+                        <button
+                          onClick={() => handleMapFilterClick({ type: 'flight', id: unit.flightId }, () => onSelectFlight?.(unit.flightId))}
+                          className={mapFilterButtonClass(active)}
+                          title={active ? 'Quitar filtro del mapa' : 'Filtrar UT en mapa'}
+                        >
+                          <MapPin className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {transportUnits.length === 0 && (
+                  <div className="text-[11px] text-[#4A6080] px-2 py-4">Sin unidades que coincidan con el filtro</div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Shipments Tab */}
+        {activeTab === 'shipments' && (
+          <>
+            <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex-1 relative">
+                  <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[#4A6080]" />
+                  <input
+                    value={opsSearch}
+                    onChange={e => setOpsSearch(e.target.value)}
+                    placeholder="Buscar envío, cliente o ruta"
+                    className="w-full h-8 rounded-lg bg-[#081426] border border-[#1E3058] pl-7 pr-2 text-[11px] text-[#C8D8F0] outline-none focus:border-[#4DA6FF]/60"
+                  />
+                </div>
+                <button
+                  onClick={() => setShipmentSort(prev => prev === 'progress' ? 'bags' : prev === 'bags' ? 'route' : 'progress')}
+                  className="w-8 h-8 rounded-lg bg-[#081426] border border-[#1E3058] text-[#A8C0E0] flex items-center justify-center hover:border-[#4DA6FF]/60"
+                  title={`Orden: ${shipmentSort}`}
+                >
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <ReportRow label="Planificados" value={lastCycleUpdate?.batchSummary.unrouted ?? 0} color="#FFC857" />
+                <ReportRow label="En vuelo" value={backendMetrics?.inFlightBags ?? 0} color="#4DA6FF" />
+                <ReportRow label="Entregados" value={backendMetrics?.deliveredBags ?? 0} color="#00FF9C" />
+              </div>
+              <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
+                ENVÍOS Y PRODUCTOS · {operationalShipments.length}
+              </div>
+              <div className="max-h-[520px] overflow-y-auto flex flex-col gap-2">
+                {operationalShipments.slice(0, VISIBLE_OPERATIONAL_ROWS).map(shipment => {
+                  const color = getStatusColor(shipment.status);
+                  const productRange = shipment.luggageCount > 1
+                    ? `${shipment.id}-B0001…B${String(shipment.luggageCount).padStart(4, '0')}`
+                    : `${shipment.id}-B0001`;
+                  const active = isFilterActive('shipment', shipment.id);
+                  return (
+                    <div key={shipment.id} className="rounded-lg border border-[#1E3058] bg-[#081426] p-2 hover:border-[#4DA6FF]/40 transition-colors">
+                      <div className="flex items-start gap-2">
+                        <div className="w-2 h-2 rounded-full mt-1.5" style={{ backgroundColor: color }} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-white truncate" style={{ fontWeight: 700 }}>{shipment.id}</span>
+                            <span className="text-[9px] text-[#4A6080] border border-[#1E3058] rounded px-1">{shipment.luggageCount} maletas</span>
+                          </div>
+                          <div className="text-[10px] text-[#4A6080] mt-0.5">{shipment.origin} → {shipment.destination} · {shipment.currentFlightId}</div>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <div className="flex-1 h-1.5 rounded bg-[#1E3058] overflow-hidden">
+                              <div className="h-full rounded" style={{ width: `${Math.round(shipment.progress * 100)}%`, backgroundColor: color }} />
+                            </div>
+                            <span className="text-[10px] font-mono" style={{ color }}>{Math.round(shipment.progress * 100)}%</span>
+                          </div>
+                          <div className="text-[10px] text-[#4A6080] mt-1 truncate">{productRange}</div>
+                        </div>
+                        <button
+                          onClick={() => handleMapFilterClick({ type: 'shipment', id: shipment.id }, () => onSelectShipment?.(shipment.id))}
+                          className={mapFilterButtonClass(active)}
+                          title={active ? 'Quitar filtro del mapa' : 'Filtrar envío en mapa'}
+                        >
+                          <MapPin className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {operationalShipments.length === 0 && (
+                  <div className="text-[11px] text-[#4A6080] px-2 py-4">
+                    {hasBackendStats ? 'La lista detallada se carga desde la solución cuando el ciclo termina.' : 'Sin envíos que coincidan con el filtro'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
         {/* Warehouse Tab */}
         {activeTab === 'warehouse' && (
           <>
@@ -412,6 +656,7 @@ export function RightPanel({
                 {sortedAirports.map(a => {
                     const pct = getOccupancyPercent(a.occupancy, a.capacity);
                     const color = getStatusColor(a.status);
+                  const active = isFilterActive('airport', a.id);
                     return (
                       <div key={a.id} className="flex items-center gap-2 px-3 py-2 border-b border-[#1E3058]/40 hover:bg-[#1A2E4A]/30">
                         <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
@@ -421,6 +666,13 @@ export function RightPanel({
                           <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
                         </div>
                         <span className="text-[11px] font-mono w-8 text-right" style={{ color }}>{pct}%</span>
+                        <button
+                          onClick={() => handleMapFilterClick({ type: 'airport', id: a.id }, () => onSelectAirport?.(a.id))}
+                          className={mapFilterButtonClass(active, 'w-6 h-6')}
+                          title={active ? 'Quitar filtro del mapa' : 'Filtrar almacén en mapa'}
+                        >
+                          <MapPin className="w-3 h-3" />
+                        </button>
                       </div>
                     );
                   })}
