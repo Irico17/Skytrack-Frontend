@@ -195,6 +195,62 @@ export interface BackendOperationalState {
   }>;
 }
 
+export type BackendBagState =
+  | 'NOT_REGISTERED'
+  | 'PENDING_ROUTE'
+  | 'AT_ORIGIN'
+  | 'AT_TRANSFER'
+  | 'IN_FLIGHT'
+  | 'DELIVERED'
+  | string;
+
+export interface BackendBagEvent {
+  type: string;
+  airportId: string | null;
+  flightId: string | null;
+  timestamp: string;
+  completed: boolean;
+}
+
+export interface BackendBagItem {
+  bagId: string;
+  sequence: number;
+  batchId: string;
+  clientId: string;
+  originId: string;
+  destinationId: string;
+  state: BackendBagState;
+  currentAirportId: string | null;
+  currentFlightId: string | null;
+  lastEvent: string | null;
+  nextEvent: string | null;
+  ingressTime: string;
+  deadline: string;
+  finalArrivalTime: string | null;
+  meetsSla: boolean;
+  progress: number;
+  events: BackendBagEvent[];
+}
+
+export interface BackendBagTraceability {
+  simulationId: string;
+  simulatedTime: string | null;
+  page: number;
+  size: number;
+  totalItems: number;
+  summary: {
+    totalBags: number;
+    matchedBags: number;
+    notRegisteredBags: number;
+    pendingRouteBags: number;
+    warehouseBags: number;
+    inFlightBags: number;
+    deliveredBags: number;
+    delayedBags: number;
+  };
+  bags: BackendBagItem[];
+}
+
 export interface BackendStartResponse {
   simulationId: string;
   joinedExisting?: boolean;

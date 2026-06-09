@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer,
   PieChart, Pie, Cell
@@ -9,7 +9,8 @@ import {
   Plane, Search, ArrowUpDown, MapPin, Luggage, Users
 } from 'lucide-react';
 import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercent } from '../data/mockData';
-import type { BackendActiveFlight, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
+import { getBagTraceability } from '../services/api';
+import type { BackendActiveFlight, BackendBagItem, BackendBagTraceability, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
 
 interface MapEntityFilter {
   type: 'airport' | 'flight' | 'shipment';
@@ -17,6 +18,7 @@ interface MapEntityFilter {
 }
 
 interface RightPanelProps {
+  simulationId?: string | null;
   airports: Airport[];
   flights: Flight[];
   shipments: Shipment[];
@@ -100,6 +102,58 @@ const CUSTOM_TOOLTIP_STYLE = {
 
 const DASH = '—';
 const VISIBLE_OPERATIONAL_ROWS = 80;
+const BAG_PAGE_SIZE = 50;
+
+const BAG_STATE_OPTIONS = [
+  { id: 'ALL', label: 'Todas' },
+  { id: 'PENDING_ROUTE', label: 'Sin ruta' },
+  { id: 'AT_ORIGIN', label: 'Origen' },
+  { id: 'AT_TRANSFER', label: 'Transfer' },
+  { id: 'IN_FLIGHT', label: 'Vuelo' },
+  { id: 'DELIVERED', label: 'Entregadas' },
+];
+
+const BAG_STATE_LABELS: Record<string, string> = {
+  NOT_REGISTERED: 'No registrada',
+  PENDING_ROUTE: 'Sin ruta',
+  AT_ORIGIN: 'Almacén origen',
+  AT_TRANSFER: 'Almacén transferencia',
+  IN_FLIGHT: 'En vuelo',
+  DELIVERED: 'Entregada',
+};
+
+const BAG_EVENT_LABELS: Record<string, string> = {
+  REGISTERED: 'Registrada',
+  WAREHOUSE_IN: 'Ingreso almacén',
+  LOADED: 'Cargada',
+  ARRIVED: 'Arribó',
+  DELIVERED: 'Entregada',
+};
+
+function bagStateLabel(state: string): string {
+  return BAG_STATE_LABELS[state] ?? state;
+}
+
+function bagEventLabel(type: string): string {
+  return BAG_EVENT_LABELS[type] ?? type;
+}
+
+function bagStateColor(state: string): string {
+  if (state === 'DELIVERED') return '#00FF9C';
+  if (state === 'IN_FLIGHT') return '#4DA6FF';
+  if (state === 'PENDING_ROUTE') return '#FF4D4D';
+  if (state === 'AT_TRANSFER') return '#FFC857';
+  return '#A8C0E0';
+}
+
+function formatTraceTime(value?: string | null): string {
+  if (!value) return DASH;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('es-ES', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+}
 
 function ReportRow({ label, value, color = '#C8D8F0' }: { label: string; value: React.ReactNode; color?: string }) {
   return (
@@ -123,15 +177,22 @@ function CustomBarTooltip({ active, payload, label }: { active?: boolean; payloa
 }
 
 export function RightPanel({
+  simulationId = null,
   airports, flights, shipments, events, isRunning, simulationTime,
   mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
   activeMapFilter = null, onToggleMapFilter,
   onSelectAirport, onSelectFlight, onSelectShipment,
 }: RightPanelProps) {
-  const [activeTab, setActiveTab] = useState<'kpi' | 'transport' | 'warehouse' | 'shipments' | 'clients' | 'reports'>('kpi');
+  const [activeTab, setActiveTab] = useState<'kpi' | 'transport' | 'warehouse' | 'shipments' | 'clients' | 'bags' | 'reports'>('kpi');
   const [opsSearch, setOpsSearch] = useState('');
   const [transportSort, setTransportSort] = useState<'load' | 'departure' | 'route'>('load');
   const [shipmentSort, setShipmentSort] = useState<'progress' | 'bags' | 'route'>('progress');
+  const [bagStateFilter, setBagStateFilter] = useState('ALL');
+  const [bagPage, setBagPage] = useState(0);
+  const [bagTraceability, setBagTraceability] = useState<BackendBagTraceability | null>(null);
+  const [bagTraceLoading, setBagTraceLoading] = useState(false);
+  const [bagTraceError, setBagTraceError] = useState<string | null>(null);
+  const [selectedBagId, setSelectedBagId] = useState<string | null>(null);
   const isBackendStatsMode = mode === '5day' || mode === 'realtime';
   const hasBackendStats = isBackendStatsMode && lastCycleUpdate != null;
   const backendMetrics = hasBackendStats ? lastCycleUpdate?.operationalMetrics : undefined;
@@ -190,6 +251,7 @@ export function RightPanel({
     { id: 'warehouse' as const, label: 'Almacén', icon: <Warehouse className="w-3 h-3" /> },
     { id: 'shipments' as const, label: 'Envíos', icon: <Luggage className="w-3 h-3" /> },
     { id: 'clients' as const, label: 'Clientes', icon: <Users className="w-3 h-3" /> },
+    { id: 'bags' as const, label: 'Maletas', icon: <Package className="w-3 h-3" /> },
     { id: 'reports' as const, label: 'Reportes', icon: <FileText className="w-3 h-3" /> },
   ];
 
@@ -284,6 +346,61 @@ export function RightPanel({
 
   const isFilterActive = (type: MapEntityFilter['type'], id: string) =>
     activeMapFilter?.type === type && activeMapFilter.id === id;
+
+  useEffect(() => {
+    if (activeTab === 'bags') {
+      setBagPage(0);
+    }
+  }, [activeTab, opsSearch, bagStateFilter, simulationId]);
+
+  useEffect(() => {
+    if (activeTab !== 'bags') return;
+    if (!simulationId) {
+      setBagTraceability(null);
+      setBagTraceError(null);
+      setBagTraceLoading(false);
+      setSelectedBagId(null);
+      return;
+    }
+
+    let cancelled = false;
+    setBagTraceLoading(true);
+    setBagTraceError(null);
+    const timer = window.setTimeout(() => {
+      getBagTraceability(simulationId, {
+        page: bagPage,
+        size: BAG_PAGE_SIZE,
+        query: opsSearch,
+        state: bagStateFilter === 'ALL' ? undefined : bagStateFilter,
+      })
+        .then(data => {
+          if (cancelled) return;
+          setBagTraceability(data);
+          setSelectedBagId(prev => {
+            if (prev && data.bags.some(bag => bag.bagId === prev)) return prev;
+            return data.bags[0]?.bagId ?? null;
+          });
+        })
+        .catch(err => {
+          if (cancelled) return;
+          setBagTraceability(null);
+          setSelectedBagId(null);
+          setBagTraceError(err instanceof Error ? err.message : 'No se pudo cargar la trazabilidad');
+        })
+        .finally(() => {
+          if (!cancelled) setBagTraceLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeTab, simulationId, bagPage, opsSearch, bagStateFilter, lastCycleUpdate?.cycle]);
+
+  const selectedBag = useMemo<BackendBagItem | null>(() => (
+    bagTraceability?.bags.find(bag => bag.bagId === selectedBagId) ?? null
+  ), [bagTraceability, selectedBagId]);
 
   const handleMapFilterClick = (filter: MapEntityFilter, fallback?: () => void) => {
     if (onToggleMapFilter) {
@@ -665,6 +782,162 @@ export function RightPanel({
                 )}
               </div>
             </div>
+          </>
+        )}
+
+        {/* Bags Tab */}
+        {activeTab === 'bags' && (
+          <>
+            <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex-1 relative">
+                  <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[#4A6080]" />
+                  <input
+                    value={opsSearch}
+                    onChange={e => setOpsSearch(e.target.value)}
+                    placeholder="Buscar maleta, cliente, lote o vuelo"
+                    className="w-full h-8 rounded-lg bg-[#081426] border border-[#1E3058] pl-7 pr-2 text-[11px] text-[#C8D8F0] outline-none focus:border-[#4DA6FF]/60"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-1 overflow-x-auto pb-2 mb-2">
+                {BAG_STATE_OPTIONS.map(option => {
+                  const active = bagStateFilter === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      onClick={() => setBagStateFilter(option.id)}
+                      className={`h-7 px-2 rounded-lg border text-[10px] whitespace-nowrap transition-colors ${active
+                        ? 'bg-[#4DA6FF]/15 border-[#4DA6FF] text-[#4DA6FF]'
+                        : 'bg-[#081426] border-[#1E3058] text-[#4A6080] hover:text-[#A8C0E0] hover:border-[#4DA6FF]/40'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {!simulationId && (
+                <div className="text-[11px] text-[#4A6080] px-2 py-4">Inicia o únete a una simulación para consultar trazabilidad de maletas</div>
+              )}
+
+              {simulationId && bagTraceability && (
+                <>
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <ReportRow label="Total" value={bagTraceability.summary.totalBags.toLocaleString()} color="#A8C0E0" />
+                    <ReportRow label="Coinciden" value={bagTraceability.totalItems.toLocaleString()} color="#4DA6FF" />
+                    <ReportRow label="En vuelo" value={bagTraceability.summary.inFlightBags.toLocaleString()} color="#4DA6FF" />
+                    <ReportRow label="Entregadas" value={bagTraceability.summary.deliveredBags.toLocaleString()} color="#00FF9C" />
+                  </div>
+
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
+                      TRAZABILIDAD · PÁGINA {bagTraceability.page + 1}
+                    </div>
+                    {bagTraceLoading && <span className="text-[10px] text-[#4A6080]">Actualizando...</span>}
+                  </div>
+
+                  <div className="max-h-[320px] overflow-y-auto flex flex-col gap-2">
+                    {bagTraceability.bags.map(bag => {
+                      const color = bagStateColor(bag.state);
+                      const selected = selectedBagId === bag.bagId;
+                      return (
+                        <button
+                          key={bag.bagId}
+                          onClick={() => setSelectedBagId(bag.bagId)}
+                          className={`text-left rounded-lg border bg-[#081426] p-2 transition-colors ${selected ? 'border-[#4DA6FF]' : 'border-[#1E3058] hover:border-[#4DA6FF]/40'}`}
+                        >
+                          <div className="flex items-start gap-2">
+                            <div className="w-2 h-2 rounded-full mt-1.5" style={{ backgroundColor: color }} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] text-white truncate" style={{ fontWeight: 700 }}>{bag.bagId}</span>
+                                <span className="text-[9px] border rounded px-1" style={{ color, borderColor: `${color}55` }}>{bagStateLabel(bag.state)}</span>
+                              </div>
+                              <div className="text-[10px] text-[#4A6080] mt-0.5 truncate">
+                                {bag.clientId} · {bag.originId} → {bag.destinationId}
+                              </div>
+                              <div className="flex items-center gap-2 mt-1.5">
+                                <div className="flex-1 h-1.5 rounded bg-[#1E3058] overflow-hidden">
+                                  <div className="h-full rounded" style={{ width: `${Math.round(bag.progress * 100)}%`, backgroundColor: color }} />
+                                </div>
+                                <span className="text-[10px] font-mono" style={{ color }}>{Math.round(bag.progress * 100)}%</span>
+                              </div>
+                              <div className="text-[10px] text-[#4A6080] mt-1 truncate">
+                                {bag.currentFlightId ? `Vuelo ${bag.currentFlightId}` : `Almacén ${bag.currentAirportId ?? DASH}`} · Próximo: {bag.nextEvent ? bagEventLabel(bag.nextEvent) : DASH}
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {!bagTraceLoading && bagTraceability.bags.length === 0 && (
+                      <div className="text-[11px] text-[#4A6080] px-2 py-4">No hay maletas que coincidan con el filtro</div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between mt-3">
+                    <button
+                      onClick={() => setBagPage(page => Math.max(0, page - 1))}
+                      disabled={bagTraceability.page <= 0 || bagTraceLoading}
+                      className="h-7 px-2 rounded-lg bg-[#081426] border border-[#1E3058] text-[10px] text-[#A8C0E0] disabled:opacity-40 disabled:cursor-not-allowed hover:border-[#4DA6FF]/50"
+                    >
+                      Anterior
+                    </button>
+                    <span className="text-[10px] text-[#4A6080]">
+                      {Math.min((bagTraceability.page + 1) * bagTraceability.size, bagTraceability.totalItems).toLocaleString()} / {bagTraceability.totalItems.toLocaleString()}
+                    </span>
+                    <button
+                      onClick={() => setBagPage(page => page + 1)}
+                      disabled={(bagTraceability.page + 1) * bagTraceability.size >= bagTraceability.totalItems || bagTraceLoading}
+                      className="h-7 px-2 rounded-lg bg-[#081426] border border-[#1E3058] text-[10px] text-[#A8C0E0] disabled:opacity-40 disabled:cursor-not-allowed hover:border-[#4DA6FF]/50"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {bagTraceError && (
+                <div className="text-[11px] text-[#FF4D4D] px-2 py-4">{bagTraceError}</div>
+              )}
+            </div>
+
+            {selectedBag && (
+              <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>DETALLE DE MALETA</div>
+                    <div className="text-[12px] text-white truncate" style={{ fontWeight: 700 }}>{selectedBag.bagId}</div>
+                  </div>
+                  <span className="text-[10px] font-mono" style={{ color: bagStateColor(selectedBag.state) }}>
+                    {bagStateLabel(selectedBag.state)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <ReportRow label="Lote" value={selectedBag.batchId} color="#A8C0E0" />
+                  <ReportRow label="Cliente" value={selectedBag.clientId} color="#A8C0E0" />
+                  <ReportRow label="Ingreso" value={formatTraceTime(selectedBag.ingressTime)} color="#A8C0E0" />
+                  <ReportRow label="SLA" value={formatTraceTime(selectedBag.deadline)} color={selectedBag.meetsSla ? '#00FF9C' : '#FFC857'} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {selectedBag.events.map((event, index) => (
+                    <div key={`${event.type}-${event.timestamp}-${index}`} className="flex items-center gap-2 text-[10px]">
+                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: event.completed ? '#00FF9C' : '#1E3058' }} />
+                      <span className={event.completed ? 'text-[#A8C0E0]' : 'text-[#4A6080]'} style={{ fontWeight: event.completed ? 600 : 400 }}>
+                        {bagEventLabel(event.type)}
+                      </span>
+                      <span className="text-[#4A6080] truncate flex-1">
+                        {event.flightId ? `${event.flightId} · ` : ''}{event.airportId ?? DASH}
+                      </span>
+                      <span className="text-[#4A6080] font-mono">{formatTraceTime(event.timestamp)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
 

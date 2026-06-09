@@ -6,6 +6,7 @@ import type {
   BackendFlightPlanFlight,
   BackendSimulationStatus,
   BackendOperationalState,
+  BackendBagTraceability,
   BackendSolution,
   BackendShipmentRequest,
   BackendShipmentResponse,
@@ -114,6 +115,27 @@ export function getSimulationSolution(simId: string): Promise<BackendSolution> {
 
 export function getOperationalState(simId: string, limit = 100): Promise<BackendOperationalState> {
   return request<BackendOperationalState>(`/simulations/${simId}/operational-state?limit=${limit}`);
+}
+
+export function getBagTraceability(
+  simId: string,
+  params: {
+    page?: number;
+    size?: number;
+    query?: string;
+    state?: string;
+    clientId?: string;
+    batchId?: string;
+  } = {}
+): Promise<BackendBagTraceability> {
+  const search = new URLSearchParams();
+  search.set('page', String(params.page ?? 0));
+  search.set('size', String(params.size ?? 50));
+  if (params.query?.trim()) search.set('query', params.query.trim());
+  if (params.state?.trim()) search.set('state', params.state.trim());
+  if (params.clientId?.trim()) search.set('clientId', params.clientId.trim());
+  if (params.batchId?.trim()) search.set('batchId', params.batchId.trim());
+  return request<BackendBagTraceability>(`/simulations/${simId}/bags?${search.toString()}`);
 }
 
 export function createShipment(

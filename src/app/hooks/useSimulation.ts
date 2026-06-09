@@ -82,6 +82,7 @@ interface SimulationState {
 }
 
 interface UseSimulationReturn extends SimulationState {
+  simulationId: string | null;
   startDate: Date;
   setStartDate: Dispatch<SetStateAction<Date>>;
   setMode: (mode: SimulationMode) => void;
@@ -287,6 +288,7 @@ export function useSimulation(): UseSimulationReturn {
   const [collapseComplete, setCollapseComplete] = useState(false);
   const [collapseMetrics, setCollapseMetrics] = useState<CollapseMetrics | null>(null);
   const [simulationResults, setSimulationResults] = useState<BackendSimulationResults | null>(null);
+  const [simulationId, setSimulationId] = useState<string | null>(null);
 
   // Refs para el modo 5day (backend)
   const simIdRef  = useRef<string | null>(null);
@@ -673,6 +675,7 @@ export function useSimulation(): UseSimulationReturn {
     setLastCycleUpdate(null);
     setActiveFlights([]);
     simIdRef.current = session.simulationId;
+    setSimulationId(session.simulationId);
     simKRef.current = session.K;
     setSimulationK(session.K);
     simClockRef.current = restoredStartDate;
@@ -718,6 +721,7 @@ export function useSimulation(): UseSimulationReturn {
       console.warn('No se pudo restaurar la simulación activa:', err);
       clearStoredActiveSimulation();
       simIdRef.current = null;
+      setSimulationId(null);
       setIsRunning(false);
     }
   }, [applyBackendStatusClock, cancelScheduledSolutionRefresh, commitClockState, connectSimulationStream, disconnectActiveDiscoveryStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, resetPlaybackBuffer]);
@@ -1127,6 +1131,7 @@ export function useSimulation(): UseSimulationReturn {
           ? await startSimulation('PERIOD_SIMULATION', startDateTimeStr)
           : await startDayToDaySimulation(startDateTimeStr);
         simIdRef.current = res.simulationId;
+        setSimulationId(res.simulationId);
 
         // 3. Guardar K del backend y anclar el reloj
         const K = res.K ?? SIMULATION_K;
@@ -1225,6 +1230,7 @@ export function useSimulation(): UseSimulationReturn {
       wsRef.current?.disconnect();
       wsSimulationIdRef.current = null;
       simIdRef.current = null;
+      setSimulationId(null);
       wsRef.current = null;
       wsSimulationIdRef.current = null;
     }
@@ -1233,6 +1239,7 @@ export function useSimulation(): UseSimulationReturn {
     const now = new Date();
     now.setHours(8, 0, 0, 0);
     setIsRunning(false);
+    setSimulationId(null);
     setShipments(mode === 'collapse' ? INITIAL_SHIPMENTS : []);
     setFlights(mode === 'collapse' ? INITIAL_FLIGHTS : []);
     setActiveFlights([]);
@@ -1476,6 +1483,7 @@ export function useSimulation(): UseSimulationReturn {
   }, [isRunning, mode, startDate, commitBackendAirports]);
 
   return {
+    simulationId,
     startDate, setStartDate,
     airports, flights, shipments,
     isRunning, mode, simulationTime, events,

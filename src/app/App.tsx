@@ -507,6 +507,7 @@ export default function App() {
         {/* Right Panel */}
         {!hidePanels && !rightCollapsed && (
           <RightPanel
+            simulationId={simulation.simulationId}
             airports={simulation.airports}
             flights={simulation.flights}
             shipments={simulation.shipments}
