@@ -227,7 +227,7 @@ export function ShipmentDetailPanel({ shipment, flights, airports, onClose, simu
                 <span className="text-[9px] text-[#4A6080]">EQUIPAJE</span>
               </div>
               <div className="text-lg text-[#4DA6FF]" style={{ fontWeight: 700 }}>{shipment.luggageCount}</div>
-              <div className="text-[10px] text-[#4A6080]">bolsas</div>
+              <div className="text-[10px] text-[#4A6080]">maletas</div>
             </div>
 
             <div className="bg-[#0D1E38] rounded-lg p-3 border border-[#1E3058]">

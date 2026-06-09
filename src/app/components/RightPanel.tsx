@@ -260,6 +260,22 @@ export function RightPanel({
       });
   }, [activeTab, shipments, opsSearch, shipmentSort]);
 
+  const luggageByClient = useMemo(() => {
+    if (activeTab !== 'shipments') return [];
+
+    const byClient = new Map<string, { clientId: string; shipmentCount: number; luggageCount: number }>();
+    for (const shipment of operationalShipments) {
+      const clientId = shipment.airlineId || shipment.airline || 'Cliente';
+      const current = byClient.get(clientId) ?? { clientId, shipmentCount: 0, luggageCount: 0 };
+      current.shipmentCount += 1;
+      current.luggageCount += shipment.luggageCount;
+      byClient.set(clientId, current);
+    }
+    return Array.from(byClient.values())
+      .sort((a, b) => b.luggageCount - a.luggageCount)
+      .slice(0, 6);
+  }, [activeTab, operationalShipments]);
+
   const isFilterActive = (type: MapEntityFilter['type'], id: string) =>
     activeMapFilter?.type === type && activeMapFilter.id === id;
 
@@ -308,7 +324,7 @@ export function RightPanel({
                 value={totalInTransit}
                 color="#4DA6FF"
                 icon={<Package className="w-3.5 h-3.5" />}
-                trend={typeof totalBags === 'number' ? `${totalBags.toLocaleString()} bolsas asignadas` : undefined}
+                trend={typeof totalBags === 'number' ? `${totalBags.toLocaleString()} maletas asignadas` : undefined}
                 trendDir="neutral"
               />
               <KPICard
@@ -345,7 +361,7 @@ export function RightPanel({
                 trendDir={punctualityPct >= 85 ? 'up' : 'down'}
               />
               <KPICard
-                label="TOTAL BOLSAS"
+                label="TOTAL MALETAS"
                 value={typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags}
                 color="#A8C0E0"
                 icon={<Zap className="w-3.5 h-3.5" />}
@@ -551,6 +567,28 @@ export function RightPanel({
                 <ReportRow label="En vuelo" value={backendMetrics?.inFlightBags ?? 0} color="#4DA6FF" />
                 <ReportRow label="Entregados" value={backendMetrics?.deliveredBags ?? 0} color="#00FF9C" />
               </div>
+              {luggageByClient.length > 0 && (
+                <div className="mb-3 rounded-lg border border-[#1E3058] bg-[#081426] p-2">
+                  <div className="text-[10px] text-[#4A6080] mb-1.5" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
+                    MALETAS POR CLIENTE
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {luggageByClient.map(client => (
+                      <div key={client.clientId} className="flex items-center gap-2 text-[10px]">
+                        <span className="w-16 truncate text-[#A8C0E0]" style={{ fontWeight: 600 }}>{client.clientId}</span>
+                        <div className="flex-1 h-1.5 rounded bg-[#1E3058] overflow-hidden">
+                          <div
+                            className="h-full rounded bg-[#4DA6FF]"
+                            style={{ width: `${Math.max(4, Math.min(100, (client.luggageCount / Math.max(luggageByClient[0].luggageCount, 1)) * 100))}%` }}
+                          />
+                        </div>
+                        <span className="w-20 text-right text-[#4DA6FF] font-mono">{client.luggageCount}</span>
+                        <span className="w-16 text-right text-[#4A6080]">{client.shipmentCount} env.</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
                 ENVÍOS Y PRODUCTOS · {operationalShipments.length}
               </div>
@@ -577,7 +615,7 @@ export function RightPanel({
                             </div>
                             <span className="text-[10px] font-mono" style={{ color }}>{Math.round(shipment.progress * 100)}%</span>
                           </div>
-                          <div className="text-[10px] text-[#4A6080] mt-1 truncate">{productRange}</div>
+                          <div className="text-[10px] text-[#4A6080] mt-1 truncate">Maletas virtuales: {productRange}</div>
                         </div>
                         <button
                           onClick={() => handleMapFilterClick({ type: 'shipment', id: shipment.id }, () => onSelectShipment?.(shipment.id))}
@@ -700,7 +738,7 @@ export function RightPanel({
                   { label: 'Retrasados', value: delayedCount, color: '#FFC857' },
                   { label: hasBackendStats ? 'Aeropuertos Sobrecap.' : 'Críticos', value: criticalCount, color: '#FF4D4D' },
                   { label: 'Replanificados', value: replanCount, color: '#A855F7' },
-                  { label: 'Total Bolsas', value: typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags, color: '#4DA6FF' },
+                  { label: 'Total Maletas', value: typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags, color: '#4DA6FF' },
                   { label: 'Ocupación Prom.', value: `${avgOccupancy}%`, color: getStatusColor(avgOccupancy >= 90 ? 'critical' : avgOccupancy >= 70 ? 'warning' : 'normal') },
                   { label: 'Pico de Aeropuerto', value: backendMetrics?.peakAirportId ? `${backendMetrics.peakAirportId} · ${Math.round(backendMetrics.peakAirportOccupancyRatio * 100)}%` : DASH, color: backendMetrics?.peakAirportId ? '#4DA6FF' : '#4A6080' },
                 ].map(row => (

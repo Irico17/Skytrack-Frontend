@@ -134,9 +134,10 @@ export default function App() {
   }, []);
 
   const handleToggleMapFilter = useCallback((filter: MapEntityFilter) => {
-    setMapFilter(prev => sameEntity(prev, filter) ? null : filter);
-    setSelectedEntity(prev => sameEntity(prev, filter) ? prev : filter);
-  }, []);
+    const shouldClear = sameEntity(mapFilter, filter);
+    setMapFilter(shouldClear ? null : filter);
+    setSelectedEntity(shouldClear ? null : filter);
+  }, [mapFilter]);
 
   const filteredShipments = useMemo(() => {
     return simulation.shipments.filter(s => {

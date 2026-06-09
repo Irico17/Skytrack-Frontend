@@ -25,8 +25,8 @@ export function AddShipmentModal({ onClose, onAdd, airports }: AddShipmentModalP
     if (!form.origin) return setError('Selecciona un aeropuerto de origen');
     if (!form.destination) return setError('Selecciona un aeropuerto de destino');
     if (form.origin === form.destination) return setError('El origen y destino deben ser diferentes');
-    if (!form.luggageCount || parseInt(form.luggageCount) <= 0) return setError('Ingresa una cantidad válida de bolsas');
-    if (parseInt(form.luggageCount) > 400) return setError('Máximo 400 bolsas por envío');
+    if (!form.luggageCount || parseInt(form.luggageCount) <= 0) return setError('Ingresa una cantidad válida de maletas');
+    if (parseInt(form.luggageCount) > 400) return setError('Máximo 400 maletas por envío');
 
     setSubmitting(true);
     try {

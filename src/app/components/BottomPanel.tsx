@@ -107,7 +107,7 @@ function AirportDetail({ airport, shipments, flights, activeFlights = [], hasBac
         <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
           <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em' }}>CAPACIDAD DE ALMACÉN</div>
           <div className="text-2xl" style={{ fontWeight: 700, color }}>{pct}%</div>
-          <div className="text-[11px] text-[#4A6080] mt-0.5">{airport.occupancy} / {airport.capacity} bolsas</div>
+          <div className="text-[11px] text-[#4A6080] mt-0.5">{airport.occupancy} / {airport.capacity} maletas</div>
           <CapacityBar value={airport.occupancy} max={airport.capacity} color={color} />
         </div>
 
@@ -176,7 +176,7 @@ function FlightDetail({ flight, airports, shipments }: { flight: Flight; airport
         <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
           <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em' }}>USO DE CAPACIDAD</div>
           <div className="text-2xl" style={{ fontWeight: 700, color }}>{loadPct}%</div>
-          <div className="text-[11px] text-[#4A6080] mt-0.5">{flight.load} / {flight.capacity} bolsas</div>
+          <div className="text-[11px] text-[#4A6080] mt-0.5">{flight.load} / {flight.capacity} maletas</div>
           <CapacityBar value={flight.load} max={flight.capacity} color={color} />
         </div>
 
@@ -192,7 +192,7 @@ function FlightDetail({ flight, airports, shipments }: { flight: Flight; airport
           <div className="text-2xl text-[#A8C0E0]" style={{ fontWeight: 700 }}>{flightShipments.length}</div>
           <div className="text-[11px] text-[#4A6080] mt-0.5">envíos activos</div>
           <div className="mt-1 text-[11px] text-[#4A6080]">
-            {flightShipments.reduce((acc, s) => acc + s.luggageCount, 0)} bolsas en total
+            {flightShipments.reduce((acc, s) => acc + s.luggageCount, 0)} maletas en total
           </div>
         </div>
       </div>
@@ -288,7 +288,7 @@ function ShipmentDetail({ shipment, airports, flights }: { shipment: Shipment; a
         <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
           <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em' }}>EQUIPAJE</div>
           <div className="text-2xl text-[#4DA6FF]" style={{ fontWeight: 700 }}>{shipment.luggageCount}</div>
-          <div className="text-[11px] text-[#4A6080] mt-0.5">bolsas en tránsito</div>
+          <div className="text-[11px] text-[#4A6080] mt-0.5">maletas en tránsito</div>
         </div>
 
         <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
@@ -336,7 +336,7 @@ function ShipmentListRow({ s, onClick }: { s: Shipment; onClick: () => void }) {
       <span className="text-[11px] text-[#7090B0] flex items-center gap-1 min-w-0 truncate">
         {s.origin} <ArrowRight className="w-2.5 h-2.5" /> {s.destination}
       </span>
-      <span className="text-[11px] text-[#4DA6FF] truncate">{s.luggageCount} bolsas</span>
+      <span className="text-[11px] text-[#4DA6FF] truncate">{s.luggageCount} maletas</span>
       <div className="flex items-center gap-2 min-w-0">
         <span className="text-[11px] font-mono text-[#4A6080] w-9 text-right">{Math.round(s.progress * 100)}%</span>
         <div className="flex-1 h-1.5 rounded-full bg-[#1E3058] overflow-hidden">
@@ -438,13 +438,13 @@ export function BottomPanel({
                   { label: 'Plan de Vuelos', value: flightPlanFlights.length || DASH, color: '#A855F7', icon: <Plane className="w-5 h-5" /> },
                   { label: 'Maletas en Vuelo', value: backendMetrics?.inFlightBags ?? DASH, color: '#00FF9C', icon: <Package className="w-5 h-5" /> },
                   { label: 'Sobrecapacidad', value: backendMetrics?.overloadedAirports ?? DASH, color: '#FF4D4D', icon: <AlertTriangle className="w-5 h-5" /> },
-                  { label: 'Total Bolsas', value: backendMetrics?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? DASH, color: '#FFC857', icon: <Luggage className="w-5 h-5" /> },
+                  { label: 'Total Maletas', value: backendMetrics?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? DASH, color: '#FFC857', icon: <Luggage className="w-5 h-5" /> },
                 ] : [
                   { label: 'Total Aeropuertos', value: airports.length, color: '#4DA6FF', icon: <Building2 className="w-5 h-5" /> },
                   { label: 'Rutas Activas', value: flights.length, color: '#A855F7', icon: <Plane className="w-5 h-5" /> },
                   { label: 'En Tránsito', value: shipments.filter(s => s.progress < 1).length, color: '#00FF9C', icon: <Package className="w-5 h-5" /> },
                   { label: 'Críticos', value: criticalShipments.length, color: '#FF4D4D', icon: <AlertTriangle className="w-5 h-5" /> },
-                  { label: 'Total Bolsas', value: shipments.reduce((a, s) => a + s.luggageCount, 0), color: '#FFC857', icon: <Luggage className="w-5 h-5" /> },
+                  { label: 'Total Maletas', value: shipments.reduce((a, s) => a + s.luggageCount, 0), color: '#FFC857', icon: <Luggage className="w-5 h-5" /> },
                 ]).map(m => (
                   <div key={m.label} className="bg-[#0D1E38] rounded-xl p-4 border border-[#1E3058] flex items-center gap-3 min-w-[160px]">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${m.color}15` }}>
@@ -469,7 +469,7 @@ export function BottomPanel({
               <span>ID</span>
               <span>AEROLÍNEA</span>
               <span>RUTA</span>
-              <span>BOLSAS</span>
+              <span>MALETAS</span>
               <span>PROGRESO</span>
             </div>
             {isBackendStatsMode && shipments.length > 0 ? shipments.map(s => (
@@ -487,7 +487,7 @@ export function BottomPanel({
                 <span className="text-[11px] text-[#7090B0] flex items-center gap-1 min-w-0 truncate">
                   {f.originId} <ArrowRight className="w-2.5 h-2.5" /> {f.destinationId}
                 </span>
-                <span className="text-[11px] text-[#4DA6FF] truncate">{f.bagsCount} bolsas</span>
+                <span className="text-[11px] text-[#4DA6FF] truncate">{f.bagsCount} maletas</span>
                 <span className="text-[11px] font-mono truncate" style={{ color: f.meetsSla ? '#00FF9C' : '#FFC857' }}>{f.meetsSla ? 'SLA OK' : 'SLA Riesgo'}</span>
               </button>
             )) : shipments.map(s => (
@@ -514,7 +514,7 @@ export function BottomPanel({
                       <AlertTriangle className="w-4 h-4 text-[#FF4D4D] flex-shrink-0" />
                       <div>
                         <div className="text-[11px] text-[#FF4D4D]" style={{ fontWeight: 600 }}>ALMACÉN CRÍTICO — {a.id}</div>
-                        <div className="text-[11px] text-[#A8C0E0]">{a.city} · {a.occupancy}/{a.capacity} bolsas</div>
+                        <div className="text-[11px] text-[#A8C0E0]">{a.city} · {a.occupancy}/{a.capacity} maletas</div>
                       </div>
                     </div>
                   ))}
@@ -523,7 +523,7 @@ export function BottomPanel({
                       <AlertTriangle className="w-4 h-4 text-[#FFC857] flex-shrink-0" />
                       <div>
                         <div className="text-[11px] text-[#FFC857]" style={{ fontWeight: 600 }}>RIESGO SLA — {f.flightId}</div>
-                        <div className="text-[11px] text-[#A8C0E0]">{f.originId}→{f.destinationId} · {f.bagsCount} bolsas</div>
+                        <div className="text-[11px] text-[#A8C0E0]">{f.originId}→{f.destinationId} · {f.bagsCount} maletas</div>
                       </div>
                     </div>
                   ))}
@@ -541,7 +541,7 @@ export function BottomPanel({
                     <AlertTriangle className="w-4 h-4 text-[#FF4D4D] flex-shrink-0" />
                     <div>
                       <div className="text-[11px] text-[#FF4D4D]" style={{ fontWeight: 600 }}>CRÍTICO — {s.id}</div>
-                      <div className="text-[11px] text-[#A8C0E0]">{s.airline} · {s.origin}→{s.destination} · {s.luggageCount} bolsas</div>
+                      <div className="text-[11px] text-[#A8C0E0]">{s.airline} · {s.origin}→{s.destination} · {s.luggageCount} maletas</div>
                     </div>
                   </div>
                 ))}
@@ -550,7 +550,7 @@ export function BottomPanel({
                     <AlertTriangle className="w-4 h-4 text-[#FFC857] flex-shrink-0" />
                     <div>
                       <div className="text-[11px] text-[#FFC857]" style={{ fontWeight: 600 }}>RETRASADO — {s.id}</div>
-                      <div className="text-[11px] text-[#A8C0E0]">{s.airline} · {s.origin}→{s.destination} · {s.luggageCount} bolsas</div>
+                      <div className="text-[11px] text-[#A8C0E0]">{s.airline} · {s.origin}→{s.destination} · {s.luggageCount} maletas</div>
                     </div>
                   </div>
                 ))}

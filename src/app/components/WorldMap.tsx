@@ -344,8 +344,8 @@ function WorldMapComponent({
   ), []);
 
   const getCanvasFlightHit = useCallback((clientX: number, clientY: number) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return null;
+    const rect = flightCanvasRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
 
     const x = clientX - rect.left;
     const y = clientY - rect.top;
@@ -976,7 +976,7 @@ function WorldMapComponent({
         <div style={{ fontSize: 11, color: '#6080A0', marginTop: 4 }}>{s.origin} → {s.destination}</div>
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #1E3058' }}>
           {[
-            { label: 'Equipaje', value: `${s.luggageCount} bolsas`, vc: '#C8D8F0' },
+            { label: 'Equipaje', value: `${s.luggageCount} maletas`, vc: '#C8D8F0' },
             { label: 'Progreso', value: `${Math.round(s.progress * 100)}%`, vc: '#C8D8F0' },
             { label: 'Estado', value: s.status.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()), vc: color },
           ].map(r => (
@@ -1121,15 +1121,15 @@ function WorldMapComponent({
             <path
               d={selectedFlightGeometry.pathD}
               stroke="#4DA6FF"
-              strokeWidth={7}
-              strokeOpacity={0.14}
+              strokeWidth={3.5}
+              strokeOpacity={0.16}
               fill="none"
               filter="url(#glow)"
             />
             <path
               d={selectedFlightGeometry.pathD}
               stroke="#4DA6FF"
-              strokeWidth={1.8}
+              strokeWidth={1.15}
               strokeOpacity={0.95}
               fill="none"
               strokeDasharray="5 5"

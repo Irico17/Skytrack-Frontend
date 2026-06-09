@@ -108,7 +108,7 @@ function buildIncidentTimeline(startDate: Date) {
   return [
     { time: `${fmtDate(startDate, 1)} · 14:22`, type: 'warning', text: 'Almacén DXB alcanzó 94% de capacidad — protocolo de desvío activado' },
     { time: `${fmtDate(startDate, 2)} · 08:45`, type: 'warning', text: 'Tormenta climática en Atlántico Norte — BA297 y LH456 en espera (+4h)' },
-    { time: `${fmtDate(startDate, 2)} · 17:10`, type: 'warning', text: 'EK501 BOM→DXB: Escasez de personal — 95 bolsas retenidas en origen' },
+    { time: `${fmtDate(startDate, 2)} · 17:10`, type: 'warning', text: 'EK501 BOM→DXB: Escasez de personal — 95 maletas retenidas en origen' },
     { time: `${fmtDate(startDate, 3)} · 02:30`, type: 'critical', text: 'Suspensión parcial del hub DXB — vuelos entrantes limitados al 60% de capacidad' },
     { time: `${fmtDate(startDate, 3)} · 09:15`, type: 'critical', text: 'CRÍTICO: 5 envíos redirigidos por hub Doha (DOH)' },
     { time: `${fmtDate(startDate, 3)} · 22:00`, type: 'critical', text: 'Retraso en cascada: cadena SIN → HKG → NRT — 3 envíos en estado crítico' },
@@ -150,7 +150,7 @@ const REPLANNING_ACTIONS = [
 
 interface AirlineStat { code: string; name: string; onTime: number; bags: number; incidents: number }
 
-/** Agrupa los envíos reales por aerolínea para calcular puntualidad, bolsas e incidentes. */
+/** Agrupa los envíos reales por aerolínea para calcular puntualidad, maletas e incidentes. */
 function deriveAirlinePerformance(shipments: Shipment[]): AirlineStat[] {
   const map = new Map<string, { code: string; name: string; bags: number; total: number; onTime: number; incidents: number }>();
   for (const s of shipments) {
@@ -193,7 +193,7 @@ interface IncidentSummary {
   affectedBags: number; recoveredBags: number;
 }
 
-/** Resume los incidentes reales (eventos) y las bolsas afectadas/recuperadas. */
+/** Resume los incidentes reales (eventos) y las maletas afectadas/recuperadas. */
 function deriveIncidentSummary(events: SimEvent[], shipments: Shipment[]): IncidentSummary {
   const critical = events.filter(e => e.severity === 'critical').length;
   const warning = events.filter(e => e.severity === 'warning').length;
@@ -279,7 +279,7 @@ const CustomBagsTooltip = ({ active, payload, label }: { active?: boolean; paylo
       <div className="text-[#A8C0E0] mb-2" style={{ fontWeight: 600 }}>{label}</div>
       {payload.map((p) => (
         <div key={`tooltip-bags-${p.dataKey}`} className="flex items-center gap-2 mb-0.5">
-          <span className="text-[#7090B0]">{p.dataKey === 'bags' ? 'Total Bolsas' : 'Replanificados'}:</span>
+          <span className="text-[#7090B0]">{p.dataKey === 'bags' ? 'Total Maletas' : 'Replanificados'}:</span>
           <span className="text-[#4DA6FF]" style={{ fontWeight: 600 }}>{p.value.toLocaleString()}</span>
         </div>
       ))}
@@ -460,7 +460,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
             {/* KPI Strip */}
             <div className="grid grid-cols-7 gap-3">
               <MetricCard
-                label="TOTAL BOLSAS TRANSPORTADAS"
+                label="TOTAL MALETAS TRANSPORTADAS"
                 value={realTotalBags.toLocaleString()}
                 subtext={`${deliveredBags.toLocaleString()} entregadas`}
                 color="#4DA6FF"
@@ -494,12 +494,12 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                 color="#A855F7"
                 icon={<Zap className="w-3.5 h-3.5" />}
                 trend={replannedCount > 0 ? 'up' : 'neutral'}
-                trendValue={`${incidentSummary.recoveredBags.toLocaleString()} bolsas recup.`}
+                trendValue={`${incidentSummary.recoveredBags.toLocaleString()} maletas recup.`}
               />
               <MetricCard
                 label="ENVÍOS COMPLETADOS"
                 value={totalShipments}
-                subtext={`${realTotalBags.toLocaleString()} bolsas`}
+                subtext={`${realTotalBags.toLocaleString()} maletas`}
                 color="#00FF9C"
                 icon={<Activity className="w-3.5 h-3.5" />}
                 trend="up"
@@ -591,7 +591,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                       <XAxis dataKey="day" tick={{ fill: '#4A6080', fontSize: 9 }} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fill: '#4A6080', fontSize: 9 }} axisLine={false} tickLine={false} />
                       <ReTooltip content={<CustomBagsTooltip />} cursor={{ fill: 'rgba(77,166,255,0.05)' }} />
-                      <Bar key="bar-bags" isAnimationActive={false} dataKey="bags" name="bolsas" radius={[3, 3, 0, 0]} fill="#4DA6FF" fillOpacity={0.8} />
+                      <Bar key="bar-bags" isAnimationActive={false} dataKey="bags" name="maletas" radius={[3, 3, 0, 0]} fill="#4DA6FF" fillOpacity={0.8} />
                       <Bar key="bar-replanned" isAnimationActive={false} dataKey="replanned" name="replanned" radius={[3, 3, 0, 0]} fill="#A855F7" fillOpacity={0.8} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -702,7 +702,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
 
                       <div className="grid grid-cols-2 gap-1.5">
                         <div className="bg-[#0D1E38] rounded-lg px-2 py-1.5 border border-[#1E3058]">
-                          <div className="text-[9px] text-[#4A6080]">Total Bolsas</div>
+                          <div className="text-[9px] text-[#4A6080]">Total Maletas</div>
                           <div className="text-sm text-[#4DA6FF]" style={{ fontWeight: 700 }}>{snap.totalBags.toLocaleString()}</div>
                         </div>
                         <div className="bg-[#0D1E38] rounded-lg px-2 py-1.5 border border-[#1E3058]">
@@ -797,7 +797,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                         </div>
                         <div className="text-right w-24">
                           <div className="text-xs text-[#A8C0E0]" style={{ fontWeight: 600 }}>{a.bags.toLocaleString()}</div>
-                          <div className="text-[9px] text-[#4A6080]">bolsas</div>
+                          <div className="text-[9px] text-[#4A6080]">maletas</div>
                         </div>
                         <div className="w-16 text-right">
                           <div className={`text-xs ${a.incidents === 0 ? 'text-[#00FF9C]' : a.incidents <= 2 ? 'text-[#FFC857]' : 'text-[#FF4D4D]'}`} style={{ fontWeight: 600 }}>
@@ -817,7 +817,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                   <div className="flex flex-col gap-2">
                     {[
                       { label: 'Mejor Rendimiento', value: bestAirline ? `${bestAirline.code} (${bestAirline.onTime}%)` : '—', color: '#00FF9C' },
-                      { label: 'Más Bolsas', value: mostBagsAirline ? `${mostBagsAirline.code} (${mostBagsAirline.bags.toLocaleString()})` : '—', color: '#4DA6FF' },
+                      { label: 'Más Maletas', value: mostBagsAirline ? `${mostBagsAirline.code} (${mostBagsAirline.bags.toLocaleString()})` : '—', color: '#4DA6FF' },
                       { label: 'Más Incidentes', value: mostIncidentsAirline ? `${mostIncidentsAirline.code} (${mostIncidentsAirline.incidents})` : '—', color: '#FF4D4D' },
                       { label: 'Promedio de Red', value: `${networkAvgOnTime}%`, color: '#FFC857' },
                       { label: 'Cumplimiento SLA', value: `${slaCompliantAirlines}/${airlinePerformance.length} aerolíneas`, color: '#00FF9C' },
@@ -851,7 +851,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                   </div>
                   <div className="text-xs text-[#70FFD0] leading-relaxed">
                     {bestAirline ? (
-                      <><strong>{bestAirline.name} ({bestAirline.code})</strong> lideró la puntualidad con {bestAirline.onTime}% de envíos a tiempo sobre {bestAirline.bags.toLocaleString()} bolsas transportadas durante los 5 días.</>
+                      <><strong>{bestAirline.name} ({bestAirline.code})</strong> lideró la puntualidad con {bestAirline.onTime}% de envíos a tiempo sobre {bestAirline.bags.toLocaleString()} maletas transportadas durante los 5 días.</>
                     ) : (
                       <>Aún no hay datos de aerolíneas para el período.</>
                     )}
@@ -911,8 +911,8 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                     { label: 'Info / Resueltos', value: String(incidentSummary.info), color: '#4DA6FF' },
                     { label: 'Envíos con Retraso', value: String(shipments.filter(s => s.status !== 'on-time').length), color: '#FFC857' },
                     { label: 'Rutas Replanificadas', value: String(replannedCount), color: '#A855F7' },
-                    { label: 'Bolsas Afectadas', value: incidentSummary.affectedBags.toLocaleString(), color: '#FFC857' },
-                    { label: 'Bolsas Recuperadas', value: incidentSummary.recoveredBags.toLocaleString(), color: '#00FF9C' },
+                    { label: 'Maletas Afectadas', value: incidentSummary.affectedBags.toLocaleString(), color: '#FFC857' },
+                    { label: 'Maletas Recuperadas', value: incidentSummary.recoveredBags.toLocaleString(), color: '#00FF9C' },
                   ].map(r => (
                     <div key={r.label} className="flex items-center justify-between py-1.5 border-b border-[#1E3058]/40">
                       <span className="text-[11px] text-[#4A6080]">{r.label}</span>
