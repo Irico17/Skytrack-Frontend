@@ -140,6 +140,8 @@ export default function App() {
   }, [mapFilter]);
 
   const filteredShipments = useMemo(() => {
+    if (!filters.airline && !filters.origin && !filters.destination) return simulation.shipments;
+
     return simulation.shipments.filter(s => {
       if (filters.airline && s.airlineId !== filters.airline) return false;
       if (filters.origin && s.origin !== filters.origin) return false;
@@ -149,6 +151,8 @@ export default function App() {
   }, [simulation.shipments, filters]);
 
   const filteredFlights = useMemo(() => {
+    if (!filters.airline && !filters.origin && !filters.destination) return simulation.flights;
+
     return simulation.flights.filter(f => {
       if (filters.airline && f.airlineId !== filters.airline) return false;
       if (filters.origin && f.from !== filters.origin) return false;
@@ -158,6 +162,8 @@ export default function App() {
   }, [simulation.flights, filters]);
 
   const filteredFlightPlanFlights = useMemo(() => {
+    if (!filters.origin && !filters.destination) return simulation.flightPlanFlights;
+
     return simulation.flightPlanFlights.filter(f => {
       if (filters.origin && f.originId !== filters.origin) return false;
       if (filters.destination && f.destinationId !== filters.destination) return false;
@@ -166,6 +172,8 @@ export default function App() {
   }, [simulation.flightPlanFlights, filters.origin, filters.destination]);
 
   const filteredActiveFlights = useMemo(() => {
+    if (!filters.origin && !filters.destination) return simulation.activeFlights;
+
     return simulation.activeFlights.filter(f => {
       if (filters.origin && f.originId !== filters.origin) return false;
       if (filters.destination && f.destinationId !== filters.destination) return false;

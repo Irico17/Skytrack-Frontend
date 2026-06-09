@@ -137,10 +137,12 @@ function buildActiveFlightDots(
   maxFlightDuration: number,
   activeFlightBagsById: ActiveFlightBags,
   flightFilter: FlightFilterState,
+  selectedFlightId?: string | null,
 ): FlightDot[] {
   if (flightPlanGeometry.length === 0) return [];
 
   const dots: FlightDot[] = [];
+  const selectedBaseFlightId = selectedFlightId?.replace(/-D\d+$/, '') ?? null;
   const startIndex = lowerBoundDeparture(flightPlanGeometry, now - maxFlightDuration);
   const endIndex = upperBoundDeparture(flightPlanGeometry, now);
 
@@ -162,9 +164,11 @@ function buildActiveFlightDots(
     const bags = activeFlightBagsById.get(f.flightId);
     const hasBags = bags !== undefined && bags.bagsCount > 0;
     const meetsSla = hasBags ? bags!.meetsSla : false;
+    const isSelectedFlight = selectedBaseFlightId != null
+      && (f.flightId === selectedFlightId || f.flightId.replace(/-D\d+$/, '') === selectedBaseFlightId);
     if (hasBags && meetsSla && !flightFilter.showSlaOk) continue;
     if (hasBags && !meetsSla && !flightFilter.showSlaFail) continue;
-    if (!hasBags && !flightFilter.showEmpty) continue;
+    if (!hasBags && !flightFilter.showEmpty && !isSelectedFlight) continue;
 
     const color = hasBags ? (meetsSla ? '#4DA6FF' : '#FFC857') : '#3A4A5E';
 
@@ -328,7 +332,7 @@ function WorldMapComponent({
   const [flightFilter, setFlightFilter] = useState<FlightFilterState>({
     showSlaOk: true,
     showSlaFail: true,
-    showEmpty: true,
+    showEmpty: false,
   });
 
   const makeCanvasFlightTooltip = useCallback((dot: FlightDot) => (
@@ -716,6 +720,7 @@ function WorldMapComponent({
   const maxFlightDurationRef = useRef(maxFlightDuration);
   const activeFlightBagsByIdRef = useRef(activeFlightBagsById);
   const flightFilterRef = useRef(flightFilter);
+  const selectedFlightIdRef = useRef<string | null>(null);
   const showRoutesRef = useRef(toggles.showRoutes);
   const paintVersionRef = useRef(0);
 
@@ -725,11 +730,12 @@ function WorldMapComponent({
   maxFlightDurationRef.current = maxFlightDuration;
   activeFlightBagsByIdRef.current = activeFlightBagsById;
   flightFilterRef.current = flightFilter;
+  selectedFlightIdRef.current = selectedEntity?.type === 'flight' ? selectedEntity.id : null;
   showRoutesRef.current = toggles.showRoutes;
 
   useEffect(() => {
     paintVersionRef.current += 1;
-  }, [flightPlanGeometry, maxFlightDuration, activeFlightBagsById, flightFilter, toggles.showRoutes]);
+  }, [flightPlanGeometry, maxFlightDuration, activeFlightBagsById, flightFilter, toggles.showRoutes, selectedEntity]);
 
   useEffect(() => {
     const canvas = flightCanvasRef.current;
@@ -739,6 +745,7 @@ function WorldMapComponent({
     }
 
     let frameId = 0;
+    let lastPaintWallMs = 0;
     let lastPaintClockMs = Number.NaN;
     let lastPaintViewBox = viewBoxRef.current;
     let lastPaintVersion = -1;
@@ -746,6 +753,7 @@ function WorldMapComponent({
 
     const paint = () => {
       frameId = requestAnimationFrame(paint);
+      const wallMs = performance.now();
 
       const clockDate = simClockRef?.current ?? fallbackClockRef.current;
       const nowMs = clockDate?.getTime();
@@ -762,7 +770,9 @@ function WorldMapComponent({
       const canvasSizeChanged = canvas.width !== width || canvas.height !== height;
       const paintVersion = paintVersionRef.current;
       const dataChanged = paintVersion !== lastPaintVersion;
+      if (!viewChanged && !canvasSizeChanged && !dataChanged && wallMs - lastPaintWallMs < 33) return;
       if (!viewChanged && !canvasSizeChanged && !dataChanged && Number.isFinite(lastPaintClockMs) && Math.abs(nowMs - lastPaintClockMs) < 15) return;
+      lastPaintWallMs = wallMs;
       lastPaintClockMs = nowMs;
       lastPaintViewBox = vb;
       lastPaintVersion = paintVersion;
@@ -777,12 +787,14 @@ function WorldMapComponent({
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+      const selectedFlightId = selectedFlightIdRef.current;
       const dots = buildActiveFlightDots(
         nowMs,
         flightPlanGeometryRef.current,
         maxFlightDurationRef.current,
         activeFlightBagsByIdRef.current,
         flightFilterRef.current,
+        selectedFlightId,
       );
 
       if (dots.length === 0) {
@@ -841,13 +853,16 @@ function WorldMapComponent({
         ctx.restore();
       }
 
+      const selectedBaseFlightId = selectedFlightId?.replace(/-D\d+$/, '') ?? null;
       const denseMode = visibleDots.length > 2500 && canvasZoomLevel < 1.7;
       const hitTargets: FlightHitTarget[] = [];
       for (const dot of visibleDots) {
         const x = toCanvasX(dot.cx);
         const y = toCanvasY(dot.cy);
         drawPlaneMarker(ctx, x, y, dot.angle, dot.color, dot.hasBags, denseMode, canvasZoomLevel);
-        if (dot.hasBags) hitTargets.push({ x, y, dot });
+        const isSelectedFlight = selectedBaseFlightId != null
+          && (dot.flightId === selectedFlightId || dot.flightId.replace(/-D\d+$/, '') === selectedBaseFlightId);
+        if (dot.hasBags || isSelectedFlight) hitTargets.push({ x, y, dot });
       }
       hasPaintedFlights = true;
       flightHitTargetsRef.current = hitTargets;

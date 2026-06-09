@@ -6,7 +6,7 @@ import {
 import {
   TrendingUp, TrendingDown, Package, AlertTriangle, Warehouse,
   Clock, FileText, Zap, CheckCircle, Activity,
-  Plane, Search, ArrowUpDown, MapPin, Luggage
+  Plane, Search, ArrowUpDown, MapPin, Luggage, Users
 } from 'lucide-react';
 import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercent } from '../data/mockData';
 import type { BackendActiveFlight, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
@@ -128,7 +128,7 @@ export function RightPanel({
   activeMapFilter = null, onToggleMapFilter,
   onSelectAirport, onSelectFlight, onSelectShipment,
 }: RightPanelProps) {
-  const [activeTab, setActiveTab] = useState<'kpi' | 'transport' | 'warehouse' | 'shipments' | 'reports'>('kpi');
+  const [activeTab, setActiveTab] = useState<'kpi' | 'transport' | 'warehouse' | 'shipments' | 'clients' | 'reports'>('kpi');
   const [opsSearch, setOpsSearch] = useState('');
   const [transportSort, setTransportSort] = useState<'load' | 'departure' | 'route'>('load');
   const [shipmentSort, setShipmentSort] = useState<'progress' | 'bags' | 'route'>('progress');
@@ -189,6 +189,7 @@ export function RightPanel({
     { id: 'transport' as const, label: 'UT', icon: <Plane className="w-3 h-3" /> },
     { id: 'warehouse' as const, label: 'Almacén', icon: <Warehouse className="w-3 h-3" /> },
     { id: 'shipments' as const, label: 'Envíos', icon: <Luggage className="w-3 h-3" /> },
+    { id: 'clients' as const, label: 'Clientes', icon: <Users className="w-3 h-3" /> },
     { id: 'reports' as const, label: 'Reportes', icon: <FileText className="w-3 h-3" /> },
   ];
 
@@ -261,20 +262,25 @@ export function RightPanel({
   }, [activeTab, shipments, opsSearch, shipmentSort]);
 
   const luggageByClient = useMemo(() => {
-    if (activeTab !== 'shipments') return [];
+    if (activeTab !== 'clients') return [];
 
-    const byClient = new Map<string, { clientId: string; shipmentCount: number; luggageCount: number }>();
-    for (const shipment of operationalShipments) {
+    const query = opsSearch.trim().toLowerCase();
+    const byClient = new Map<string, { clientId: string; shipmentCount: number; luggageCount: number; deliveredCount: number }>();
+    for (const shipment of shipments) {
       const clientId = shipment.airlineId || shipment.airline || 'Cliente';
-      const current = byClient.get(clientId) ?? { clientId, shipmentCount: 0, luggageCount: 0 };
+      const searchable = `${clientId} ${shipment.id} ${shipment.origin} ${shipment.destination}`.toLowerCase();
+      if (query && !searchable.includes(query)) continue;
+
+      const current = byClient.get(clientId) ?? { clientId, shipmentCount: 0, luggageCount: 0, deliveredCount: 0 };
       current.shipmentCount += 1;
       current.luggageCount += shipment.luggageCount;
+      if (shipment.progress >= 1) current.deliveredCount += shipment.luggageCount;
       byClient.set(clientId, current);
     }
     return Array.from(byClient.values())
       .sort((a, b) => b.luggageCount - a.luggageCount)
-      .slice(0, 6);
-  }, [activeTab, operationalShipments]);
+      .slice(0, VISIBLE_OPERATIONAL_ROWS);
+  }, [activeTab, shipments, opsSearch]);
 
   const isFilterActive = (type: MapEntityFilter['type'], id: string) =>
     activeMapFilter?.type === type && activeMapFilter.id === id;
@@ -519,7 +525,6 @@ export function RightPanel({
                             </div>
                             <span className="text-[10px] font-mono" style={{ color }}>{unit.capacity > 0 ? `${unit.bags}/${unit.capacity}` : `${unit.bags}`}</span>
                           </div>
-                          <div className="text-[10px] text-[#4A6080] mt-1">Producto virtual: {unit.flightId}-B0001</div>
                         </div>
                         <button
                           onClick={() => handleMapFilterClick({ type: 'flight', id: unit.flightId }, () => onSelectFlight?.(unit.flightId))}
@@ -567,37 +572,12 @@ export function RightPanel({
                 <ReportRow label="En vuelo" value={backendMetrics?.inFlightBags ?? 0} color="#4DA6FF" />
                 <ReportRow label="Entregados" value={backendMetrics?.deliveredBags ?? 0} color="#00FF9C" />
               </div>
-              {luggageByClient.length > 0 && (
-                <div className="mb-3 rounded-lg border border-[#1E3058] bg-[#081426] p-2">
-                  <div className="text-[10px] text-[#4A6080] mb-1.5" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
-                    MALETAS POR CLIENTE
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    {luggageByClient.map(client => (
-                      <div key={client.clientId} className="flex items-center gap-2 text-[10px]">
-                        <span className="w-16 truncate text-[#A8C0E0]" style={{ fontWeight: 600 }}>{client.clientId}</span>
-                        <div className="flex-1 h-1.5 rounded bg-[#1E3058] overflow-hidden">
-                          <div
-                            className="h-full rounded bg-[#4DA6FF]"
-                            style={{ width: `${Math.max(4, Math.min(100, (client.luggageCount / Math.max(luggageByClient[0].luggageCount, 1)) * 100))}%` }}
-                          />
-                        </div>
-                        <span className="w-20 text-right text-[#4DA6FF] font-mono">{client.luggageCount}</span>
-                        <span className="w-16 text-right text-[#4A6080]">{client.shipmentCount} env.</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
               <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
-                ENVÍOS Y PRODUCTOS · {operationalShipments.length}
+                ENVÍOS · {operationalShipments.length}
               </div>
               <div className="max-h-[520px] overflow-y-auto flex flex-col gap-2">
                 {operationalShipments.slice(0, VISIBLE_OPERATIONAL_ROWS).map(shipment => {
                   const color = getStatusColor(shipment.status);
-                  const productRange = shipment.luggageCount > 1
-                    ? `${shipment.id}-B0001…B${String(shipment.luggageCount).padStart(4, '0')}`
-                    : `${shipment.id}-B0001`;
                   const active = isFilterActive('shipment', shipment.id);
                   return (
                     <div key={shipment.id} className="rounded-lg border border-[#1E3058] bg-[#081426] p-2 hover:border-[#4DA6FF]/40 transition-colors">
@@ -615,7 +595,6 @@ export function RightPanel({
                             </div>
                             <span className="text-[10px] font-mono" style={{ color }}>{Math.round(shipment.progress * 100)}%</span>
                           </div>
-                          <div className="text-[10px] text-[#4A6080] mt-1 truncate">Maletas virtuales: {productRange}</div>
                         </div>
                         <button
                           onClick={() => handleMapFilterClick({ type: 'shipment', id: shipment.id }, () => onSelectShipment?.(shipment.id))}
@@ -632,6 +611,57 @@ export function RightPanel({
                   <div className="text-[11px] text-[#4A6080] px-2 py-4">
                     {hasBackendStats ? 'La lista detallada se carga desde la solución cuando el ciclo termina.' : 'Sin envíos que coincidan con el filtro'}
                   </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Clients Tab */}
+        {activeTab === 'clients' && (
+          <>
+            <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex-1 relative">
+                  <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[#4A6080]" />
+                  <input
+                    value={opsSearch}
+                    onChange={e => setOpsSearch(e.target.value)}
+                    placeholder="Buscar cliente, envío o ruta"
+                    className="w-full h-8 rounded-lg bg-[#081426] border border-[#1E3058] pl-7 pr-2 text-[11px] text-[#C8D8F0] outline-none focus:border-[#4DA6FF]/60"
+                  />
+                </div>
+              </div>
+              <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
+                MALETAS POR CLIENTE · {luggageByClient.length}
+              </div>
+              <div className="max-h-[520px] overflow-y-auto flex flex-col gap-2">
+                {luggageByClient.map(client => {
+                  const maxLuggage = Math.max(luggageByClient[0]?.luggageCount ?? 1, 1);
+                  const deliveredPct = Math.round((client.deliveredCount / Math.max(client.luggageCount, 1)) * 100);
+                  return (
+                    <div key={client.clientId} className="rounded-lg border border-[#1E3058] bg-[#081426] p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-white truncate" style={{ fontWeight: 700 }}>{client.clientId}</span>
+                        <span className="text-[10px] text-[#4DA6FF] font-mono">{client.luggageCount.toLocaleString()} maletas</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <div className="flex-1 h-1.5 rounded bg-[#1E3058] overflow-hidden">
+                          <div
+                            className="h-full rounded bg-[#4DA6FF]"
+                            style={{ width: `${Math.max(4, Math.min(100, (client.luggageCount / maxLuggage) * 100))}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-[#4A6080]">{client.shipmentCount} env.</span>
+                      </div>
+                      <div className="text-[10px] text-[#4A6080] mt-1">
+                        Entregadas: {client.deliveredCount.toLocaleString()} · {deliveredPct}%
+                      </div>
+                    </div>
+                  );
+                })}
+                {luggageByClient.length === 0 && (
+                  <div className="text-[11px] text-[#4A6080] px-2 py-4">Sin clientes que coincidan con el filtro</div>
                 )}
               </div>
             </div>
