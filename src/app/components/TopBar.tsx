@@ -18,6 +18,7 @@ interface TopBarProps {
   hasReplanned: boolean;
   totalShipments: number;
   criticalCount: number;
+  startDisabled?: boolean;
 }
 
 const MODE_LABELS: Record<SimulationMode, string> = {
@@ -34,7 +35,8 @@ const MODE_ICONS: Record<SimulationMode, React.ReactNode> = {
 
 export function TopBar({
   isRunning, mode, simulationTime, events, onStart, onPause, onReset,
-  onModeChange, onReplan, hasReplanned, totalShipments, criticalCount
+  onModeChange, onReplan, hasReplanned, totalShipments, criticalCount,
+  startDisabled = false,
 }: TopBarProps) {
   const [showModeDropdown, setShowModeDropdown] = React.useState(false);
   const [showAlerts, setShowAlerts] = React.useState(false);
@@ -94,7 +96,8 @@ export function TopBar({
         {!isRunning ? (
           <button
             onClick={onStart}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors"
+            disabled={startDisabled}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Play className="w-3 h-3 fill-current" />
             <span>Iniciar</span>

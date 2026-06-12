@@ -286,6 +286,7 @@ export default function App() {
         hasReplanned={simulation.hasReplanned}
         totalShipments={simulation.shipments.length}
         criticalCount={criticalCount}
+        startDisabled={simulation.simulationComplete || simulation.collapseComplete}
       />
 
       {/* Main Content */}
@@ -298,21 +299,15 @@ export default function App() {
             filters={filters}
             toggles={toggles}
             isRunning={simulation.isRunning}
-            hasReplanned={simulation.hasReplanned}
             daysElapsed={simulation.daysElapsed}
             simulationComplete={simulation.simulationComplete}
             collapseComplete={simulation.collapseComplete}
             airports={simulation.airports}
             simulationTime={displayedSimulationTime}
             simulationK={simulation.simulationK}
-            onModeChange={simulation.setMode}
             onStartDateChange={simulation.setStartDate}
             onFilterChange={handleFilterChange}
             onToggleChange={handleToggleChange}
-            onStart={simulation.start}
-            onPause={simulation.pause}
-            onReset={handleReset}
-            onReplan={simulation.replan}
             onAddShipment={() => setShowAddShipment(true)}
             onCancelFlight={() => setShowCancelFlight(true)}
             onUploadStaticData={() => setShowStaticDataUpload(true)}
@@ -495,6 +490,8 @@ export default function App() {
               shipments={simulation.shipments}
               onClearSelection={() => { setSelectedEntity(null); setMapFilter(null); }}
               onSelectShipment={handleSelectShipment}
+              onSelectFlight={handleSelectFlight}
+              onSelectAirport={handleSelectAirport}
               isRunning={simulation.isRunning}
               mode={simulation.mode}
               activeFlights={filteredActiveFlights}

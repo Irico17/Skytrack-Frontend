@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Package, Plane, Building2, AlertTriangle,
   CheckCircle, XCircle, X, ArrowRight, BarChart2,
-  Luggage
+  Luggage, Search
 } from 'lucide-react';
 import { Airport, Flight, Shipment, getStatusColor, getOccupancyPercent } from '../data/mockData';
 import type { BackendActiveFlight, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
@@ -19,6 +19,8 @@ interface BottomPanelProps {
   shipments: Shipment[];
   onClearSelection: () => void;
   onSelectShipment?: (id: string) => void;
+  onSelectFlight?: (id: string) => void;
+  onSelectAirport?: (id: string) => void;
   isRunning: boolean;
   mode?: string;
   activeFlights?: BackendActiveFlight[];
@@ -72,12 +74,28 @@ function InfoRow({ label, value, valueColor }: { label: string; value: React.Rea
   );
 }
 
-function AirportDetail({ airport, shipments, flights, activeFlights = [], hasBackendStats = false }: {
+function EntityChip({ label, color = '#4DA6FF', onClick }: { label: string; color?: string; onClick?: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={!onClick}
+      className="text-[10px] px-1.5 py-0.5 rounded border transition-colors disabled:cursor-default"
+      style={{ color, borderColor: `${color}40`, backgroundColor: `${color}10` }}
+      title={onClick ? 'Ver en el mapa' : undefined}
+    >
+      {label}
+    </button>
+  );
+}
+
+function AirportDetail({ airport, shipments, flights, activeFlights = [], hasBackendStats = false, onSelectFlight, onSelectShipment }: {
   airport: Airport;
   shipments: Shipment[];
   flights: Flight[];
   activeFlights?: BackendActiveFlight[];
   hasBackendStats?: boolean;
+  onSelectFlight?: (id: string) => void;
+  onSelectShipment?: (id: string) => void;
 }) {
   const pct = getOccupancyPercent(airport.occupancy, airport.capacity);
   const color = getStatusColor(airport.status);
@@ -111,25 +129,44 @@ function AirportDetail({ airport, shipments, flights, activeFlights = [], hasBac
           <CapacityBar value={airport.occupancy} max={airport.capacity} color={color} />
         </div>
 
-        <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
-          <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em' }}>VUELOS ACTIVOS</div>
-          <div className="text-2xl text-[#4DA6FF]" style={{ fontWeight: 700 }}>{airportFlights.length}</div>
-          <div className="text-[11px] text-[#4A6080] mt-0.5">rutas por este hub</div>
-          <div className="mt-2 flex flex-wrap gap-1">
-            {airportFlights.slice(0, 4).map(f => (
-              <span key={'flightId' in f ? f.flightId : f.id} className="text-[10px] px-1.5 py-0.5 rounded bg-[#4DA6FF]/10 text-[#4DA6FF]">
-                {'flightId' in f ? f.flightId : f.flightNumber}
-              </span>
-            ))}
+        <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058] overflow-hidden flex flex-col">
+          <div className="text-[10px] text-[#4A6080] mb-2 flex-shrink-0" style={{ letterSpacing: '0.1em' }}>
+            UTS DEL HUB · {airportFlights.length}
+          </div>
+          <div className="flex flex-wrap gap-1 overflow-y-auto content-start">
+            {airportFlights.slice(0, 24).map(f => {
+              const id = 'flightId' in f ? f.flightId : f.id;
+              const label = 'flightId' in f ? f.flightId : f.flightNumber;
+              const isDeparture = ('originId' in f ? f.originId : f.from) === airport.id;
+              return (
+                <EntityChip
+                  key={id}
+                  label={`${isDeparture ? '↗' : '↘'} ${label}`}
+                  color={isDeparture ? '#4DA6FF' : '#00FF9C'}
+                  onClick={onSelectFlight ? () => onSelectFlight(id) : undefined}
+                />
+              );
+            })}
+            {airportFlights.length === 0 && <span className="text-[11px] text-[#4A6080]">Sin UTs por este hub</span>}
+            {airportFlights.length > 24 && <span className="text-[10px] text-[#4A6080]">+{airportFlights.length - 24} más</span>}
           </div>
         </div>
 
-        <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
-          <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em' }}>{hasBackendStats ? 'MALETAS ASIGNADAS' : 'ENVÍOS'}</div>
-          <div className="text-2xl text-[#A8C0E0]" style={{ fontWeight: 700 }}>{hasBackendStats ? airportBags : activeShipments.length}</div>
-          <div className="text-[11px] text-[#4A6080] mt-0.5">{hasBackendStats ? 'por rutas del hub' : 'rastreo por este hub'}</div>
-          <div className="mt-2 text-[11px] text-[#4A6080]">
-            {hasBackendStats ? DASH : `${activeShipments.filter(s => s.status === 'critical').length} críticos · ${activeShipments.filter(s => s.status === 'delayed').length} retrasados`}
+        <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058] overflow-hidden flex flex-col">
+          <div className="text-[10px] text-[#4A6080] mb-2 flex-shrink-0" style={{ letterSpacing: '0.1em' }}>
+            ENVÍOS DEL HUB · {activeShipments.length}{hasBackendStats ? ` · ${airportBags} maletas en UTs` : ''}
+          </div>
+          <div className="flex flex-wrap gap-1 overflow-y-auto content-start">
+            {activeShipments.slice(0, 18).map(s => (
+              <EntityChip
+                key={s.id}
+                label={s.id}
+                color={getStatusColor(s.status)}
+                onClick={onSelectShipment ? () => onSelectShipment(s.id) : undefined}
+              />
+            ))}
+            {activeShipments.length === 0 && <span className="text-[11px] text-[#4A6080]">Sin envíos con origen/destino aquí</span>}
+            {activeShipments.length > 18 && <span className="text-[10px] text-[#4A6080]">+{activeShipments.length - 18} más</span>}
           </div>
         </div>
       </div>
@@ -137,7 +174,10 @@ function AirportDetail({ airport, shipments, flights, activeFlights = [], hasBac
   );
 }
 
-function FlightDetail({ flight, airports, shipments }: { flight: Flight; airports: Airport[]; shipments: Shipment[] }) {
+function FlightDetail({ flight, airports, shipments, onSelectShipment }: {
+  flight: Flight; airports: Airport[]; shipments: Shipment[];
+  onSelectShipment?: (id: string) => void;
+}) {
   const origin = airports.find(a => a.id === flight.from);
   const dest = airports.find(a => a.id === flight.to);
   const color = getStatusColor(flight.status);
@@ -187,12 +227,21 @@ function FlightDetail({ flight, airports, shipments }: { flight: Flight; airport
           <div className="text-[11px] text-[#4A6080] mt-1">{origin?.city} → {dest?.city}</div>
         </div>
 
-        <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
-          <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em' }}>ENVÍOS A BORDO</div>
-          <div className="text-2xl text-[#A8C0E0]" style={{ fontWeight: 700 }}>{flightShipments.length}</div>
-          <div className="text-[11px] text-[#4A6080] mt-0.5">envíos activos</div>
-          <div className="mt-1 text-[11px] text-[#4A6080]">
-            {flightShipments.reduce((acc, s) => acc + s.luggageCount, 0)} maletas en total
+        <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058] overflow-hidden flex flex-col">
+          <div className="text-[10px] text-[#4A6080] mb-1 flex-shrink-0" style={{ letterSpacing: '0.1em' }}>
+            ENVÍOS A BORDO · {flightShipments.length} · {flightShipments.reduce((acc, s) => acc + s.luggageCount, 0)} maletas
+          </div>
+          <div className="flex flex-wrap gap-1 overflow-y-auto content-start">
+            {flightShipments.slice(0, 18).map(s => (
+              <EntityChip
+                key={s.id}
+                label={`${s.id} (${s.luggageCount})`}
+                color={getStatusColor(s.status)}
+                onClick={onSelectShipment ? () => onSelectShipment(s.id) : undefined}
+              />
+            ))}
+            {flightShipments.length === 0 && <span className="text-[11px] text-[#4A6080]">Sin envíos asignados</span>}
+            {flightShipments.length > 18 && <span className="text-[10px] text-[#4A6080]">+{flightShipments.length - 18} más</span>}
           </div>
         </div>
       </div>
@@ -200,12 +249,20 @@ function FlightDetail({ flight, airports, shipments }: { flight: Flight; airport
   );
 }
 
-function BackendFlightDetail({ flight, airports }: { flight: BackendActiveFlight; airports: Airport[] }) {
+function BackendFlightDetail({ flight, airports, shipments, onSelectShipment }: {
+  flight: BackendActiveFlight; airports: Airport[];
+  shipments: Shipment[];
+  onSelectShipment?: (id: string) => void;
+}) {
   const origin = airports.find(a => a.id === flight.originId);
   const dest = airports.find(a => a.id === flight.destinationId);
   const color = flight.meetsSla ? '#4DA6FF' : '#FFC857';
   const departure = new Date(flight.departureTime).toISOString().slice(11, 16);
   const arrival = new Date(flight.arrivalTime).toISOString().slice(11, 16);
+  const baseFlightId = flight.flightId.replace(/-D\d+$/, '');
+  const flightShipments = shipments.filter(s =>
+    s.currentFlightId === flight.flightId || s.currentFlightId.replace(/-D\d+$/, '') === baseFlightId
+  );
 
   return (
     <div className="flex gap-6 h-full">
@@ -232,10 +289,22 @@ function BackendFlightDetail({ flight, airports }: { flight: BackendActiveFlight
           <div className="text-xs text-[#C8D8F0]">Sale <span style={{ fontWeight: 600 }}>{departure}</span></div>
           <div className="text-xs text-[#C8D8F0] mt-1">Llega <span style={{ fontWeight: 600 }}>{arrival}</span></div>
         </div>
-        <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
-          <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em' }}>CAPACIDAD</div>
-          <div className="text-2xl text-[#4A6080]" style={{ fontWeight: 700 }}>{DASH}</div>
-          <div className="text-[11px] text-[#4A6080] mt-0.5">ocupación no expuesta</div>
+        <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058] overflow-hidden flex flex-col">
+          <div className="text-[10px] text-[#4A6080] mb-1 flex-shrink-0" style={{ letterSpacing: '0.1em' }}>
+            ENVÍOS A BORDO · {flightShipments.length}
+          </div>
+          <div className="flex flex-wrap gap-1 overflow-y-auto content-start">
+            {flightShipments.slice(0, 18).map(s => (
+              <EntityChip
+                key={s.id}
+                label={`${s.id} (${s.luggageCount})`}
+                color={getStatusColor(s.status)}
+                onClick={onSelectShipment ? () => onSelectShipment(s.id) : undefined}
+              />
+            ))}
+            {flightShipments.length === 0 && <span className="text-[11px] text-[#4A6080]">Sin envíos asignados</span>}
+            {flightShipments.length > 18 && <span className="text-[10px] text-[#4A6080]">+{flightShipments.length - 18} más</span>}
+          </div>
         </div>
       </div>
     </div>
@@ -348,10 +417,12 @@ function ShipmentListRow({ s, onClick }: { s: Shipment; onClick: () => void }) {
 }
 
 export function BottomPanel({
-  selectedEntity, airports, flights, shipments, onClearSelection, onSelectShipment,
+  selectedEntity, airports, flights, shipments, onClearSelection, onSelectShipment, onSelectFlight,
   mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
 }: BottomPanelProps) {
   const [activeTab, setActiveTab] = useState<'detail' | 'shipments' | 'active'>('detail');
+  const [shipmentSearch, setShipmentSearch] = useState('');
+  const [shipmentStatusFilter, setShipmentStatusFilter] = useState<'all' | 'on-time' | 'delayed' | 'critical'>('all');
   const isBackendStatsMode = mode === '5day' || mode === 'realtime';
   const hasBackendStats = isBackendStatsMode && lastCycleUpdate != null;
   const backendMetrics = lastCycleUpdate?.operationalMetrics;
@@ -373,6 +444,18 @@ export function BottomPanel({
   const delayedShipments = shipments.filter(s => s.status === 'delayed');
   const delayedBackendFlights = activeFlights.filter(f => !f.meetsSla);
   const criticalAirports = airports.filter(a => a.status === 'critical');
+
+  const visibleShipments = useMemo(() => {
+    const query = shipmentSearch.trim().toLowerCase();
+    return shipments
+      .filter(s => !query || `${s.id} ${s.airline} ${s.airlineId} ${s.origin} ${s.destination} ${s.currentFlightId}`.toLowerCase().includes(query))
+      .filter(s => shipmentStatusFilter === 'all' || s.status === shipmentStatusFilter);
+  }, [shipments, shipmentSearch, shipmentStatusFilter]);
+
+  const visibleActiveFlights = useMemo(() => {
+    const query = shipmentSearch.trim().toLowerCase();
+    return activeFlights.filter(f => !query || `${f.flightId} ${f.originId} ${f.destinationId}`.toLowerCase().includes(query));
+  }, [activeFlights, shipmentSearch]);
 
   return (
     <div className="h-56 bg-[#080F1E] border-t border-[#1E3058] flex flex-col">
@@ -427,9 +510,9 @@ export function BottomPanel({
       <div className="flex-1 overflow-hidden">
         {activeTab === 'detail' && (
           <div className="h-full p-4">
-            {selectedAirport && <AirportDetail airport={selectedAirport} shipments={shipments} flights={flights} activeFlights={activeFlights} hasBackendStats={hasBackendStats} />}
-            {selectedFlight && !selectedBackendFlight && <FlightDetail flight={selectedFlight} airports={airports} shipments={shipments} />}
-            {selectedBackendFlight && <BackendFlightDetail flight={selectedBackendFlight} airports={airports} />}
+            {selectedAirport && <AirportDetail airport={selectedAirport} shipments={shipments} flights={flights} activeFlights={activeFlights} hasBackendStats={hasBackendStats} onSelectFlight={onSelectFlight} onSelectShipment={onSelectShipment} />}
+            {selectedFlight && !selectedBackendFlight && <FlightDetail flight={selectedFlight} airports={airports} shipments={shipments} onSelectShipment={onSelectShipment} />}
+            {selectedBackendFlight && <BackendFlightDetail flight={selectedBackendFlight} airports={airports} shipments={shipments} onSelectShipment={onSelectShipment} />}
             {selectedShipment && <ShipmentDetail shipment={selectedShipment} airports={airports} flights={flights} />}
             {!hasSelection && (
               <div className="flex items-center h-full gap-6">
@@ -463,39 +546,79 @@ export function BottomPanel({
         )}
 
         {activeTab === 'shipments' && (
-          <div className="h-full overflow-y-auto">
-            <div className="sticky top-0 bg-[#080F1E] px-4 py-2 grid items-center gap-3 text-[10px] text-[#4A6080] border-b border-[#1E3058]/50" style={{ ...SHIPMENT_GRID_STYLE, letterSpacing: '0.1em' }}>
-              <span />
-              <span>ID</span>
-              <span>AEROLÍNEA</span>
-              <span>RUTA</span>
-              <span>MALETAS</span>
-              <span>PROGRESO</span>
+          <div className="h-full flex flex-col">
+            {/* Search + filters toolbar */}
+            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-[#1E3058]/50 flex-shrink-0">
+              <div className="relative w-64">
+                <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[#4A6080]" />
+                <input
+                  value={shipmentSearch}
+                  onChange={e => setShipmentSearch(e.target.value)}
+                  placeholder="Buscar por código, cliente, UT o ruta"
+                  className="w-full h-7 rounded-lg bg-[#0D1E38] border border-[#1E3058] pl-7 pr-2 text-[11px] text-[#C8D8F0] outline-none focus:border-[#4DA6FF]/60"
+                />
+              </div>
+              <div className="flex gap-1">
+                {([
+                  { id: 'all', label: 'Todos' },
+                  { id: 'on-time', label: 'A tiempo' },
+                  { id: 'delayed', label: 'Retrasados' },
+                  { id: 'critical', label: 'Críticos' },
+                ] as const).map(option => (
+                  <button
+                    key={option.id}
+                    onClick={() => setShipmentStatusFilter(option.id)}
+                    className={`h-7 px-2 rounded-lg border text-[10px] whitespace-nowrap transition-colors ${shipmentStatusFilter === option.id
+                      ? 'bg-[#4DA6FF]/15 border-[#4DA6FF] text-[#4DA6FF]'
+                      : 'bg-[#0D1E38] border-[#1E3058] text-[#4A6080] hover:text-[#A8C0E0] hover:border-[#4DA6FF]/40'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[10px] text-[#4A6080] ml-auto">
+                {shipments.length > 0 || !isBackendStatsMode ? `${visibleShipments.length} envíos` : `${visibleActiveFlights.length} UTs activas`}
+              </span>
             </div>
-            {isBackendStatsMode && shipments.length > 0 ? shipments.map(s => (
-              <ShipmentListRow key={s.id} s={s} onClick={() => onSelectShipment?.(s.id)} />
-            )) : isBackendStatsMode ? activeFlights.map(f => (
-              <button
-                key={f.flightId}
-                onClick={() => undefined}
-                className="w-full grid items-center gap-3 px-4 py-2.5 hover:bg-[#1A2E4A]/40 transition-colors border-b border-[#1E3058]/30 text-left"
-                style={SHIPMENT_GRID_STYLE}
-              >
-                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: f.meetsSla ? '#00FF9C' : '#FFC857' }} />
-                <span className="text-[11px] text-[#7090B0] truncate">{f.flightId}</span>
-                <span className="text-[11px] text-[#A8C0E0] truncate">{DASH}</span>
-                <span className="text-[11px] text-[#7090B0] flex items-center gap-1 min-w-0 truncate">
-                  {f.originId} <ArrowRight className="w-2.5 h-2.5" /> {f.destinationId}
-                </span>
-                <span className="text-[11px] text-[#4DA6FF] truncate">{f.bagsCount} maletas</span>
-                <span className="text-[11px] font-mono truncate" style={{ color: f.meetsSla ? '#00FF9C' : '#FFC857' }}>{f.meetsSla ? 'SLA OK' : 'SLA Riesgo'}</span>
-              </button>
-            )) : shipments.map(s => (
-              <ShipmentListRow key={s.id} s={s} onClick={() => onSelectShipment?.(s.id)} />
-            ))}
-            {isBackendStatsMode && activeFlights.length === 0 && shipments.length === 0 && (
-              <div className="h-full flex items-center justify-center text-[#2A4060] text-sm">{DASH}</div>
-            )}
+
+            <div className="flex-1 overflow-y-auto">
+              <div className="sticky top-0 bg-[#080F1E] px-4 py-2 grid items-center gap-3 text-[10px] text-[#4A6080] border-b border-[#1E3058]/50" style={{ ...SHIPMENT_GRID_STYLE, letterSpacing: '0.1em' }}>
+                <span />
+                <span>ID</span>
+                <span>CLIENTE</span>
+                <span>RUTA</span>
+                <span>MALETAS</span>
+                <span>PROGRESO</span>
+              </div>
+              {isBackendStatsMode && shipments.length > 0 ? visibleShipments.map(s => (
+                <ShipmentListRow key={s.id} s={s} onClick={() => onSelectShipment?.(s.id)} />
+              )) : isBackendStatsMode ? visibleActiveFlights.map(f => (
+                <button
+                  key={f.flightId}
+                  onClick={() => onSelectFlight?.(f.flightId)}
+                  className="w-full grid items-center gap-3 px-4 py-2.5 hover:bg-[#1A2E4A]/40 transition-colors border-b border-[#1E3058]/30 text-left"
+                  style={SHIPMENT_GRID_STYLE}
+                >
+                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: f.meetsSla ? '#00FF9C' : '#FFC857' }} />
+                  <span className="text-[11px] text-[#7090B0] truncate">{f.flightId}</span>
+                  <span className="text-[11px] text-[#A8C0E0] truncate">{DASH}</span>
+                  <span className="text-[11px] text-[#7090B0] flex items-center gap-1 min-w-0 truncate">
+                    {f.originId} <ArrowRight className="w-2.5 h-2.5" /> {f.destinationId}
+                  </span>
+                  <span className="text-[11px] text-[#4DA6FF] truncate">{f.bagsCount} maletas</span>
+                  <span className="text-[11px] font-mono truncate" style={{ color: f.meetsSla ? '#00FF9C' : '#FFC857' }}>{f.meetsSla ? 'SLA OK' : 'SLA Riesgo'}</span>
+                </button>
+              )) : visibleShipments.map(s => (
+                <ShipmentListRow key={s.id} s={s} onClick={() => onSelectShipment?.(s.id)} />
+              ))}
+              {((isBackendStatsMode && shipments.length > 0) || !isBackendStatsMode) && visibleShipments.length === 0 && (
+                <div className="flex items-center justify-center py-6 text-[#2A4060] text-sm">Sin envíos que coincidan con la búsqueda</div>
+              )}
+              {isBackendStatsMode && activeFlights.length === 0 && shipments.length === 0 && (
+                <div className="h-full flex items-center justify-center text-[#2A4060] text-sm">{DASH}</div>
+              )}
+            </div>
           </div>
         )}
 
