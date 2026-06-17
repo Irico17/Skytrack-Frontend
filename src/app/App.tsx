@@ -133,11 +133,10 @@ export default function App() {
     );
   }, []);
 
+  // Solo filtra el mapa: no abre el panel de detalles (eso se hace al hacer clic en la entidad)
   const handleToggleMapFilter = useCallback((filter: MapEntityFilter) => {
-    const shouldClear = sameEntity(mapFilter, filter);
-    setMapFilter(shouldClear ? null : filter);
-    setSelectedEntity(shouldClear ? null : filter);
-  }, [mapFilter]);
+    setMapFilter(prev => (sameEntity(prev, filter) ? null : filter));
+  }, []);
 
   const filteredShipments = useMemo(() => {
     if (!filters.airline && !filters.origin && !filters.destination) return simulation.shipments;
@@ -282,8 +281,6 @@ export default function App() {
         onPause={simulation.pause}
         onReset={handleReset}
         onModeChange={simulation.setMode}
-        onReplan={simulation.replan}
-        hasReplanned={simulation.hasReplanned}
         totalShipments={simulation.shipments.length}
         criticalCount={criticalCount}
         startDisabled={simulation.simulationComplete || simulation.collapseComplete}
@@ -311,7 +308,6 @@ export default function App() {
             onAddShipment={() => setShowAddShipment(true)}
             onCancelFlight={() => setShowCancelFlight(true)}
             onUploadStaticData={() => setShowStaticDataUpload(true)}
-            onSkipToComplete={simulation.skipToComplete}
             onSkipToCollapseComplete={simulation.skipToCollapseComplete}
             onViewResults={() => setShowResults(true)}
             onViewCollapseResults={() => setShowCollapseResults(true)}
@@ -459,6 +455,22 @@ export default function App() {
               </div>
             )}
 
+            {/* Map entity filter indicator — permite quitar el filtro del mapa */}
+            {mapFilter && (
+              <div className="absolute top-12 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 backdrop-blur-sm">
+                <span className="text-[11px] text-[#4DA6FF]">
+                  Mapa filtrado: {mapFilter.type === 'airport' ? 'Almacén' : mapFilter.type === 'flight' ? 'UT' : 'Envío'} {mapFilter.id}
+                </span>
+                <button
+                  onClick={() => setMapFilter(null)}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#4DA6FF]/20 text-[11px] text-[#4DA6FF] hover:bg-[#4DA6FF]/30 transition-colors"
+                  style={{ fontWeight: 600 }}
+                >
+                  ✕ Quitar filtro
+                </button>
+              </div>
+            )}
+
             {/* Active filters indicator */}
             {(filters.airline || filters.origin || filters.destination) && (
               <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/30 backdrop-blur-sm">
@@ -578,15 +590,20 @@ export default function App() {
       )}
 
       {/* Shipment Detail Side Panel */}
-      {selectedEntity?.type === 'shipment' && (
-        <ShipmentDetailPanel
-          shipment={simulation.shipments.find(s => s.id === selectedEntity.id)!}
-          flights={simulation.flights}
-          airports={simulation.airports}
-          onClose={() => setSelectedEntity(null)}
-          simulationTime={displayedSimulationTime}
-        />
-      )}
+      {selectedEntity?.type === 'shipment' && (() => {
+        const selShipment = simulation.shipments.find(s => s.id === selectedEntity.id);
+        if (!selShipment) return null;
+        return (
+          <ShipmentDetailPanel
+            shipment={selShipment}
+            flights={simulation.flights}
+            airports={simulation.airports}
+            onClose={() => setSelectedEntity(null)}
+            simulationTime={displayedSimulationTime}
+            simulationId={simulation.simulationId}
+          />
+        );
+      })()}
     </div>
   );
 }

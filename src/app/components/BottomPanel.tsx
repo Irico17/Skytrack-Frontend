@@ -422,7 +422,7 @@ export function BottomPanel({
 }: BottomPanelProps) {
   const [activeTab, setActiveTab] = useState<'detail' | 'shipments' | 'active'>('detail');
   const [shipmentSearch, setShipmentSearch] = useState('');
-  const [shipmentStatusFilter, setShipmentStatusFilter] = useState<'all' | 'on-time' | 'delayed' | 'critical'>('all');
+  const [shipmentStatusFilter, setShipmentStatusFilter] = useState<'all' | 'on-time' | 'delayed' | 'critical' | 'inflight' | 'delivered'>('all');
   const isBackendStatsMode = mode === '5day' || mode === 'realtime';
   const hasBackendStats = isBackendStatsMode && lastCycleUpdate != null;
   const backendMetrics = lastCycleUpdate?.operationalMetrics;
@@ -446,11 +446,20 @@ export function BottomPanel({
   const criticalAirports = airports.filter(a => a.status === 'critical');
 
   const visibleShipments = useMemo(() => {
+    const inFlightIds = new Set(activeFlights.map(f => f.flightId.replace(/-D\d+$/, '')));
     const query = shipmentSearch.trim().toLowerCase();
     return shipments
       .filter(s => !query || `${s.id} ${s.airline} ${s.airlineId} ${s.origin} ${s.destination} ${s.currentFlightId}`.toLowerCase().includes(query))
-      .filter(s => shipmentStatusFilter === 'all' || s.status === shipmentStatusFilter);
-  }, [shipments, shipmentSearch, shipmentStatusFilter]);
+      .filter(s => {
+        if (shipmentStatusFilter === 'all') return true;
+        if (shipmentStatusFilter === 'inflight') {
+          return s.progress < 1 && !!s.currentFlightId && s.currentFlightId !== 'PENDING'
+            && inFlightIds.has(s.currentFlightId.replace(/-D\d+$/, ''));
+        }
+        if (shipmentStatusFilter === 'delivered') return s.progress >= 1;
+        return s.status === shipmentStatusFilter;
+      });
+  }, [shipments, shipmentSearch, shipmentStatusFilter, activeFlights]);
 
   const visibleActiveFlights = useMemo(() => {
     const query = shipmentSearch.trim().toLowerCase();
@@ -564,6 +573,8 @@ export function BottomPanel({
                   { id: 'on-time', label: 'A tiempo' },
                   { id: 'delayed', label: 'Retrasados' },
                   { id: 'critical', label: 'Críticos' },
+                  { id: 'inflight', label: 'En vuelo' },
+                  { id: 'delivered', label: 'Entregados' },
                 ] as const).map(option => (
                   <button
                     key={option.id}

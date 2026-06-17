@@ -154,6 +154,8 @@ const SHIPMENT_FILTER_OPTIONS = [
   { id: 'on-time', label: 'A tiempo' },
   { id: 'delayed', label: 'Retrasado' },
   { id: 'critical', label: 'Crítico' },
+  { id: 'inflight', label: 'En vuelo' },
+  { id: 'delivered', label: 'Entregados' },
 ];
 
 const BAG_STATE_LABELS: Record<string, string> = {
@@ -589,7 +591,7 @@ export function RightPanel({
   const [utFilter, setUtFilter] = useState('all');
   const [warehouseFilter, setWarehouseFilter] = useState('all');
   const [warehouseSort, setWarehouseSort] = useState<'occupancy' | 'occupancyAsc' | 'code' | 'city'>('occupancy');
-  const [shipmentSort, setShipmentSort] = useState<'progress' | 'bags' | 'route'>('progress');
+  const [shipmentSort, setShipmentSort] = useState<'progress' | 'progressAsc' | 'bags' | 'route'>('progress');
   const [shipmentFilter, setShipmentFilter] = useState('all');
   const [bagStateFilter, setBagStateFilter] = useState('ALL');
   const [bagPage, setBagPage] = useState(0);
@@ -774,16 +776,28 @@ export function RightPanel({
   const operationalShipments = useMemo(() => {
     if (activeTab !== 'shipments') return [];
 
+    // UTs actualmente en vuelo (ids normalizados sin sufijo -D#)
+    const inFlightIds = new Set(activeFlights.map(f => stripProjectedDaySuffix(f.flightId)));
+
     const query = opsSearch.trim().toLowerCase();
     return shipments
       .filter(s => !query || `${s.id} ${s.origin} ${s.destination} ${s.airlineId} ${s.airline} ${s.currentFlightId}`.toLowerCase().includes(query))
-      .filter(s => shipmentFilter === 'all' || s.status === shipmentFilter)
+      .filter(s => {
+        if (shipmentFilter === 'all') return true;
+        if (shipmentFilter === 'inflight') {
+          return s.progress < 1 && !!s.currentFlightId && s.currentFlightId !== 'PENDING'
+            && inFlightIds.has(stripProjectedDaySuffix(s.currentFlightId));
+        }
+        if (shipmentFilter === 'delivered') return s.progress >= 1;
+        return s.status === shipmentFilter;
+      })
       .sort((a, b) => {
         if (shipmentSort === 'bags') return b.luggageCount - a.luggageCount;
         if (shipmentSort === 'route') return `${a.origin}-${a.destination}`.localeCompare(`${b.origin}-${b.destination}`);
-        return a.progress - b.progress;
+        if (shipmentSort === 'progressAsc') return a.progress - b.progress || a.id.localeCompare(b.id);
+        return b.progress - a.progress || a.id.localeCompare(b.id);
       });
-  }, [activeTab, shipments, opsSearch, shipmentSort, shipmentFilter]);
+  }, [activeTab, shipments, opsSearch, shipmentSort, shipmentFilter, activeFlights]);
 
   const luggageByClient = useMemo(() => {
     if (activeTab !== 'clients') return [];
@@ -1477,7 +1491,8 @@ export function RightPanel({
                 value={shipmentSort}
                 onChange={v => setShipmentSort(v as typeof shipmentSort)}
                 options={[
-                  { value: 'progress', label: 'Progreso' },
+                  { value: 'progress', label: 'Progreso ↓' },
+                  { value: 'progressAsc', label: 'Progreso ↑' },
                   { value: 'bags', label: 'Maletas' },
                   { value: 'route', label: 'Ruta' },
                 ]}

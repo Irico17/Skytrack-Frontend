@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Filter, Route, Warehouse, AlertOctagon,
+  Filter, Route, Warehouse,
   PlusCircle, Search, X, ChevronDown, ChevronUp,
   Plane, FastForward, BarChart2, Calendar, Database,
   Clock, Zap,
@@ -37,7 +37,6 @@ interface LeftSidebarProps {
   onAddShipment: () => void;
   onCancelFlight: () => void;
   onUploadStaticData: () => void;
-  onSkipToComplete: () => void;
   onSkipToCollapseComplete: () => void;
   onViewResults: () => void;
   onViewCollapseResults: () => void;
@@ -121,7 +120,7 @@ export function LeftSidebar({
   daysElapsed, simulationComplete, collapseComplete, airports = [],
   onStartDateChange, onFilterChange, onToggleChange,
   onAddShipment, onCancelFlight, onUploadStaticData,
-  onSkipToComplete, onSkipToCollapseComplete, onViewResults, onViewCollapseResults,
+  onSkipToCollapseComplete, onViewResults, onViewCollapseResults,
 }: LeftSidebarProps) {
 
   const airlineOptions = mode === '5day' || mode === 'realtime'
@@ -269,18 +268,6 @@ export function LeftSidebar({
               })}
             </div>
 
-            {/* Skip to end — while not complete */}
-            {!simulationComplete && (
-              <button
-                onClick={onSkipToComplete}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors"
-                style={{ fontWeight: 600 }}
-              >
-                <FastForward className="w-3.5 h-3.5" />
-                Completar y Ver Resultados
-              </button>
-            )}
-
             {/* View results button — when complete */}
             {simulationComplete && (
               <button
@@ -372,47 +359,46 @@ export function LeftSidebar({
             </div>
             <ToggleSwitch checked={toggles.showWarehouseCapacity} onChange={() => onToggleChange('showWarehouseCapacity')} />
           </div>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <AlertOctagon className="w-3.5 h-3.5 text-[#FF4D4D]" />
-              <span className="text-xs text-[#A8C0E0]">Mostrar Congestión</span>
-            </div>
-            <ToggleSwitch checked={toggles.showCongestion} onChange={() => onToggleChange('showCongestion')} />
-          </div>
         </div>
       </Section>
 
-      {/* Legend */}
+      {/* Legend — refleja lo que dibuja el mapa: almacenes por estado y UTs por SLA/carga */}
       <Section title="LEYENDA DEL MAPA" icon={<Search className="w-3 h-3" />} defaultOpen={false}>
         <div className="flex flex-col gap-2">
+          <div className="text-[9px] text-[#4A6080]" style={{ letterSpacing: '0.1em' }}>ALMACENES (PUNTOS)</div>
           {[
-            { color: '#00FF9C', label: 'Operación Normal' },
-            { color: '#FFC857', label: 'Retraso / Advertencia' },
-            { color: '#FF4D4D', label: 'Crítico / Congestión' },
-            { color: '#4DA6FF', label: 'Rutas Activas' },
-            { color: '#A855F7', label: 'Rutas Replanificadas' },
+            { color: '#00FF9C', label: 'Ocupación normal' },
+            { color: '#FFC857', label: 'Advertencia (≥70%)' },
+            { color: '#FF4D4D', label: 'Crítico (≥90%)' },
           ].map(item => (
             <div key={item.label} className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
               <span className="text-[11px] text-[#7090B0]">{item.label}</span>
             </div>
           ))}
-          <div className="mt-2 pt-2 border-t border-[#1E3058]">
-            <div className="flex items-center gap-2 mb-1.5">
-              <div className="flex items-center gap-1">
-                <div className="w-5 h-0.5 bg-[#4DA6FF]" />
-              </div>
-              <span className="text-[11px] text-[#7090B0]">Ruta Directa</span>
+          <div className="mt-2 pt-2 border-t border-[#1E3058] flex flex-col gap-1.5">
+            <div className="text-[9px] text-[#4A6080]" style={{ letterSpacing: '0.1em' }}>UNIDADES DE TRANSPORTE (LÍNEAS)</div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 bg-[#4DA6FF] flex-shrink-0" />
+              <span className="text-[11px] text-[#7090B0]">En ruta · cumple SLA</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-0.5">
-                <div className="w-1 h-0.5 bg-[#A855F7]" />
+              <div className="w-5 h-0.5 bg-[#FFC857] flex-shrink-0" />
+              <span className="text-[11px] text-[#7090B0]">En ruta · sin SLA</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 bg-[#4A5E72] flex-shrink-0" />
+              <span className="text-[11px] text-[#7090B0]">Sin carga asignada</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-0.5 flex-shrink-0">
+                <div className="w-1 h-0.5 bg-[#4DA6FF]" />
                 <div className="w-1 h-0.5 bg-transparent" />
-                <div className="w-1 h-0.5 bg-[#A855F7]" />
+                <div className="w-1 h-0.5 bg-[#4DA6FF]" />
                 <div className="w-1 h-0.5 bg-transparent" />
-                <div className="w-1 h-0.5 bg-[#A855F7]" />
+                <div className="w-1 h-0.5 bg-[#4DA6FF]" />
               </div>
-              <span className="text-[11px] text-[#7090B0]">Ruta Replanificada</span>
+              <span className="text-[11px] text-[#7090B0]">UT seleccionada</span>
             </div>
           </div>
         </div>

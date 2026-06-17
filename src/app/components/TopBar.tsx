@@ -14,8 +14,6 @@ interface TopBarProps {
   onPause: () => void;
   onReset: () => void;
   onModeChange: (mode: SimulationMode) => void;
-  onReplan: () => void;
-  hasReplanned: boolean;
   totalShipments: number;
   criticalCount: number;
   startDisabled?: boolean;
@@ -35,7 +33,7 @@ const MODE_ICONS: Record<SimulationMode, React.ReactNode> = {
 
 export function TopBar({
   isRunning, mode, simulationTime, events, onStart, onPause, onReset,
-  onModeChange, onReplan, hasReplanned, totalShipments, criticalCount,
+  onModeChange, totalShipments, criticalCount,
   startDisabled = false,
 }: TopBarProps) {
   const [showModeDropdown, setShowModeDropdown] = React.useState(false);
@@ -111,19 +109,6 @@ export function TopBar({
             <span>Pausar</span>
           </button>
         )}
-
-        <button
-          onClick={onReplan}
-          disabled={hasReplanned}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors
-            ${hasReplanned
-              ? 'bg-[#A855F7]/10 border border-[#A855F7]/30 text-[#A855F7]/60 cursor-not-allowed'
-              : 'bg-[#A855F7]/15 border border-[#A855F7]/40 text-[#A855F7] hover:bg-[#A855F7]/25'
-            }`}
-        >
-          <Zap className="w-3 h-3" />
-          <span>{hasReplanned ? 'Replanificado' : 'Replanificar Rutas'}</span>
-        </button>
 
         <button
           onClick={onReset}

@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import {
   Globe, X, Download, RotateCcw, CheckCircle, AlertTriangle, Zap,
-  Package, TrendingUp, TrendingDown, Clock, Layers, ChevronRight,
+  Package, TrendingUp, Clock, Layers, ChevronRight,
   ArrowUpRight, ArrowDownRight, Minus, Activity, Warehouse,
   AlertOctagon, FileText, Calendar,
 } from 'lucide-react';
@@ -24,17 +24,6 @@ interface FiveDayResultsProps {
   onClose: () => void;
   onReset: () => void;
 }
-
-// ── Static enriched data for charts ──────────────────────────────────────────
-
-const STATUS_EVOLUTION = [
-  { label: 'Día 0\n(Inicio)', day: 'Inicio', onTime: 80, delayed: 15, critical: 5 },
-  { label: 'Día 1', day: 'Día 1', onTime: 80, delayed: 15, critical: 5 },
-  { label: 'Día 2', day: 'Día 2', onTime: 68, delayed: 22, critical: 10 },
-  { label: 'Día 3', day: 'Día 3', onTime: 54, delayed: 29, critical: 17 },
-  { label: 'Día 4', day: 'Día 4', onTime: 71, delayed: 22, critical: 7 },
-  { label: 'Día 5', day: 'Día 5', onTime: 83, delayed: 13, critical: 4 },
-];
 
 const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
@@ -64,16 +53,19 @@ function buildDailyBagsFromSnapshots(snapshots: DaySnapshot[], startDate: Date) 
 
 function buildStatusEvolutionFromSnapshots(snapshots: DaySnapshot[]) {
   if (snapshots.length === 0) return [];
-  return [
-    { label: 'Día 0\n(Inicio)', day: 'Inicio', onTime: 0, delayed: 0, critical: 0 },
-    ...snapshots.map(s => ({
+  // Mismo denominador para retrasados y críticos: total de envíos del día
+  const points = snapshots.map(s => {
+    const total = Math.max(s.completed, s.delayed + s.critical, 1);
+    return {
       label: `Día ${s.day}`,
       day: `Día ${s.day}`,
       onTime: s.onTimePct,
-      delayed: Math.max(0, Math.min(100, Math.round((s.delayed / Math.max(s.completed + s.delayed, 1)) * 100))),
-      critical: Math.max(0, Math.min(100, Math.round((s.critical / Math.max(s.completed + s.delayed + s.critical, 1)) * 100))),
-    })),
-  ];
+      delayed: Math.max(0, Math.min(100, Math.round((s.delayed / total) * 100))),
+      critical: Math.max(0, Math.min(100, Math.round((s.critical / total) * 100))),
+    };
+  });
+  // El punto "Inicio" replica el primer día para no dibujar una subida falsa desde 0
+  return [{ ...points[0], label: 'Día 0\n(Inicio)', day: 'Inicio' }, ...points];
 }
 
 function buildIncidentTimelineFromEvents(events: SimEvent[], startDate: Date) {
@@ -91,7 +83,7 @@ function buildAirportImpactFromAirports(airports: Airport[]) {
     .map(a => {
       const peakVal = a.peakOccupancy !== undefined ? a.peakOccupancy : a.occupancy;
       const peakOccupancy = Math.round((peakVal / Math.max(a.capacity, 1)) * 100);
-      const daysOverloaded = a.daysOverloaded ?? (peakOccupancy >= 90 ? 2 : peakOccupancy >= 80 ? 1 : 0);
+      const daysOverloaded = a.daysOverloaded ?? 0;
       return {
         id: a.id,
         city: a.city,
@@ -103,48 +95,6 @@ function buildAirportImpactFromAirports(airports: Airport[]) {
     .sort((a, b) => b.peakOccupancy - a.peakOccupancy)
     .slice(0, 6);
 }
-
-function buildIncidentTimeline(startDate: Date) {
-  return [
-    { time: `${fmtDate(startDate, 1)} · 14:22`, type: 'warning', text: 'Almacén DXB alcanzó 94% de capacidad — protocolo de desvío activado' },
-    { time: `${fmtDate(startDate, 2)} · 08:45`, type: 'warning', text: 'Tormenta climática en Atlántico Norte — BA297 y LH456 en espera (+4h)' },
-    { time: `${fmtDate(startDate, 2)} · 17:10`, type: 'warning', text: 'EK501 BOM→DXB: Escasez de personal — 95 maletas retenidas en origen' },
-    { time: `${fmtDate(startDate, 3)} · 02:30`, type: 'critical', text: 'Suspensión parcial del hub DXB — vuelos entrantes limitados al 60% de capacidad' },
-    { time: `${fmtDate(startDate, 3)} · 09:15`, type: 'critical', text: 'CRÍTICO: 5 envíos redirigidos por hub Doha (DOH)' },
-    { time: `${fmtDate(startDate, 3)} · 22:00`, type: 'critical', text: 'Retraso en cascada: cadena SIN → HKG → NRT — 3 envíos en estado crítico' },
-    { time: `${fmtDate(startDate, 4)} · 06:00`, type: 'info', text: 'Motor de replanificación activado — evaluando 12 rutas alternativas' },
-    { time: `${fmtDate(startDate, 4)} · 08:30`, type: 'info', text: 'Replanificación completa — redirigidos vía hubs AMS, DOH y SIN' },
-    { time: `${fmtDate(startDate, 5)} · 11:00`, type: 'info', text: 'Hub DXB completamente operativo — todas las rutas suspendidas restauradas' },
-  ];
-}
-
-const AIRLINE_PERFORMANCE = [
-  { code: 'SQ', name: 'Singapore Airlines', onTime: 92, bags: 1925, incidents: 0 },
-  { code: 'CX', name: 'Cathay Pacific', onTime: 88, bags: 2595, incidents: 1 },
-  { code: 'QR', name: 'Qatar Airways', onTime: 86, bags: 1120, incidents: 1 },
-  { code: 'BA', name: 'British Airways', onTime: 82, bags: 3465, incidents: 2 },
-  { code: 'LH', name: 'Lufthansa', onTime: 78, bags: 2860, incidents: 3 },
-  { code: 'AF', name: 'Air France', onTime: 74, bags: 2450, incidents: 4 },
-  { code: 'AA', name: 'American Airlines', onTime: 70, bags: 3080, incidents: 5 },
-  { code: 'EK', name: 'Emirates', onTime: 63, bags: 4340, incidents: 9 },
-];
-
-const AIRPORT_IMPACT = [
-  { id: 'DXB', city: 'Dubái', peakOccupancy: 98, daysOverloaded: 3, color: '#FF4D4D' },
-  { id: 'LHR', city: 'Londres', peakOccupancy: 89, daysOverloaded: 2, color: '#FFC857' },
-  { id: 'AMS', city: 'Ámsterdam', peakOccupancy: 86, daysOverloaded: 1, color: '#FFC857' },
-  { id: 'PEK', city: 'Pekín', peakOccupancy: 83, daysOverloaded: 1, color: '#FFC857' },
-  { id: 'JFK', city: 'Nueva York', peakOccupancy: 79, daysOverloaded: 0, color: '#00FF9C' },
-  { id: 'CDG', city: 'París', peakOccupancy: 72, daysOverloaded: 0, color: '#00FF9C' },
-];
-
-const REPLANNING_ACTIONS = [
-  { route: 'LHR → DXB', alt: 'LHR → DOH → DXB', airline: 'EK', status: 'success' },
-  { route: 'BOM → DXB', alt: 'BOM → SIN → DXB', airline: 'EK', status: 'success' },
-  { route: 'AMS → DXB', alt: 'AMS → DOH', airline: 'EK', status: 'success' },
-  { route: 'FRA → DXB', alt: 'FRA → AMS → DOH', airline: 'LH', status: 'success' },
-  { route: 'JFK → LHR', alt: 'JFK → AMS → LHR', airline: 'BA', status: 'success' },
-];
 
 // ── Real-data derivations ─────────────────────────────────────────────────────
 
@@ -334,7 +284,8 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
   const punctualityDelta = finalOnTimeRate - firstOnTimeRate;
 
   // KPIs reales (preferimos métricas del backend; si faltan, derivamos de envíos/snapshots)
-  const realTotalBags = results?.totalBatches ?? om?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? (shipmentsBags > 0 ? shipmentsBags : totalBags);
+  // Nota: results.totalBatches son ENVÍOS (lotes), no maletas — no se usa aquí
+  const realTotalBags = om?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? (shipmentsBags > 0 ? shipmentsBags : totalBags);
   const deliveredBags = om?.deliveredBags ?? 0;
   const totalShipments = results?.routedBatches ?? (shipments.length > 0
     ? shipments.length
@@ -358,6 +309,11 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
     ? Math.round(airlinePerformance.reduce((acc, a) => acc + a.onTime, 0) / airlinePerformance.length)
     : 0;
   const slaCompliantAirlines = airlinePerformance.filter(a => a.onTime >= 70).length;
+
+  // Peor día real: el de menor puntualidad (solo si hay más de un día para comparar)
+  const worstDayNum = reportSnapshots.length > 1
+    ? reportSnapshots.reduce((worst, s) => (s.onTimePct < worst.onTimePct ? s : worst), reportSnapshots[0]).day
+    : null;
 
 
   const tabs = [
@@ -472,14 +428,14 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                 label="TASA DE PUNTUALIDAD FINAL"
                 value={finalOnTimeRate}
                 unit="%"
-                subtext="Día 5"
+                subtext={results?.slaCompliancePercent != null ? 'SLA del período' : 'Último día'}
                 color="#00FF9C"
                 icon={<CheckCircle className="w-3.5 h-3.5" />}
                 trend={punctualityDelta > 0 ? 'up' : punctualityDelta < 0 ? 'down' : 'neutral'}
                 trendValue={`${punctualityDelta >= 0 ? '+' : ''}${punctualityDelta}pp vs Día 1`}
               />
               <MetricCard
-                label="INCIDENTES CRÍTICOS"
+                label="INCIDENTES REGISTRADOS"
                 value={totalIncidents}
                 subtext={`${incidentSummary.critical} críticos · ${incidentSummary.warning} alertas`}
                 color="#FF4D4D"
@@ -497,13 +453,13 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                 trendValue={`${incidentSummary.recoveredBags.toLocaleString()} maletas recup.`}
               />
               <MetricCard
-                label="ENVÍOS COMPLETADOS"
+                label="ENVÍOS PLANIFICADOS"
                 value={totalShipments}
                 subtext={`${realTotalBags.toLocaleString()} maletas`}
                 color="#00FF9C"
                 icon={<Activity className="w-3.5 h-3.5" />}
-                trend="up"
-                trendValue={`${overloadedAirports} aerop. saturados`}
+                trend={(results?.unroutableBatches ?? 0) > 0 ? 'down' : 'up'}
+                trendValue={`${(results?.unroutableBatches ?? 0).toLocaleString()} sin ruta`}
               />
               <MetricCard
                 label="CARGA MÁXIMA DE AEROPUERTO"
@@ -555,8 +511,9 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                       <XAxis dataKey="day" tick={{ fill: '#4A6080', fontSize: 10 }} axisLine={false} tickLine={false} />
                       <YAxis domain={[0, 100]} tick={{ fill: '#4A6080', fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
                       <ReTooltip content={<CustomAreaTooltip />} cursor={{ stroke: '#1E3058', strokeWidth: 1 }} />
-                      <ReferenceLine x="Día 3" stroke="#FF4D4D" strokeDasharray="4 4" strokeOpacity={0.4} label={{ value: 'CRISIS', position: 'top', fill: '#FF4D4D', fontSize: 9 }} />
-                      <ReferenceLine x="Día 4" stroke="#A855F7" strokeDasharray="4 4" strokeOpacity={0.4} label={{ value: 'REPLAN', position: 'top', fill: '#A855F7', fontSize: 9 }} />
+                      {worstDayNum != null && (
+                        <ReferenceLine x={`Día ${worstDayNum}`} stroke="#FF4D4D" strokeDasharray="4 4" strokeOpacity={0.4} label={{ value: 'PEOR DÍA', position: 'top', fill: '#FF4D4D', fontSize: 9 }} />
+                      )}
                       <Area key="area-onTime" isAnimationActive={false} type="monotone" dataKey="onTime" name="A Tiempo" stroke="#00FF9C" strokeWidth={2} fill="url(#fdr-gradGreen)" dot={{ fill: '#00FF9C', r: 3, strokeWidth: 0 }} />
                       <Area key="area-delayed" isAnimationActive={false} type="monotone" dataKey="delayed" name="Retrasados" stroke="#FFC857" strokeWidth={2} fill="url(#fdr-gradAmber)" dot={{ fill: '#FFC857', r: 3, strokeWidth: 0 }} />
                       <Area key="area-critical" isAnimationActive={false} type="monotone" dataKey="critical" name="Críticos" stroke="#FF4D4D" strokeWidth={2} fill="url(#fdr-gradRed)" dot={{ fill: '#FF4D4D', r: 3, strokeWidth: 0 }} />
@@ -570,14 +527,12 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                       <span className="text-[10px] text-[#4A6080]">{l.label}</span>
                     </div>
                   ))}
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-px border-t border-dashed border-[#FF4D4D]" />
-                    <span className="text-[10px] text-[#4A6080]">Pico de crisis</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-px border-t border-dashed border-[#A855F7]" />
-                    <span className="text-[10px] text-[#4A6080]">Replan activada</span>
-                  </div>
+                  {worstDayNum != null && (
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-px border-t border-dashed border-[#FF4D4D]" />
+                      <span className="text-[10px] text-[#4A6080]">Peor día (menor puntualidad)</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -645,8 +600,8 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
             <div className="grid grid-cols-5 gap-3">
               {reportSnapshots.map((snap) => {
                 const severityColor = snap.severity === 'critical' ? '#FF4D4D' : snap.severity === 'warning' ? '#FFC857' : '#00FF9C';
-                const severityBg = snap.severity === 'critical' ? '#FF4D4D' : snap.severity === 'warning' ? '#FFC857' : '#00FF9C';
-                const isWorstDay = snap.day === 3;
+                const severityBg = severityColor;
+                const isWorstDay = worstDayNum != null && snap.day === worstDayNum;
                 return (
                   <div
                     key={snap.day}
