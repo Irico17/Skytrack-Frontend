@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X, Package, Plane, ArrowRight, Clock, MapPin,
   CheckCircle, AlertTriangle, XCircle, Zap, Route,
-  ChevronRight, Calendar, Luggage, Shield,
+  ChevronRight, Calendar, Shield, User,
 } from 'lucide-react';
-import { Shipment, Flight, Airport, getStatusColor, getOccupancyPercent } from '../data/mockData';
+import { Shipment, Flight, Airport, getStatusColor } from '../data/mockData';
+import { getBagTraceability } from '../services/api';
+import type { BackendBagItem } from '../types/backend';
 
 interface ShipmentDetailPanelProps {
   shipment: Shipment;
@@ -12,6 +14,7 @@ interface ShipmentDetailPanelProps {
   airports: Airport[];
   onClose: () => void;
   simulationTime: Date;
+  simulationId?: string | null;
 }
 
 const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -23,6 +26,33 @@ function fmtDate(date: Date): string {
 function fmtTime(date: Date): string {
   return date.toLocaleTimeString('es-ES', { hour12: false, hour: '2-digit', minute: '2-digit' });
 }
+
+function fmtIso(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]} · ${fmtTime(d)}`;
+}
+
+function bagEventLabel(type: string, airportId: string | null, flightId: string | null): string {
+  switch (type) {
+    case 'REGISTERED': return `Registrado en ${airportId ?? 'origen'}`;
+    case 'WAREHOUSE_IN': return `Ingreso a almacén ${airportId ?? ''}`.trim();
+    case 'LOADED': return `Cargado en UT ${flightId ?? ''} (${airportId ?? '—'})`;
+    case 'ARRIVED': return `Llegada a ${airportId ?? '—'}${flightId ? ` · UT ${flightId}` : ''}`;
+    case 'DELIVERED': return `Entregado en destino ${airportId ?? ''}`.trim();
+    default: return `${type} ${airportId ?? flightId ?? ''}`.trim();
+  }
+}
+
+const BAG_STATE_LABELS: Record<string, string> = {
+  NOT_REGISTERED: 'No registrado',
+  PENDING_ROUTE: 'Pendiente de ruta',
+  AT_ORIGIN: 'En almacén origen',
+  AT_TRANSFER: 'En transferencia',
+  IN_FLIGHT: 'En vuelo',
+  DELIVERED: 'Entregado',
+};
 
 function StatusBadge({ status }: { status: string }) {
   const configs: Record<string, { bg: string; text: string; icon: React.ReactNode; label: string }> = {
@@ -68,12 +98,47 @@ function TimelineStep({
   );
 }
 
-export function ShipmentDetailPanel({ shipment, flights, airports, onClose, simulationTime }: ShipmentDetailPanelProps) {
+export function ShipmentDetailPanel({ shipment, flights, airports, onClose, simulationTime, simulationId }: ShipmentDetailPanelProps) {
   const origin = airports.find(a => a.id === shipment.origin);
   const dest = airports.find(a => a.id === shipment.destination);
   const currentFlight = flights.find(f => f.id === shipment.currentFlightId);
   const color = getStatusColor(shipment.status);
   const progressPct = Math.round(shipment.progress * 100);
+
+  // Trazabilidad real del backend (una maleta representativa del lote → misma ruta)
+  const [bag, setBag] = useState<BackendBagItem | null>(null);
+  const [bagLoading, setBagLoading] = useState(false);
+
+  useEffect(() => {
+    if (!simulationId) { setBag(null); return; }
+    let cancelled = false;
+    setBagLoading(true);
+    getBagTraceability(simulationId, { batchId: shipment.id, size: 1 })
+      .then(data => { if (!cancelled) setBag(data.bags[0] ?? null); })
+      .catch(() => { if (!cancelled) setBag(null); })
+      .finally(() => { if (!cancelled) setBagLoading(false); });
+    return () => { cancelled = true; };
+  }, [simulationId, shipment.id]);
+
+  // Tramos reales de la ruta: pares LOADED → ARRIVED por UT
+  const realLegs: { flightId: string; from: string; to: string; dep: string; arr: string; completed: boolean }[] = [];
+  if (bag) {
+    const evts = bag.events;
+    for (let i = 0; i < evts.length; i++) {
+      const e = evts[i];
+      if (e.type !== 'LOADED' || !e.flightId) continue;
+      const arr = evts.slice(i + 1).find(x => x.type === 'ARRIVED' && x.flightId === e.flightId);
+      realLegs.push({
+        flightId: e.flightId,
+        from: e.airportId ?? '—',
+        to: arr?.airportId ?? '—',
+        dep: e.timestamp,
+        arr: arr?.timestamp ?? '',
+        completed: arr?.completed ?? false,
+      });
+    }
+  }
+  const activeEventIdx = bag ? bag.events.findIndex(e => !e.completed) : -1;
 
   // Build a computed route with transfers
   const routeStops: { airport: Airport; action: string }[] = [];
@@ -220,26 +285,88 @@ export function ShipmentDetailPanel({ shipment, flights, airports, onClose, simu
             <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>DETALLES DEL ENVÍO</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-[#0D1E38] rounded-lg p-3 border border-[#1E3058]">
-              <div className="flex items-center gap-1.5 mb-1">
-                <Luggage className="w-3 h-3 text-[#4DA6FF]" />
-                <span className="text-[9px] text-[#4A6080]">EQUIPAJE</span>
-              </div>
-              <div className="text-lg text-[#4DA6FF]" style={{ fontWeight: 700 }}>{shipment.luggageCount}</div>
-              <div className="text-[10px] text-[#4A6080]">bolsas</div>
-            </div>
-
+          <div className="grid grid-cols-1 gap-3">
             <div className="bg-[#0D1E38] rounded-lg p-3 border border-[#1E3058]">
               <div className="flex items-center gap-1.5 mb-1">
                 <Calendar className="w-3 h-3 text-[#00FF9C]" />
                 <span className="text-[9px] text-[#4A6080]">ENTREGA ESTIMADA</span>
               </div>
-              <div className="text-sm text-[#00FF9C]" style={{ fontWeight: 600 }}>{fmtTime(estDeliveryDate)}</div>
-              <div className="text-[10px] text-[#4A6080]">{fmtDate(estDeliveryDate)}</div>
+              {bag?.finalArrivalTime ? (
+                <div className="text-sm text-[#00FF9C]" style={{ fontWeight: 600 }}>{fmtIso(bag.finalArrivalTime)}</div>
+              ) : (
+                <>
+                  <div className="text-sm text-[#00FF9C]" style={{ fontWeight: 600 }}>{fmtTime(estDeliveryDate)}</div>
+                  <div className="text-[10px] text-[#4A6080]">{fmtDate(estDeliveryDate)}</div>
+                </>
+              )}
             </div>
           </div>
+
+          {/* Datos reales de trazabilidad */}
+          {bag && (
+            <div className="flex flex-col gap-1.5 mt-3">
+              {[
+                { label: 'Cliente', value: bag.clientId, icon: <User className="w-3 h-3 text-[#4DA6FF]" /> },
+                { label: 'Estado actual', value: BAG_STATE_LABELS[bag.state] ?? bag.state, icon: <Package className="w-3 h-3 text-[#4DA6FF]" /> },
+                {
+                  label: 'Ubicación',
+                  value: bag.currentFlightId ? `UT ${bag.currentFlightId}` : bag.currentAirportId ? `Almacén ${bag.currentAirportId}` : '—',
+                  icon: <MapPin className="w-3 h-3 text-[#4DA6FF]" />,
+                },
+                { label: 'Registro', value: fmtIso(bag.ingressTime), icon: <Clock className="w-3 h-3 text-[#4DA6FF]" /> },
+                { label: 'Límite SLA', value: fmtIso(bag.deadline), icon: <Shield className="w-3 h-3 text-[#FFC857]" /> },
+                {
+                  label: 'SLA',
+                  value: bag.meetsSla ? 'Cumple' : 'No cumple',
+                  icon: bag.meetsSla
+                    ? <CheckCircle className="w-3 h-3 text-[#00FF9C]" />
+                    : <AlertTriangle className="w-3 h-3 text-[#FF4D4D]" />,
+                },
+              ].map(row => (
+                <div key={row.label} className="flex items-center justify-between py-1 border-b border-[#1E3058]/40">
+                  <div className="flex items-center gap-1.5">
+                    {row.icon}
+                    <span className="text-[10px] text-[#4A6080]">{row.label}</span>
+                  </div>
+                  <span className="text-[11px] text-[#C8D8F0]" style={{ fontWeight: 600 }}>{row.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+
+        {/* Tramos reales de la ruta */}
+        {realLegs.length > 0 && (
+          <div className="p-4 border-b border-[#1E3058]">
+            <div className="flex items-center gap-2 mb-3">
+              <Plane className="w-3.5 h-3.5 text-[#4DA6FF]" />
+              <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
+                TRAMOS DE LA RUTA ({realLegs.length})
+              </span>
+            </div>
+            <div className="flex flex-col gap-2">
+              {realLegs.map((leg, i) => (
+                <div key={`${leg.flightId}-${i}`} className="bg-[#0D1E38] rounded-lg p-2.5 border border-[#1E3058]">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] text-white font-mono" style={{ fontWeight: 600 }}>{leg.flightId}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded ${leg.completed ? 'bg-[#00FF9C]/15 text-[#00FF9C]' : 'bg-[#4DA6FF]/15 text-[#4DA6FF]'}`}>
+                      {leg.completed ? 'Completado' : 'Pendiente / en curso'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-[#A8C0E0]">
+                    <span style={{ fontWeight: 600 }}>{leg.from}</span>
+                    <ArrowRight className="w-3 h-3 text-[#4A6080]" />
+                    <span style={{ fontWeight: 600 }}>{leg.to}</span>
+                  </div>
+                  <div className="flex items-center justify-between mt-1 text-[10px] text-[#4A6080]">
+                    <span>Sale: {fmtIso(leg.dep)}</span>
+                    <span>Llega: {fmtIso(leg.arr)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Timeline */}
         <div className="p-4 border-b border-[#1E3058]">
@@ -248,6 +375,27 @@ export function ShipmentDetailPanel({ shipment, flights, airports, onClose, simu
             <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>LÍNEA DE TIEMPO</span>
           </div>
 
+          {bag ? (
+            <div className="pl-1">
+              {bag.events.map((evt, i) => (
+                <TimelineStep
+                  key={`${evt.type}-${i}`}
+                  label={bagEventLabel(evt.type, evt.airportId, evt.flightId)}
+                  time={evt.completed || i === activeEventIdx ? fmtIso(evt.timestamp) : '—'}
+                  status={evt.completed ? 'complete' : i === activeEventIdx ? 'active' : 'pending'}
+                  icon={
+                    evt.type === 'LOADED' ? <Plane className="w-2.5 h-2.5" />
+                      : evt.type === 'ARRIVED' ? <MapPin className="w-2.5 h-2.5" />
+                      : evt.type === 'DELIVERED' ? <CheckCircle className="w-2.5 h-2.5" />
+                      : <Clock className="w-2.5 h-2.5" />
+                  }
+                  last={i === bag.events.length - 1}
+                />
+              ))}
+            </div>
+          ) : bagLoading ? (
+            <div className="text-[11px] text-[#4A6080] pl-1">Cargando trazabilidad…</div>
+          ) : (
           <div className="pl-1">
             <TimelineStep
               label="Envío registrado en origen"
@@ -283,10 +431,11 @@ export function ShipmentDetailPanel({ shipment, flights, airports, onClose, simu
               last
             />
           </div>
+          )}
         </div>
 
-        {/* Route Stops */}
-        {routeStops.length > 1 && (
+        {/* Route Stops — heurístico, solo cuando no hay trazabilidad real */}
+        {!bag && routeStops.length > 1 && (
           <div className="p-4 border-b border-[#1E3058]">
             <div className="flex items-center gap-2 mb-3">
               <MapPin className="w-3.5 h-3.5 text-[#4DA6FF]" />

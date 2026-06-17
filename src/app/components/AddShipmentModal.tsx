@@ -1,44 +1,53 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { X, Package, PlusCircle, AlertCircle } from 'lucide-react';
-import { AIRLINES, INITIAL_AIRPORTS, Shipment } from '../data/mockData';
+import { Airport, Shipment } from '../data/mockData';
 
 interface AddShipmentModalProps {
   onClose: () => void;
-  onAdd: (shipment: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => void;
+  onAdd: (shipment: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => Promise<void>;
+  airports: Airport[];
 }
 
-export function AddShipmentModal({ onClose, onAdd }: AddShipmentModalProps) {
+export function AddShipmentModal({ onClose, onAdd, airports }: AddShipmentModalProps) {
   const [form, setForm] = useState({
-    airlineId: '',
-    airline: '',
     origin: '',
     destination: '',
     luggageCount: '',
     status: 'on-time' as Shipment['status'],
   });
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const sortedAirports = useMemo(
+    () => [...airports].sort((a, b) => `${a.city} (${a.id})`.localeCompare(`${b.city} (${b.id})`, 'es')),
+    [airports]
+  );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (!form.airlineId) return setError('Selecciona una aerolínea');
     if (!form.origin) return setError('Selecciona un aeropuerto de origen');
     if (!form.destination) return setError('Selecciona un aeropuerto de destino');
     if (form.origin === form.destination) return setError('El origen y destino deben ser diferentes');
-    if (!form.luggageCount || parseInt(form.luggageCount) <= 0) return setError('Ingresa una cantidad válida de bolsas');
-    if (parseInt(form.luggageCount) > 400) return setError('Máximo 400 bolsas por envío');
+    if (!form.luggageCount || parseInt(form.luggageCount) <= 0) return setError('Ingresa una cantidad válida de maletas');
+    if (parseInt(form.luggageCount) > 400) return setError('Máximo 400 maletas por envío');
 
-    const airline = AIRLINES.find(a => a.id === form.airlineId);
-    onAdd({
-      airlineId: form.airlineId,
-      airline: airline?.name || form.airlineId,
-      origin: form.origin,
-      destination: form.destination,
-      luggageCount: parseInt(form.luggageCount),
-      status: 'on-time',
-    });
-    onClose();
+    setSubmitting(true);
+    try {
+      await onAdd({
+        airlineId: 'UI',
+        airline: 'Operación manual',
+        origin: form.origin,
+        destination: form.destination,
+        luggageCount: parseInt(form.luggageCount),
+        status: 'on-time',
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const setField = (key: keyof typeof form, value: string) => {
@@ -63,42 +72,17 @@ export function AddShipmentModal({ onClose, onAdd }: AddShipmentModalProps) {
               <Package className="w-4 h-4 text-[#4DA6FF]" />
             </div>
             <div>
-              <div className="text-white text-sm" style={{ fontWeight: 700 }}>Registrar Nuevo Envío</div>
-              <div className="text-[#4A6080] text-[11px]">Agrega un nuevo envío de equipaje al sistema</div>
+              <div className="text-white text-sm" style={{ fontWeight: 700 }}>Registrar Maletas</div>
+              <div className="text-[#4A6080] text-[11px]">Operación día a día</div>
             </div>
           </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg bg-[#1A2E4A] flex items-center justify-center hover:bg-[#1E3058] transition-colors">
+          <button onClick={onClose} disabled={submitting} className="w-7 h-7 rounded-lg bg-[#1A2E4A] flex items-center justify-center hover:bg-[#1E3058] transition-colors disabled:opacity-50">
             <X className="w-3.5 h-3.5 text-[#A8C0E0]" />
           </button>
         </div>
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4">
-          {/* Airline */}
-          <div>
-            <label className="block text-[11px] text-[#4A6080] mb-1.5" style={{ letterSpacing: '0.1em' }}>AEROLÍNEA (CLIENTE)</label>
-            <div className="relative">
-              <select
-                value={form.airlineId}
-                onChange={e => {
-                  const airline = AIRLINES.find(a => a.id === e.target.value);
-                  setField('airlineId', e.target.value);
-                  setField('airline', airline?.name || '');
-                }}
-                className={SelectStyle}
-                style={{ backgroundImage: 'none' }}
-              >
-                <option value="" className="bg-[#0A1628]">Seleccionar aerolínea...</option>
-                {AIRLINES.map(a => (
-                  <option key={a.id} value={a.id} className="bg-[#0A1628]">
-                    {a.name} ({a.code})
-                  </option>
-                ))}
-              </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#4A6080] pointer-events-none">▾</div>
-            </div>
-          </div>
-
           {/* Route */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -111,7 +95,7 @@ export function AddShipmentModal({ onClose, onAdd }: AddShipmentModalProps) {
                   style={{ backgroundImage: 'none' }}
                 >
                   <option value="" className="bg-[#0A1628]">Seleccionar origen...</option>
-                  {INITIAL_AIRPORTS.map(a => (
+                  {sortedAirports.map(a => (
                     <option key={a.id} value={a.id} className="bg-[#0A1628]">
                       {a.id} — {a.city}
                     </option>
@@ -131,7 +115,7 @@ export function AddShipmentModal({ onClose, onAdd }: AddShipmentModalProps) {
                   style={{ backgroundImage: 'none' }}
                 >
                   <option value="" className="bg-[#0A1628]">Seleccionar destino...</option>
-                  {INITIAL_AIRPORTS.map(a => (
+                  {sortedAirports.map(a => (
                     <option key={a.id} value={a.id} className="bg-[#0A1628]">
                       {a.id} — {a.city}
                     </option>
@@ -145,8 +129,8 @@ export function AddShipmentModal({ onClose, onAdd }: AddShipmentModalProps) {
           {/* Luggage count */}
           <div>
             <label className="block text-[11px] text-[#4A6080] mb-1.5" style={{ letterSpacing: '0.1em' }}>
-              NÚMERO DE UNIDADES DE EQUIPAJE
-              <span className="text-[#2A4060] ml-1">(máx. 400 por vuelo)</span>
+              CANTIDAD DE MALETAS
+              <span className="text-[#2A4060] ml-1">(máx. 400)</span>
             </label>
             <input
               type="number"
@@ -175,8 +159,7 @@ export function AddShipmentModal({ onClose, onAdd }: AddShipmentModalProps) {
           <div className="flex items-start gap-3 p-3 rounded-xl bg-[#4DA6FF]/8 border border-[#4DA6FF]/20">
             <AlertCircle className="w-4 h-4 text-[#4DA6FF] flex-shrink-0 mt-0.5" />
             <div className="text-[11px] text-[#6080A0] leading-relaxed">
-              El optimizador de rutas asignará automáticamente la mejor ruta de vuelo disponible.
-              El envío aparecerá en el mapa de inmediato y podrá rastrearse en tiempo real.
+              El lote quedará pendiente hasta el siguiente ciclo de planificación del backend.
             </div>
           </div>
 
@@ -193,6 +176,7 @@ export function AddShipmentModal({ onClose, onAdd }: AddShipmentModalProps) {
             <button
               type="button"
               onClick={onClose}
+              disabled={submitting}
               className="flex-1 py-2.5 rounded-xl border border-[#1E3058] text-[#A8C0E0] text-sm hover:border-[#2A3E60] transition-colors"
               style={{ fontWeight: 500 }}
             >
@@ -200,11 +184,12 @@ export function AddShipmentModal({ onClose, onAdd }: AddShipmentModalProps) {
             </button>
             <button
               type="submit"
-              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-sm hover:bg-[#4DA6FF]/25 transition-colors"
+              disabled={submitting || airports.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-sm hover:bg-[#4DA6FF]/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ fontWeight: 600 }}
             >
               <PlusCircle className="w-4 h-4" />
-              Registrar Envío
+              {submitting ? 'Registrando...' : 'Registrar'}
             </button>
           </div>
         </form>

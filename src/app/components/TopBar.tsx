@@ -14,14 +14,13 @@ interface TopBarProps {
   onPause: () => void;
   onReset: () => void;
   onModeChange: (mode: SimulationMode) => void;
-  onReplan: () => void;
-  hasReplanned: boolean;
   totalShipments: number;
   criticalCount: number;
+  startDisabled?: boolean;
 }
 
 const MODE_LABELS: Record<SimulationMode, string> = {
-  realtime: 'Operaciones en Tiempo Real',
+  realtime: 'Operación Día a Día',
   '5day': 'Simulación 5 Días',
   collapse: 'Escenario de Colapso',
 };
@@ -34,7 +33,8 @@ const MODE_ICONS: Record<SimulationMode, React.ReactNode> = {
 
 export function TopBar({
   isRunning, mode, simulationTime, events, onStart, onPause, onReset,
-  onModeChange, onReplan, hasReplanned, totalShipments, criticalCount
+  onModeChange, totalShipments, criticalCount,
+  startDisabled = false,
 }: TopBarProps) {
   const [showModeDropdown, setShowModeDropdown] = React.useState(false);
   const [showAlerts, setShowAlerts] = React.useState(false);
@@ -94,7 +94,8 @@ export function TopBar({
         {!isRunning ? (
           <button
             onClick={onStart}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors"
+            disabled={startDisabled}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Play className="w-3 h-3 fill-current" />
             <span>Iniciar</span>
@@ -108,19 +109,6 @@ export function TopBar({
             <span>Pausar</span>
           </button>
         )}
-
-        <button
-          onClick={onReplan}
-          disabled={hasReplanned}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors
-            ${hasReplanned
-              ? 'bg-[#A855F7]/10 border border-[#A855F7]/30 text-[#A855F7]/60 cursor-not-allowed'
-              : 'bg-[#A855F7]/15 border border-[#A855F7]/40 text-[#A855F7] hover:bg-[#A855F7]/25'
-            }`}
-        >
-          <Zap className="w-3 h-3" />
-          <span>{hasReplanned ? 'Replanificado' : 'Replanificar Rutas'}</span>
-        </button>
 
         <button
           onClick={onReset}
@@ -140,11 +128,6 @@ export function TopBar({
           <span className={`text-xs ${isRunning ? 'text-[#00FF9C]' : 'text-[#4A5568]'}`}>
             {isRunning ? 'EN VIVO' : 'PAUSADO'}
           </span>
-        </div>
-
-        <div className="flex items-center gap-1.5 text-xs text-[#A8C0E0]">
-          <Clock className="w-3 h-3" />
-          <span className="font-mono">{formatDate(simulationTime)} {formatTime(simulationTime)}</span>
         </div>
 
         <div className="flex items-center gap-1.5 text-xs">

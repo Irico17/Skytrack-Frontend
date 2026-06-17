@@ -20,10 +20,19 @@ export class SimulationWebSocket {
 
   private readonly url: string;
 
-  constructor() {
-    // En desarrollo Vite redirige /ws → ws://localhost:8080
+  constructor(simulationId?: string | null) {
+    const configuredUrl = import.meta.env.VITE_WS_URL;
+    const query = simulationId ? `simulationId=${encodeURIComponent(simulationId)}` : '';
+    if (configuredUrl) {
+      this.url = query
+        ? `${configuredUrl}${configuredUrl.includes('?') ? '&' : '?'}${query}`
+        : configuredUrl;
+      return;
+    }
+
+    // En desarrollo Vite redirige /ws -> ws://localhost:8080
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.url = `${protocol}//${window.location.host}/ws/simulation`;
+    this.url = `${protocol}//${window.location.host}/ws/simulation${query ? `?${query}` : ''}`;
   }
 
   /** Conecta al WebSocket del backend */
