@@ -85,8 +85,8 @@ export function mapDaySnapshots(results: BackendSimulationResults): DaySnapshot[
     completed: s.routesCompleted,
     totalBags: s.totalBags ?? 0,
     newEvents: 0,
-    avgOccupancy: 0,
-    replanned: 0,
+    avgOccupancy: s.avgOccupancy ?? 0,
+    replanned: s.replanned ?? 0,
     keyEvent: `SLA: ${results.slaCompliancePercent.toFixed(1)}% — Fitness: ${results.fitness.toFixed(2)}`,
     severity: s.collapseLevel === 'CRITICAL' ? 'critical'
             : s.collapseLevel === 'WARNING'  ? 'warning'
@@ -118,12 +118,12 @@ export function buildCycleDaySnapshot(
     date: `${String(d.getDate()).padStart(2,'0')} ${MONTHS_ES[d.getMonth()]}`,
     onTimePct,
     delayed:   update.batchSummary.delayed,
-    critical:  0,
+    critical:  update.batchSummary.unrouted,
     completed: update.totalRoutes,
     totalBags: update.totalBags,
     newEvents: 0,
     avgOccupancy: Math.round(update.semaphores.storageOccupancy * 100),
-    replanned: 0,
+    replanned: update.batchSummary.delayed,
     keyEvent:  `Ciclo ${update.cycle} — Fitness: ${update.fitness.toFixed(2)}`,
     severity:  update.semaphores.storage === 'RED' ? 'critical'
              : update.semaphores.storage === 'AMBER' ? 'warning'
@@ -218,6 +218,8 @@ export function mapSolutionToShipments(solution: BackendSolution, simulatedTime:
       status: route.meetsSLA ? 'on-time' : 'delayed',
       progress,
       estimatedDelivery: formatDelivery(finalArrival),
+      finalArrivalTime: finalArrival,
+      deliveredAt: progress >= 1 ? finalArrival : null,
       isReplanned: false,
     };
   });

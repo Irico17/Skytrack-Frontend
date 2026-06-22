@@ -400,27 +400,20 @@ export function LeftSidebar({
           ))}
           <div className="mt-2 pt-2 border-t border-[#1E3058] flex flex-col gap-1.5">
             <div className="text-[9px] text-[#4A6080]" style={{ letterSpacing: '0.1em' }}>UNIDADES DE TRANSPORTE (LÍNEAS)</div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-[#4DA6FF] flex-shrink-0" />
-              <span className="text-[11px] text-[#7090B0]">En ruta · cumple SLA</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-[#FFC857] flex-shrink-0" />
-              <span className="text-[11px] text-[#7090B0]">En ruta · sin SLA</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-[#4A5E72] flex-shrink-0" />
-              <span className="text-[11px] text-[#7090B0]">Sin carga asignada</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-0.5 flex-shrink-0">
-                <div className="w-1 h-0.5 bg-[#4DA6FF]" />
-                <div className="w-1 h-0.5 bg-transparent" />
-                <div className="w-1 h-0.5 bg-[#4DA6FF]" />
-                <div className="w-1 h-0.5 bg-transparent" />
-                <div className="w-1 h-0.5 bg-[#4DA6FF]" />
+            {[
+              { color: '#4DA6FF', label: 'Con carga (<70%)' },
+              { color: '#FFC857', label: 'Advertencia carga (≥70%)' },
+              { color: '#FF4D4D', label: 'Crítico carga (≥90%)' },
+              { color: '#3A4A5E', label: 'Vacía (0 maletas)' },
+            ].map(item => (
+              <div key={item.label} className="flex items-center gap-2">
+                <div className="w-5 h-0.5 flex-shrink-0" style={{ backgroundColor: item.color }} />
+                <span className="text-[11px] text-[#7090B0]">{item.label}</span>
               </div>
-              <span className="text-[11px] text-[#7090B0]">UT seleccionada</span>
+            ))}
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#FFC857]/40 text-[#FFC857]">SLA</span>
+              <span className="text-[11px] text-[#7090B0]">Badge en tooltip si riesgo SLA</span>
             </div>
           </div>
         </div>

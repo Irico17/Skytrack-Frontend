@@ -5,6 +5,7 @@ import {
   Luggage, Search
 } from 'lucide-react';
 import { Airport, Flight, Shipment, getStatusColor, getOccupancyPercent } from '../data/mockData';
+import { isDeliveredInSimWindow } from '../utils/shipmentFilters';
 import type { BackendActiveFlight, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
 
 interface SelectedEntity {
@@ -22,6 +23,7 @@ interface BottomPanelProps {
   onSelectFlight?: (id: string) => void;
   onSelectAirport?: (id: string) => void;
   isRunning: boolean;
+  simulationTime: Date;
   mode?: string;
   activeFlights?: BackendActiveFlight[];
   flightPlanFlights?: BackendFlightPlanFlight[];
@@ -418,7 +420,7 @@ function ShipmentListRow({ s, onClick }: { s: Shipment; onClick: () => void }) {
 
 export function BottomPanel({
   selectedEntity, airports, flights, shipments, onClearSelection, onSelectShipment, onSelectFlight,
-  mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
+  simulationTime, mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
 }: BottomPanelProps) {
   const [activeTab, setActiveTab] = useState<'detail' | 'shipments' | 'active'>('detail');
   const [shipmentSearch, setShipmentSearch] = useState('');
@@ -456,10 +458,10 @@ export function BottomPanel({
           return s.progress < 1 && !!s.currentFlightId && s.currentFlightId !== 'PENDING'
             && inFlightIds.has(s.currentFlightId.replace(/-D\d+$/, ''));
         }
-        if (shipmentStatusFilter === 'delivered') return s.progress >= 1;
+        if (shipmentStatusFilter === 'delivered') return isDeliveredInSimWindow(s, simulationTime);
         return s.status === shipmentStatusFilter;
       });
-  }, [shipments, shipmentSearch, shipmentStatusFilter, activeFlights]);
+  }, [shipments, shipmentSearch, shipmentStatusFilter, activeFlights, simulationTime]);
 
   const visibleActiveFlights = useMemo(() => {
     const query = shipmentSearch.trim().toLowerCase();

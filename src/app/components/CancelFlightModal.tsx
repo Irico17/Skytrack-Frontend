@@ -1,13 +1,14 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Ban, Plane, X } from 'lucide-react';
 import type { BackendActiveFlight, BackendFlightPlanFlight } from '../types/backend';
+import { computeCancellationTargetDay } from '../utils/cancellationDay';
 
 interface CancelFlightModalProps {
   onClose: () => void;
   onCancel: (flightId: string, day: string) => Promise<void>;
   flightPlanFlights: BackendFlightPlanFlight[];
   activeFlights: BackendActiveFlight[];
-  defaultDay: string;
+  simulationTime: Date;
 }
 
 function stripProjectedDaySuffix(flightId: string): string {
@@ -27,10 +28,10 @@ export function CancelFlightModal({
   onCancel,
   flightPlanFlights,
   activeFlights,
-  defaultDay,
+  simulationTime,
 }: CancelFlightModalProps) {
   const [flightId, setFlightId] = useState('');
-  const [day, setDay] = useState(defaultDay);
+  const [day, setDay] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -42,6 +43,13 @@ export function CancelFlightModal({
       new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime()
     );
   }, [flightPlanFlights, activeFlights]);
+
+  useEffect(() => {
+    if (!flightId) return;
+    const flight = flights.find(f => f.flightId === flightId);
+    if (!flight) return;
+    setDay(computeCancellationTargetDay(simulationTime, flight.departureTime));
+  }, [flightId, simulationTime, flights]);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();

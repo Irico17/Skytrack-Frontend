@@ -6,8 +6,16 @@ import {
   getStatusColor, getRouteColor, getOccupancyPercent
 } from '../data/mockData';
 import type { BackendActiveFlight, BackendFlightPlanFlight } from '../types/backend';
+import { getContinentFill, getLoadPercent, getUtLoadColor } from '../utils/loadColors';
 
 const GEO_JSON_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+/**
+ * TASK-032 — Optimizaciones de render:
+ * - Canvas + rAF con throttle (~33ms pared / ~15ms reloj sim).
+ * - Culling por viewBox antes de pintar; batch de rutas por color.
+ * - denseMode cuando hay muchos dots en viewport (LOD visual, sin ocultar vuelos).
+ * - React.memo en export.
+ */
 
 export interface SelectedEntity {
   type: 'airport' | 'flight' | 'shipment';
@@ -54,12 +62,6 @@ interface FlightHitTarget {
   dot: FlightDot;
 }
 
-interface FlightFilterState {
-  showSlaOk: boolean;
-  showSlaFail: boolean;
-  showEmpty: boolean;
-}
-
 type ActiveFlightBags = Map<string, { bagsCount: number; meetsSla: boolean }>;
 
 interface PlannedFlightGeometry {
@@ -69,6 +71,7 @@ interface PlannedFlightGeometry {
   dep: number;
   arr: number;
   duration: number;
+  capacity: number;
   ox: number;
   oy: number;
   dx: number;
@@ -95,6 +98,11 @@ interface WorldMapProps {
   activeFlights?: BackendActiveFlight[];
   /** TODOS los vuelos del plan de vuelos (independientes del planificador) */
   flightPlanFlights?: BackendFlightPlanFlight[];
+  /** Filtros sincronizados con el panel derecho (TASK-021). */
+  utFilter?: string;
+  warehouseFilter?: string;
+  /** Permite que la barra de filtro del mapa actualice el filtro UT compartido (MAP-REG-05). */
+  onUtFilterChange?: (value: string) => void;
   isExpanded?: boolean;
   onToggleExpanded?: () => void;
 }
@@ -104,8 +112,11 @@ const BASE_W = 1000;
 const BASE_H = 520;
 
 function project(lng: number, lat: number): [number, number] {
+  // Clamp de latitud ±85° (MAP-REG-01): evita que polígonos árticos/antárticos
+  // se estiren hasta el borde superior/inferior y generen una franja.
+  const clampedLat = Math.max(-85, Math.min(85, lat));
   const x = ((lng + 180) / 360) * BASE_W;
-  const y = ((90 - lat) / 180) * BASE_H;
+  const y = ((90 - clampedLat) / 180) * BASE_H;
   return [x, y];
 }
 
@@ -131,12 +142,34 @@ function upperBoundDeparture(flights: PlannedFlightGeometry[], time: number): nu
   return lo;
 }
 
+function passesUtMapFilter(
+  hasBags: boolean,
+  meetsSla: boolean,
+  utFilter: string,
+  isSelected: boolean,
+): boolean {
+  if (isSelected) return true;
+  switch (utFilter) {
+    case 'inflight': return true;
+    case 'loaded': return hasBags;
+    case 'empty': return !hasBags;
+    case 'sla': return hasBags && !meetsSla;
+    default: return true;
+  }
+}
+
+function passesWarehouseMapFilter(airport: Airport, warehouseFilter: string): boolean {
+  if (warehouseFilter === 'all') return true;
+  if (warehouseFilter === 'empty') return airport.occupancy === 0;
+  return airport.status === warehouseFilter;
+}
+
 function buildActiveFlightDots(
   now: number,
   flightPlanGeometry: PlannedFlightGeometry[],
   maxFlightDuration: number,
   activeFlightBagsById: ActiveFlightBags,
-  flightFilter: FlightFilterState,
+  utFilter: string,
   selectedFlightId?: string | null,
 ): FlightDot[] {
   if (flightPlanGeometry.length === 0) return [];
@@ -166,11 +199,9 @@ function buildActiveFlightDots(
     const meetsSla = hasBags ? bags!.meetsSla : false;
     const isSelectedFlight = selectedBaseFlightId != null
       && (f.flightId === selectedFlightId || f.flightId.replace(/-D\d+$/, '') === selectedBaseFlightId);
-    if (hasBags && meetsSla && !flightFilter.showSlaOk) continue;
-    if (hasBags && !meetsSla && !flightFilter.showSlaFail) continue;
-    if (!hasBags && !flightFilter.showEmpty && !isSelectedFlight) continue;
+    if (!passesUtMapFilter(hasBags, meetsSla, utFilter, isSelectedFlight)) continue;
 
-    const color = hasBags ? (meetsSla ? '#4DA6FF' : '#FFC857') : '#3A4A5E';
+    const color = getUtLoadColor(hasBags ? bags!.bagsCount : 0, f.capacity);
 
     dots.push({
       flightId: f.flightId, cx, cy, color, t, angle, pathD: f.pathD,
@@ -215,8 +246,8 @@ function drawPlaneMarker(
   zoomLevel: number,
 ) {
   const zoomBoost = hasBags
-    ? Math.min(2.05, 1.12 + Math.max(0, zoomLevel - 1) * 0.32)
-    : Math.min(1.82, 1.1 + Math.max(0, zoomLevel - 1) * 0.26);
+    ? Math.min(2.55, 1.68 + Math.max(0, zoomLevel - 1) * 0.48)
+    : Math.min(2.28, 1.65 + Math.max(0, zoomLevel - 1) * 0.39);
 
   ctx.save();
   ctx.translate(x, y);
@@ -319,6 +350,7 @@ function WorldMapComponent({
   airports, flights, shipments, selectedEntity,
   onSelectAirport, onSelectFlight, onSelectShipment, toggles,
   simClock, simClockRef, activeFlights = [], flightPlanFlights = [],
+  utFilter = 'all', warehouseFilter = 'all', onUtFilterChange,
   isExpanded = false, onToggleExpanded,
 }: WorldMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -329,20 +361,26 @@ function WorldMapComponent({
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   const [geoFeatures, setGeoFeatures] = useState<any[]>([]);
   const [hoveredCountry, setHoveredCountry] = useState<string | null>(null);
-  const [flightFilter, setFlightFilter] = useState<FlightFilterState>({
-    showSlaOk: true,
-    showSlaFail: true,
-    showEmpty: false,
-  });
+  // Contador de vuelos dibujados (MAP-REG-04): se actualiza desde el loop de pintado
+  // por un ref + intervalo, sin forzar re-render por frame.
+  const [flightCounts, setFlightCounts] = useState({ visible: 0, loaded: 0 });
+  const flightCountsRef = useRef({ visible: 0, loaded: 0 });
 
-  const makeCanvasFlightTooltip = useCallback((dot: FlightDot) => (
+  const makeCanvasFlightTooltip = useCallback((dot: FlightDot, capacity: number) => (
     <div style={{ minWidth: 150 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
         <div style={{ width: 7, height: 7, borderRadius: '50%', background: dot.color }} />
         <span style={{ fontWeight: 700, color: '#E2E8F8', fontSize: 12 }}>{dot.flightId}</span>
+        {dot.hasBags && !dot.meetsSla && (
+          <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 4, background: 'rgba(255,200,87,0.15)', color: '#FFC857' }}>
+            SLA
+          </span>
+        )}
       </div>
       <div style={{ fontSize: 11, color: '#A8C0E0' }}>{dot.originId} → {dot.destinationId}</div>
-      <div style={{ fontSize: 11, color: '#6080A0', marginTop: 4 }}>Maletas: {dot.bagsCount}</div>
+      <div style={{ fontSize: 11, color: '#6080A0', marginTop: 4 }}>
+        Carga: {dot.bagsCount}/{capacity > 0 ? capacity : '—'} ({getLoadPercent(dot.bagsCount, capacity)}%)
+      </div>
       <div style={{ fontSize: 11, color: '#6080A0' }}>Progreso: {Math.round(dot.t * 100)}%</div>
     </div>
   ), []);
@@ -440,10 +478,11 @@ function WorldMapComponent({
     const hit = getCanvasFlightHit(e.clientX, e.clientY);
     const rect = containerRef.current?.getBoundingClientRect();
     if (hit && rect) {
+      const cap = flightCapacityByIdRef.current.get(hit.dot.flightId) ?? 0;
       setTooltip({
         x: e.clientX - rect.left,
         y: e.clientY - rect.top,
-        content: makeCanvasFlightTooltip(hit.dot),
+        content: makeCanvasFlightTooltip(hit.dot, cap),
       });
     } else {
       setTooltip(null);
@@ -495,7 +534,10 @@ function WorldMapComponent({
     const padding = 70;
     const boxW = Math.max(maxX - minX + padding * 2, 260);
     const boxH = Math.max(maxY - minY + padding * 2, 150);
-    const targetRatio = BASE_W / BASE_H;
+    // Usar la relación de aspecto REAL del contenedor para evitar bandas vacías y el
+    // recorte de vuelos arriba/abajo (antes se fijaba a 2:1 y dejaba letterbox).
+    const rect = containerRef.current?.getBoundingClientRect();
+    const targetRatio = rect && rect.height > 0 ? rect.width / rect.height : BASE_W / BASE_H;
     let w = boxW;
     let h = boxH;
     if (w / h > targetRatio) {
@@ -508,12 +550,23 @@ function WorldMapComponent({
     const centeredY = (minY + maxY) / 2 - h / 2;
 
     setViewBox({
-      x: Math.max(-40, Math.min(centeredX, BASE_W - w + 40)),
-      y: Math.max(-30, Math.min(centeredY, BASE_H - h + 30)),
-      w: Math.min(w, BASE_W),
-      h: Math.min(h, BASE_H),
+      x: centeredX,
+      y: centeredY,
+      w: Math.min(w, BASE_W * 2),
+      h: Math.min(h, BASE_H * 2),
     });
   }, [airports]);
+
+  // Ajuste inicial: al cargar aeropuertos + países por primera vez, encuadra a los
+  // aeropuertos para que el mapa se vea completo desde el arranque (no recortado).
+  const hasFitInitialRef = useRef(false);
+  useEffect(() => {
+    if (hasFitInitialRef.current) return;
+    if (airports.length > 0 && geoFeatures.length > 0) {
+      hasFitInitialRef.current = true;
+      resetView();
+    }
+  }, [airports.length, geoFeatures.length, resetView]);
 
   // Airport SVG positions (lookup map)
   const airportById = useMemo(() => {
@@ -533,10 +586,12 @@ function WorldMapComponent({
     return m;
   }, [airportGeometryKey]);
 
-  // Airport SVG positions array for rendering
+  // Airport SVG positions array for rendering (filtrado por semáforo almacén — TASK-021)
   const airportPositions = useMemo(() =>
-    airports.map(a => ({ ...a, svgPos: project(a.coords[0], a.coords[1]) })),
-    [airports]
+    airports
+      .filter(a => passesWarehouseMapFilter(a, warehouseFilter))
+      .map(a => ({ ...a, svgPos: project(a.coords[0], a.coords[1]) })),
+    [airports, warehouseFilter]
   );
 
   const countryLayers = useMemo(() => geoFeatures.map((geo: any, i: number) => {
@@ -545,6 +600,9 @@ function WorldMapComponent({
       ? [geo.geometry.coordinates]
       : geo.geometry.coordinates;
     const isHovered = hoveredCountry === geo.id;
+    const firstRing = coords[0]?.[0];
+    const sampleLng = firstRing?.[0]?.[0] ?? 0;
+    const fill = getContinentFill(sampleLng, isHovered);
 
     return (
       <g
@@ -554,13 +612,18 @@ function WorldMapComponent({
         {coords.map((ringSet: any, ri: number) =>
           ringSet.map((ring: number[][], ri2: number) => {
             const pathSegments: string[] = [];
+            let prevX: number | null = null;
             for (let j = 0; j < ring.length; j += 1) {
               const point = ring[j];
               const lng = point[0];
               const lat = point[1];
               if (lng !== undefined && lat !== undefined) {
                 const [x, y] = project(lng, lat);
-                pathSegments.push(`${j === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`);
+                // Corta el trazo al cruzar el antimeridiano (salto > medio mapa):
+                // evita la franja horizontal que conectaba +180° con −180° (MAP-REG-01).
+                const cmd = (j === 0 || (prevX !== null && Math.abs(x - prevX) > BASE_W / 2)) ? 'M' : 'L';
+                pathSegments.push(`${cmd} ${x.toFixed(2)} ${y.toFixed(2)}`);
+                prevX = x;
               }
             }
             const d = `${pathSegments.join(' ')} Z`;
@@ -568,7 +631,7 @@ function WorldMapComponent({
               <path
                 key={`${ri}-${ri2}`}
                 d={d}
-                fill={isHovered ? 'url(#continentHoverGrad)' : 'url(#continentGrad)'}
+                fill={fill}
                 stroke={isHovered ? '#1E3558' : '#13203A'}
                 strokeWidth={isHovered ? 0.8 : 0.5}
                 strokeLinejoin="round"
@@ -585,7 +648,7 @@ function WorldMapComponent({
   const geometryFlights = flightPlanFlights.length > 0 ? flightPlanFlights : activeFlights;
 
   const flightPlanGeometry = useMemo(() => {
-    type FlightSource = { flightId: string; originId: string; destinationId: string; departureTime: string; arrivalTime: string };
+    type FlightSource = { flightId: string; originId: string; destinationId: string; departureTime: string; arrivalTime: string; capacity?: number };
     const source: FlightSource[] = geometryFlights;
     if (source.length === 0) return [];
 
@@ -613,7 +676,8 @@ function WorldMapComponent({
 
       geometry.push({
         flightId: f.flightId, originId: f.originId, destinationId: f.destinationId,
-        dep, arr, duration, ox, oy, dx, dy, cpx, cpy,
+        dep, arr, duration, capacity: f.capacity ?? 0,
+        ox, oy, dx, dy, cpx, cpy,
         pathD: `M ${ox} ${oy} Q ${cpx} ${cpy} ${dx} ${dy}`,
       });
     }
@@ -621,6 +685,15 @@ function WorldMapComponent({
     geometry.sort((a, b) => a.dep - b.dep);
     return geometry;
   }, [geometryFlights, airportGeometryById]);
+
+  const flightCapacityById = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const g of flightPlanGeometry) m.set(g.flightId, g.capacity);
+    for (const f of flights) {
+      if (!m.has(f.id)) m.set(f.id, f.capacity);
+    }
+    return m;
+  }, [flightPlanGeometry, flights]);
 
   const selectedFlightGeometry = useMemo(() => {
     if (selectedEntity?.type !== 'flight') return null;
@@ -719,7 +792,8 @@ function WorldMapComponent({
   const flightPlanGeometryRef = useRef(flightPlanGeometry);
   const maxFlightDurationRef = useRef(maxFlightDuration);
   const activeFlightBagsByIdRef = useRef(activeFlightBagsById);
-  const flightFilterRef = useRef(flightFilter);
+  const utFilterRef = useRef(utFilter);
+  const flightCapacityByIdRef = useRef(flightCapacityById);
   const selectedFlightIdRef = useRef<string | null>(null);
   const showRoutesRef = useRef(toggles.showRoutes);
   const paintVersionRef = useRef(0);
@@ -729,13 +803,14 @@ function WorldMapComponent({
   flightPlanGeometryRef.current = flightPlanGeometry;
   maxFlightDurationRef.current = maxFlightDuration;
   activeFlightBagsByIdRef.current = activeFlightBagsById;
-  flightFilterRef.current = flightFilter;
+  utFilterRef.current = utFilter;
+  flightCapacityByIdRef.current = flightCapacityById;
   selectedFlightIdRef.current = selectedEntity?.type === 'flight' ? selectedEntity.id : null;
   showRoutesRef.current = toggles.showRoutes;
 
   useEffect(() => {
     paintVersionRef.current += 1;
-  }, [flightPlanGeometry, maxFlightDuration, activeFlightBagsById, flightFilter, toggles.showRoutes, selectedEntity]);
+  }, [flightPlanGeometry, maxFlightDuration, activeFlightBagsById, utFilter, toggles.showRoutes, selectedEntity]);
 
   useEffect(() => {
     const canvas = flightCanvasRef.current;
@@ -750,6 +825,7 @@ function WorldMapComponent({
     let lastPaintViewBox = viewBoxRef.current;
     let lastPaintVersion = -1;
     let hasPaintedFlights = false;
+    let lastDotCount = 0; // para throttle adaptativo: baja FPS cuando hay muchos aviones
 
     const paint = () => {
       frameId = requestAnimationFrame(paint);
@@ -770,8 +846,11 @@ function WorldMapComponent({
       const canvasSizeChanged = canvas.width !== width || canvas.height !== height;
       const paintVersion = paintVersionRef.current;
       const dataChanged = paintVersion !== lastPaintVersion;
-      if (!viewChanged && !canvasSizeChanged && !dataChanged && wallMs - lastPaintWallMs < 33) return;
-      if (!viewChanged && !canvasSizeChanged && !dataChanged && Number.isFinite(lastPaintClockMs) && Math.abs(nowMs - lastPaintClockMs) < 15) return;
+      // Throttle adaptativo: con muchos aviones bajamos a ~18 FPS para evitar lag (LOD temporal).
+      const minIntervalMs = lastDotCount > 2000 ? 55 : 33;
+      const minClockDeltaMs = lastDotCount > 2000 ? 30 : 15;
+      if (!viewChanged && !canvasSizeChanged && !dataChanged && wallMs - lastPaintWallMs < minIntervalMs) return;
+      if (!viewChanged && !canvasSizeChanged && !dataChanged && Number.isFinite(lastPaintClockMs) && Math.abs(nowMs - lastPaintClockMs) < minClockDeltaMs) return;
       lastPaintWallMs = wallMs;
       lastPaintClockMs = nowMs;
       lastPaintViewBox = vb;
@@ -793,16 +872,14 @@ function WorldMapComponent({
         flightPlanGeometryRef.current,
         maxFlightDurationRef.current,
         activeFlightBagsByIdRef.current,
-        flightFilterRef.current,
+        utFilterRef.current,
         selectedFlightId,
       );
 
       if (dots.length === 0) {
         flightHitTargetsRef.current = [];
-        const filter = flightFilterRef.current;
-        const allFlightCategoriesHidden = !filter.showSlaOk && !filter.showSlaFail && !filter.showEmpty;
+        flightCountsRef.current = { visible: 0, loaded: 0 };
         const shouldPreserveLastPaint = hasPaintedFlights
-          && !allFlightCategoriesHidden
           && !viewChanged
           && !canvasSizeChanged
           && !dataChanged
@@ -822,12 +899,16 @@ function WorldMapComponent({
       const visibleDots = dots.filter(dot => dot.cx >= vx0 && dot.cx <= vx1 && dot.cy >= vy0 && dot.cy <= vy1);
       const canvasZoomLevel = BASE_W / vb.w;
       const routeWidthScale = Math.min(1.7, 1 + Math.max(0, canvasZoomLevel - 1) * 0.16);
-      const routeColors = ['#4DA6FF', '#FFC857'];
+      const routeColors = [...new Set(visibleDots.filter(d => d.hasBags).map(d => d.color))];
+      if (routeColors.length === 0 && visibleDots.some(d => !d.hasBags)) {
+        routeColors.push('#3A4A5E');
+      }
 
       ctx.clearRect(0, 0, rect.width, rect.height);
       if (visibleDots.length === 0) {
         hasPaintedFlights = false;
         flightHitTargetsRef.current = [];
+        flightCountsRef.current = { visible: 0, loaded: 0 };
         return;
       }
 
@@ -835,17 +916,19 @@ function WorldMapComponent({
         ctx.save();
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
+        // Glow suave de la ruta con carga (legible desde el primer ciclo — MAP-REG-03).
         ctx.setLineDash([]);
-        ctx.globalAlpha = 0.035;
-        ctx.lineWidth = 1.55 * routeWidthScale;
+        ctx.globalAlpha = 0.06;
+        ctx.lineWidth = 1.9 * routeWidthScale;
         for (const color of routeColors) {
           ctx.strokeStyle = color;
           drawRouteBatch(ctx, visibleDots, color, toCanvasX, toCanvasY);
         }
 
-        ctx.setLineDash([4, 10]);
-        ctx.globalAlpha = 0.64;
-        ctx.lineWidth = 0.68 * routeWidthScale;
+        // Trazo discontinuo principal — más opaco y grueso que antes para verse al inicio.
+        ctx.setLineDash([5, 8]);
+        ctx.globalAlpha = 0.85;
+        ctx.lineWidth = 1.05 * routeWidthScale;
         for (const color of routeColors) {
           ctx.strokeStyle = color;
           drawRouteBatch(ctx, visibleDots, color, toCanvasX, toCanvasY);
@@ -854,18 +937,47 @@ function WorldMapComponent({
       }
 
       const selectedBaseFlightId = selectedFlightId?.replace(/-D\d+$/, '') ?? null;
-      const denseMode = visibleDots.length > 2500 && canvasZoomLevel < 1.7;
+      const isSelectedDot = (dot: FlightDot) => selectedBaseFlightId != null
+        && (dot.flightId === selectedFlightId || dot.flightId.replace(/-D\d+$/, '') === selectedBaseFlightId);
+      // LOD: con muchos aviones y poco zoom dibujamos rectángulos pequeños agrupados por color
+      // (sin save/rotate por avión) — mucho más barato y elimina el lag. Las cargadas se ven
+      // un poco más grandes/opacas. No se oculta ningún vuelo (solo cambia el LOD visual).
+      const denseMode = visibleDots.length > 1800 && canvasZoomLevel < 2;
       const hitTargets: FlightHitTarget[] = [];
-      for (const dot of visibleDots) {
-        const x = toCanvasX(dot.cx);
-        const y = toCanvasY(dot.cy);
-        drawPlaneMarker(ctx, x, y, dot.angle, dot.color, dot.hasBags, denseMode, canvasZoomLevel);
-        const isSelectedFlight = selectedBaseFlightId != null
-          && (dot.flightId === selectedFlightId || dot.flightId.replace(/-D\d+$/, '') === selectedBaseFlightId);
-        if (dot.hasBags || isSelectedFlight) hitTargets.push({ x, y, dot });
+      let loadedCount = 0;
+      if (denseMode) {
+        const byColor = new Map<string, FlightDot[]>();
+        for (const dot of visibleDots) {
+          let arr = byColor.get(dot.color);
+          if (!arr) { arr = []; byColor.set(dot.color, arr); }
+          arr.push(dot);
+          if (dot.hasBags) loadedCount += 1;
+        }
+        for (const [color, ds] of byColor) {
+          ctx.fillStyle = color;
+          for (const dot of ds) {
+            const x = toCanvasX(dot.cx);
+            const y = toCanvasY(dot.cy);
+            const s = dot.hasBags ? 3.2 : 2;
+            ctx.globalAlpha = dot.hasBags ? 0.95 : 0.4;
+            ctx.fillRect(x - s / 2, y - s / 2, s, s);
+            if (dot.hasBags || isSelectedDot(dot)) hitTargets.push({ x, y, dot });
+          }
+        }
+        ctx.globalAlpha = 1;
+      } else {
+        for (const dot of visibleDots) {
+          const x = toCanvasX(dot.cx);
+          const y = toCanvasY(dot.cy);
+          drawPlaneMarker(ctx, x, y, dot.angle, dot.color, dot.hasBags, false, canvasZoomLevel);
+          if (dot.hasBags) loadedCount += 1;
+          if (dot.hasBags || isSelectedDot(dot)) hitTargets.push({ x, y, dot });
+        }
       }
+      lastDotCount = visibleDots.length;
       hasPaintedFlights = true;
       flightHitTargetsRef.current = hitTargets;
+      flightCountsRef.current = { visible: visibleDots.length, loaded: loadedCount };
     };
 
     frameId = requestAnimationFrame(paint);
@@ -874,6 +986,21 @@ function WorldMapComponent({
       flightHitTargetsRef.current = [];
     };
   }, [hasBackendFlightData, simClockRef]);
+
+  // Sincroniza el contador de vuelos dibujados a estado React (baja frecuencia).
+  useEffect(() => {
+    if (!hasBackendFlightData) {
+      setFlightCounts({ visible: 0, loaded: 0 });
+      return;
+    }
+    const id = window.setInterval(() => {
+      setFlightCounts(prev => {
+        const c = flightCountsRef.current;
+        return prev.visible === c.visible && prev.loaded === c.loaded ? prev : { ...c };
+      });
+    }, 800);
+    return () => window.clearInterval(id);
+  }, [hasBackendFlightData]);
 
   // Flight SVG paths
   const flightPaths = useMemo(() => {
@@ -1293,49 +1420,50 @@ function WorldMapComponent({
 
       </svg>
 
-      {/* ── Flight filter panel ── */}
-      <div
-        data-interactive="true"
-        onMouseDown={e => e.stopPropagation()}
-        className="absolute z-10"
-        style={{
-          bottom: 30,
-          left: 12,
-          background: 'rgba(4,10,26,0.90)',
-          border: '1px solid #1E3058',
-          borderRadius: 10,
-          padding: '8px 10px',
-          backdropFilter: 'blur(6px)',
-          minWidth: 164,
-          userSelect: 'none',
-        }}
-      >
-        <div style={{ fontSize: 9, color: '#4A7098', marginBottom: 7, letterSpacing: '0.13em', fontWeight: 700, textTransform: 'uppercase' }}>
-          Filtros de vuelos
-        </div>
-        {([
-          { key: 'showSlaOk'   as const, color: '#4DA6FF', label: 'En ruta · cumple SLA' },
-          { key: 'showSlaFail' as const, color: '#FFC857', label: 'En ruta · sin SLA' },
-          { key: 'showEmpty'   as const, color: '#4A5E72', label: 'Sin carga asignada' },
-        ] as { key: keyof typeof flightFilter; color: string; label: string }[]).map(({ key, color, label }) => (
+      {/* Barra de filtro rápida del mapa (MAP-REG-05) — sincronizada con el panel (utFilter).
+          Permite alternar Todos / Con carga / Vacías sin abrir el panel derecho. */}
+      {hasBackendFlightData && (
+        <div
+          data-interactive="true"
+          onMouseDown={e => e.stopPropagation()}
+          className="absolute bottom-5 left-4 flex flex-col gap-1.5"
+          style={{ zIndex: 20 }}
+        >
           <div
-            key={key}
-            style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5, cursor: 'pointer' }}
-            onClick={() => setFlightFilter(prev => ({ ...prev, [key]: !prev[key] }))}
+            className="flex items-center gap-1 p-1 rounded-lg"
+            style={{ background: 'rgba(10,20,45,0.92)', border: '1px solid #1E3058', backdropFilter: 'blur(6px)' }}
           >
-            <div style={{
-              width: 10, height: 10, borderRadius: 2,
-              border: `1.5px solid ${color}`,
-              background: flightFilter[key] ? color : 'transparent',
-              flexShrink: 0,
-              transition: 'background 0.15s',
-            }} />
-            <span style={{ fontSize: 10, color: flightFilter[key] ? '#C8D8F0' : '#3A5070', transition: 'color 0.15s' }}>
-              {label}
-            </span>
+            {([
+              { id: 'all', label: 'Todos' },
+              { id: 'loaded', label: 'Con carga' },
+              { id: 'empty', label: 'Vacías' },
+            ] as { id: string; label: string }[]).map(opt => {
+              const active = utFilter === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => onUtFilterChange?.(opt.id)}
+                  className="h-7 px-2.5 rounded-md text-[11px] transition-colors"
+                  style={{
+                    fontWeight: active ? 700 : 500,
+                    color: active ? '#0A1628' : '#A8C0E0',
+                    background: active ? '#4DA6FF' : 'transparent',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
           </div>
-        ))}
-      </div>
+          <div
+            className="px-2 py-1 rounded-md text-[10px] font-mono text-[#7090B0] self-start"
+            style={{ background: 'rgba(10,20,45,0.85)', border: '1px solid #1E3058' }}
+            title="Vuelos dibujados en el mapa (ventana en vuelo) · con carga"
+          >
+            ✈ {flightCounts.visible} en vuelo · {flightCounts.loaded} con carga
+          </div>
+        </div>
+      )}
 
       {/* Tooltip */}
       {tooltip && (

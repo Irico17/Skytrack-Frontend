@@ -16,7 +16,7 @@ import {
   getSimulationSolution,
   createShipment,
   cancelFlight as cancelFlightRequest,
-  uploadStaticDataset,
+  uploadStaticDatasetBatched,
 } from '../services/api';
 import { SimulationWebSocket } from '../services/websocket';
 import {
@@ -27,10 +27,12 @@ import {
   mapSolutionToShipments,
   mapShipmentResponseToShipment,
 } from '../services/mapper';
-import type { BackendCycleUpdate, BackendSimulationFinished, BackendSimulationError, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendSolution, BackendStaticDataUploadResponse, BackendSimulationResults, BackendSimulationStatus, BackendActiveSimulation } from '../types/backend';
+import type { BackendCycleUpdate, BackendSimulationFinished, BackendSimulationError, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendSolution, BackendStaticDataUploadResponse, BackendSimulationResults, BackendSimulationStatus, BackendActiveSimulation, StaticDataUploadProgress } from '../types/backend';
+import { computeCancellationTargetDay, findFlightById } from '../utils/cancellationDay';
 
-/** Factor de aceleración del tiempo simulado: 1 min real = K min simulados */
-export const SIMULATION_K = 240;
+/** Factor de aceleración del tiempo simulado: 1 min real = K min simulados.
+ *  Fallback; el valor real llega del backend (PERIOD_SIMULATION K=180). */
+export const SIMULATION_K = 180;
 
 export interface DaySnapshot {
   day: number;
@@ -94,7 +96,12 @@ interface UseSimulationReturn extends SimulationState {
   replan: () => void;
   addShipment: (shipment: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => Promise<void>;
   cancelFlight: (flightId: string, day: string) => Promise<void>;
-  uploadStaticData: (airportsFile: File, flightsFile: File, shipmentFiles: File[]) => Promise<BackendStaticDataUploadResponse>;
+  uploadStaticData: (
+    airportsFile: File,
+    flightsFile: File,
+    shipmentFiles: File[],
+    onProgress?: (progress: StaticDataUploadProgress) => void
+  ) => Promise<BackendStaticDataUploadResponse>;
   setAirports: Dispatch<SetStateAction<Airport[]>>;
   setFlights: Dispatch<SetStateAction<Flight[]>>;
   setShipments: Dispatch<SetStateAction<Shipment[]>>;
@@ -110,6 +117,8 @@ interface UseSimulationReturn extends SimulationState {
   flightPlanFlights: BackendFlightPlanFlight[];
   /** Último ciclo recibido del backend para KPIs reales */
   lastCycleUpdate: BackendCycleUpdate | null;
+  /** Clientes WebSocket conectados a la simulación activa (NAV-01). */
+  viewerCount: number;
 }
 
 // ==================== CONSTANTES DE REPRODUCCIÓN / RELOJ ====================
@@ -309,6 +318,7 @@ export function useSimulation(): UseSimulationReturn {
   const [collapseMetrics, setCollapseMetrics] = useState<CollapseMetrics | null>(null);
   const [simulationResults, setSimulationResults] = useState<BackendSimulationResults | null>(null);
   const [simulationId, setSimulationId] = useState<string | null>(null);
+  const [viewerCount, setViewerCount] = useState(0);
 
   // Refs para el modo 5day (backend)
   const simIdRef  = useRef<string | null>(null);
@@ -755,6 +765,27 @@ export function useSimulation(): UseSimulationReturn {
     }
   }, [applyBackendStatusClock, cancelScheduledSolutionRefresh, commitClockState, connectSimulationStream, disconnectActiveDiscoveryStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, resetPlaybackBuffer]);
 
+  // Badge multi-navegador (TASK-031): poll connectedClients del backend.
+  useEffect(() => {
+    const id = simIdRef.current;
+    if (!id || !isBackendMode(mode)) {
+      setViewerCount(0);
+      return;
+    }
+    const refresh = () => {
+      void getActiveSimulation()
+        .then(active => {
+          if (active?.simulationId === simIdRef.current) {
+            setViewerCount(active.connectedClients);
+          }
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    return () => window.clearInterval(timer);
+  }, [mode, simulationId, isRunning]);
+
   const joinActiveSimulationFromBackend = useCallback(async (sourceLabel: string) => {
     if (simIdRef.current || activeDiscoveryInFlightRef.current) return;
     activeDiscoveryInFlightRef.current = true;
@@ -762,6 +793,7 @@ export function useSimulation(): UseSimulationReturn {
       const active = await getActiveSimulation();
       const activeSession = active ? activeSimulationToStored(active) : null;
       if (activeSession && isBackendMode(activeSession.mode)) {
+        setViewerCount(active?.connectedClients ?? 0);
         await restoreBackendSession(activeSession, sourceLabel);
       }
     } catch (err) {
@@ -1323,7 +1355,11 @@ export function useSimulation(): UseSimulationReturn {
     }
 
     const baseFlightId = stripProjectedDaySuffix(flightId);
-    const result = await cancelFlightRequest(simIdRef.current, baseFlightId, day);
+    const flight = findFlightById(flightId, flightPlanFlights, activeFlights);
+    const resolvedDay = flight
+      ? computeCancellationTargetDay(simClockRef.current, flight.departureTime)
+      : day;
+    const result = await cancelFlightRequest(simIdRef.current, baseFlightId, resolvedDay);
     setHasReplanned(true);
     setFlights(prev => prev.map(f => f.id === flightId || f.id === result.cancelledFlightId
       ? { ...f, status: 'critical', isReplanned: true }
@@ -1346,18 +1382,19 @@ export function useSimulation(): UseSimulationReturn {
       simClockRef.current = statusTime;
       commitClockState(statusTime, true);
     }
-  }, [mode, isRunning, refreshSolution, commitClockState]);
+  }, [mode, isRunning, refreshSolution, commitClockState, flightPlanFlights, activeFlights]);
 
   const uploadStaticData = useCallback(async (
     airportsFile: File,
     flightsFile: File,
-    shipmentFiles: File[]
+    shipmentFiles: File[],
+    onProgress?: (progress: StaticDataUploadProgress) => void
   ): Promise<BackendStaticDataUploadResponse> => {
     if (isRunning) {
       throw new Error('Deten la simulación antes de reemplazar datos estáticos');
     }
 
-    const response = await uploadStaticDataset(airportsFile, flightsFile, shipmentFiles);
+    const response = await uploadStaticDatasetBatched(airportsFile, flightsFile, shipmentFiles, onProgress);
     const backendAirports = await fetchAirports();
     commitBackendAirports(mapAirports(backendAirports));
     setShipments([]);
@@ -1402,5 +1439,6 @@ export function useSimulation(): UseSimulationReturn {
     simClock, simClockRef, activeFlights, flightPlanFlights,
     simulationK,
     lastCycleUpdate,
+    viewerCount,
   };
 }

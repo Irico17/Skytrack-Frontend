@@ -18,6 +18,7 @@ interface TopBarProps {
   onModeChange: (mode: SimulationMode) => void;
   totalShipments: number;
   criticalCount: number;
+  viewerCount?: number;
   startDisabled?: boolean;
 }
 
@@ -35,7 +36,7 @@ const MODE_ICONS: Record<SimulationMode, React.ReactNode> = {
 
 export function TopBar({
   isRunning, isPaused, mode, simulationTime, events, onStart, onPause, onResume, onReset,
-  onModeChange, totalShipments, criticalCount,
+  onModeChange, totalShipments, criticalCount, viewerCount = 0,
   startDisabled = false,
 }: TopBarProps) {
   const [showModeDropdown, setShowModeDropdown] = React.useState(false);
@@ -159,6 +160,16 @@ export function TopBar({
       </div>
 
       <div className="flex-1" />
+
+      {viewerCount > 0 && (
+        <div
+          className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#0D1E38] border border-[#1E3058]"
+          title="Visualizadores conectados a esta simulación"
+        >
+          <Wifi className="w-3 h-3 text-[#4DA6FF]" />
+          <span className="text-[10px] text-[#A8C0E0]">{viewerCount} visualizador{viewerCount === 1 ? '' : 'es'}</span>
+        </div>
+      )}
 
       {/* Alert bell */}
       <div className="relative">

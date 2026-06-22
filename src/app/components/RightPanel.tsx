@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercent } from '../data/mockData';
 import { getBagTraceability } from '../services/api';
+import { isDeliveredInSimWindow } from '../utils/shipmentFilters';
 import type { BackendActiveFlight, BackendBagItem, BackendBagTraceability, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
 
 interface MapEntityFilter {
@@ -34,6 +35,11 @@ interface RightPanelProps {
   onSelectAirport?: (id: string) => void;
   onSelectFlight?: (id: string) => void;
   onSelectShipment?: (id: string) => void;
+  utFilter?: string;
+  warehouseFilter?: string;
+  onUtFilterChange?: (value: string) => void;
+  onWarehouseFilterChange?: (value: string) => void;
+  viewerCount?: number;
 }
 
 interface TransportUnit {
@@ -111,6 +117,41 @@ function TrafficLight({ label, value, max, thresholdWarn, thresholdCrit }: {
   );
 }
 
+function FleetLoadIndicator({ pct, semaphore, loaded, total }: {
+  pct: number;
+  semaphore?: 'GREEN' | 'AMBER' | 'RED' | 'UNKNOWN';
+  loaded?: number;
+  total?: number;
+}) {
+  const status = semaphore === 'RED' ? 'critical' : semaphore === 'AMBER' ? 'warning' : semaphore === 'GREEN' ? 'normal' : pct >= 70 ? 'warning' : 'normal';
+  const color = status === 'critical' ? '#FF4D4D' : status === 'warning' ? '#FFC857' : '#00FF9C';
+
+  return (
+    <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058] flex items-center gap-3">
+      <div className="flex flex-col gap-1 flex-shrink-0">
+        <div className={`w-2.5 h-2.5 rounded-full ${status === 'normal' ? 'opacity-100' : 'opacity-20'}`} style={{ backgroundColor: '#00FF9C' }} />
+        <div className={`w-2.5 h-2.5 rounded-full ${status === 'warning' ? 'opacity-100' : 'opacity-20'}`} style={{ backgroundColor: '#FFC857' }} />
+        <div className={`w-2.5 h-2.5 rounded-full ${status === 'critical' ? 'opacity-100 animate-pulse' : 'opacity-20'}`} style={{ backgroundColor: '#FF4D4D' }} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.08em' }}>% FLOTA CON CARGA</div>
+        <div className="flex items-baseline gap-1 mt-0.5">
+          <span className="text-lg" style={{ fontWeight: 700, color }}>{pct}%</span>
+          {loaded != null && total != null && total > 0 && (
+            <span className="text-[10px] text-[#4A6080]">{loaded}/{total} UTs</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 mt-1.5">
+          <div className="flex-1 h-1.5 rounded-full bg-[#1E3058] overflow-hidden">
+            <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: color }} />
+          </div>
+        </div>
+      </div>
+      <Plane className="w-4 h-4 flex-shrink-0" style={{ color }} />
+    </div>
+  );
+}
+
 const CUSTOM_TOOLTIP_STYLE = {
   backgroundColor: '#0D1E38',
   border: '1px solid #1E3058',
@@ -122,6 +163,8 @@ const CUSTOM_TOOLTIP_STYLE = {
 
 const DASH = '—';
 const VISIBLE_OPERATIONAL_ROWS = 80;
+/** Tope de filas para la lista de UT (puede haber ~15k vuelos proyectados). */
+const VISIBLE_UT_ROWS = 300;
 const BAG_PAGE_SIZE = 50;
 const INSPECTOR_BAG_PAGE_SIZE = 25;
 
@@ -584,14 +627,21 @@ export function RightPanel({
   mode, activeFlights = [], flightPlanFlights = [], lastCycleUpdate = null,
   activeMapFilter = null, onToggleMapFilter,
   onSelectAirport, onSelectFlight, onSelectShipment,
+  utFilter: utFilterProp, warehouseFilter: warehouseFilterProp,
+  onUtFilterChange, onWarehouseFilterChange,
+  viewerCount = 0,
 }: RightPanelProps) {
   const [activeTab, setActiveTab] = useState<'kpi' | 'transport' | 'warehouse' | 'shipments' | 'clients' | 'bags' | 'reports'>('kpi');
   const [opsSearch, setOpsSearch] = useState('');
-  const [transportSort, setTransportSort] = useState<'load' | 'departure' | 'route'>('load');
-  const [utFilter, setUtFilter] = useState('all');
-  const [warehouseFilter, setWarehouseFilter] = useState('all');
+  const [transportSort, setTransportSort] = useState<'load' | 'departure' | 'arrival' | 'destination' | 'route'>('load');
+  const [utFilterLocal, setUtFilterLocal] = useState('all');
+  const [warehouseFilterLocal, setWarehouseFilterLocal] = useState('all');
+  const utFilter = utFilterProp ?? utFilterLocal;
+  const warehouseFilter = warehouseFilterProp ?? warehouseFilterLocal;
+  const setUtFilter = onUtFilterChange ?? setUtFilterLocal;
+  const setWarehouseFilter = onWarehouseFilterChange ?? setWarehouseFilterLocal;
   const [warehouseContinent, setWarehouseContinent] = useState('all');
-  const [warehouseSort, setWarehouseSort] = useState<'occupancy' | 'occupancyAsc' | 'code' | 'city'>('occupancy');
+  const [warehouseSort, setWarehouseSort] = useState<'occupancy' | 'occupancyAsc' | 'code' | 'city' | 'nextDeparture' | 'nextArrival'>('occupancy');
   const [shipmentSort, setShipmentSort] = useState<'progress' | 'progressAsc' | 'bags' | 'route'>('progress');
   const [shipmentFilter, setShipmentFilter] = useState('all');
   const [bagStateFilter, setBagStateFilter] = useState('ALL');
@@ -655,9 +705,13 @@ export function RightPanel({
   const punctualityPct = hasBackendStats
     ? Math.round((onTimeCount / Math.max(backendSlaTotal, 1)) * 100)
     : Math.round((onTimeCount / Math.max(shipments.length, 1)) * 100);
-  const avgOccupancy = airports.length > 0
-    ? Math.round(airports.reduce((acc, a) => acc + getOccupancyPercent(a.occupancy, a.capacity), 0) / airports.length)
-    : 0;
+  // Ocupación promedio: preferimos el semáforo de almacén del backend (misma fórmula que
+  // el reporte) y caemos al promedio local de aeropuertos si no hay datos del ciclo.
+  const avgOccupancy = hasBackendStats && lastCycleUpdate?.semaphores?.storageOccupancy != null
+    ? Math.round(lastCycleUpdate.semaphores.storageOccupancy * 100)
+    : airports.length > 0
+      ? Math.round(airports.reduce((acc, a) => acc + getOccupancyPercent(a.occupancy, a.capacity), 0) / airports.length)
+      : 0;
   const criticalAirports = useMemo(() => airports.filter(a => a.status === 'critical'), [airports]);
   const criticalFlights = useMemo(
     () => hasBackendStats ? activeFlights.filter(f => !f.meetsSla) : flights.filter(f => f.status === 'critical'),
@@ -702,8 +756,16 @@ export function RightPanel({
     return map;
   }, [activeFlights]);
 
-  // Base de UTs (sin filtros): se usa tanto en la pestaña UT como en los drill-downs
+  // Base de UTs (sin filtros): se usa tanto en la pestaña UT como en los drill-downs.
+  // inFlight = "en vuelo AHORA" (airborne respecto al reloj simulado) — coherente con el
+  // mapa, que solo dibuja UTs en vuelo. La carga (bags/empty) es un eje independiente.
   const baseTransportUnits = useMemo<TransportUnit[]>(() => {
+    const simMs = simulationTime.getTime();
+    const isAirborne = (dep: string, arr: string) => {
+      const d = new Date(dep).getTime();
+      const a = new Date(arr).getTime();
+      return Number.isFinite(d) && Number.isFinite(a) && simMs >= d && simMs < a;
+    };
     if (flightPlanFlights.length > 0) {
       return flightPlanFlights.map(f => {
         const active = activeBagsByFlight.get(f.flightId);
@@ -720,7 +782,7 @@ export function RightPanel({
           pct,
           meetsSla: active?.meetsSla ?? true,
           empty: bags === 0,
-          inFlight: active != null,
+          inFlight: isAirborne(f.departureTime, f.arrivalTime),
         };
       });
     }
@@ -735,9 +797,47 @@ export function RightPanel({
       pct: 0,
       meetsSla: f.meetsSla,
       empty: f.bagsCount === 0,
-      inFlight: true,
+      inFlight: isAirborne(f.departureTime, f.arrivalTime),
     }));
-  }, [flightPlanFlights, activeFlights, activeBagsByFlight]);
+  }, [flightPlanFlights, activeFlights, activeBagsByFlight, simulationTime]);
+
+  const fleetLoadKpi = useMemo(() => {
+    const total = baseTransportUnits.length;
+    const loaded = baseTransportUnits.filter(u => u.bags > 0).length;
+    if (hasBackendStats && lastCycleUpdate?.semaphores?.flightOccupancy != null) {
+      return {
+        pct: Math.round(lastCycleUpdate.semaphores.flightOccupancy * 100),
+        semaphore: lastCycleUpdate.semaphores.flights,
+        loaded: lastCycleUpdate.operationalMetrics?.activeLoadedFlights ?? loaded,
+        total: total || flightPlanFlights.length,
+      };
+    }
+    return {
+      pct: total > 0 ? Math.round((loaded / total) * 100) : 0,
+      semaphore: undefined as 'GREEN' | 'AMBER' | 'RED' | 'UNKNOWN' | undefined,
+      loaded,
+      total,
+    };
+  }, [hasBackendStats, lastCycleUpdate, baseTransportUnits, flightPlanFlights.length]);
+
+  const warehouseNextUtTimes = useMemo(() => {
+    const simMs = simulationTime.getTime();
+    const nextDeparture = new Map<string, number>();
+    const nextArrival = new Map<string, number>();
+    for (const f of flightPlanFlights) {
+      const depMs = new Date(f.departureTime).getTime();
+      if (Number.isFinite(depMs) && depMs >= simMs) {
+        const prev = nextDeparture.get(f.originId);
+        if (prev == null || depMs < prev) nextDeparture.set(f.originId, depMs);
+      }
+      const arrMs = new Date(f.arrivalTime).getTime();
+      if (Number.isFinite(arrMs) && arrMs >= simMs) {
+        const prev = nextArrival.get(f.destinationId);
+        if (prev == null || arrMs < prev) nextArrival.set(f.destinationId, arrMs);
+      }
+    }
+    return { nextDeparture, nextArrival };
+  }, [flightPlanFlights, simulationTime]);
 
   const transportUnits = useMemo(() => {
     if (activeTab !== 'transport') return [];
@@ -754,6 +854,8 @@ export function RightPanel({
       })
       .sort((a, b) => {
         if (transportSort === 'departure') return new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime();
+        if (transportSort === 'arrival') return new Date(a.arrivalTime).getTime() - new Date(b.arrivalTime).getTime();
+        if (transportSort === 'destination') return a.destinationId.localeCompare(b.destinationId) || a.flightId.localeCompare(b.flightId);
         if (transportSort === 'route') return `${a.originId}-${a.destinationId}`.localeCompare(`${b.originId}-${b.destinationId}`);
         return b.bags - a.bags;
       });
@@ -787,9 +889,19 @@ export function RightPanel({
         if (warehouseSort === 'occupancyAsc') return getOccupancyPercent(a.occupancy, a.capacity) - getOccupancyPercent(b.occupancy, b.capacity);
         if (warehouseSort === 'code') return a.id.localeCompare(b.id);
         if (warehouseSort === 'city') return a.city.localeCompare(b.city);
+        if (warehouseSort === 'nextDeparture') {
+          const aMs = warehouseNextUtTimes.nextDeparture.get(a.id) ?? Number.POSITIVE_INFINITY;
+          const bMs = warehouseNextUtTimes.nextDeparture.get(b.id) ?? Number.POSITIVE_INFINITY;
+          return aMs - bMs || a.id.localeCompare(b.id);
+        }
+        if (warehouseSort === 'nextArrival') {
+          const aMs = warehouseNextUtTimes.nextArrival.get(a.id) ?? Number.POSITIVE_INFINITY;
+          const bMs = warehouseNextUtTimes.nextArrival.get(b.id) ?? Number.POSITIVE_INFINITY;
+          return aMs - bMs || a.id.localeCompare(b.id);
+        }
         return getOccupancyPercent(b.occupancy, b.capacity) - getOccupancyPercent(a.occupancy, a.capacity);
       });
-  }, [activeTab, airports, opsSearch, warehouseFilter, warehouseContinent, warehouseSort]);
+  }, [activeTab, airports, opsSearch, warehouseFilter, warehouseContinent, warehouseSort, warehouseNextUtTimes]);
 
   const operationalShipments = useMemo(() => {
     if (activeTab !== 'shipments') return [];
@@ -806,7 +918,7 @@ export function RightPanel({
           return s.progress < 1 && !!s.currentFlightId && s.currentFlightId !== 'PENDING'
             && inFlightIds.has(stripProjectedDaySuffix(s.currentFlightId));
         }
-        if (shipmentFilter === 'delivered') return s.progress >= 1;
+        if (shipmentFilter === 'delivered') return isDeliveredInSimWindow(s, simulationTime);
         return s.status === shipmentFilter;
       })
       .sort((a, b) => {
@@ -815,7 +927,7 @@ export function RightPanel({
         if (shipmentSort === 'progressAsc') return a.progress - b.progress || a.id.localeCompare(b.id);
         return b.progress - a.progress || a.id.localeCompare(b.id);
       });
-  }, [activeTab, shipments, opsSearch, shipmentSort, shipmentFilter, activeFlights]);
+  }, [activeTab, shipments, opsSearch, shipmentSort, shipmentFilter, activeFlights, simulationTime]);
 
   const luggageByClient = useMemo(() => {
     if (activeTab !== 'clients') return [];
@@ -1314,6 +1426,19 @@ export function RightPanel({
         {/* KPI Tab */}
         {!currentInspector && activeTab === 'kpi' && (
           <>
+            {viewerCount > 0 && (
+              <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-[#0A1628] border border-[#1E3058] text-[10px] text-[#A8C0E0]">
+                <Activity className="w-3 h-3 text-[#4DA6FF]" />
+                {viewerCount} visualizador{viewerCount === 1 ? '' : 'es'} conectado{viewerCount === 1 ? '' : 's'}
+              </div>
+            )}
+            <FleetLoadIndicator
+              pct={fleetLoadKpi.pct}
+              semaphore={fleetLoadKpi.semaphore}
+              loaded={fleetLoadKpi.loaded}
+              total={fleetLoadKpi.total}
+            />
+
             <div className="grid grid-cols-2 gap-2">
               <KPICard
                 label={hasBackendStats ? 'MALETAS EN VUELO' : 'EN TRÁNSITO'}
@@ -1475,6 +1600,8 @@ export function RightPanel({
                 options={[
                   { value: 'load', label: 'Más carga' },
                   { value: 'departure', label: 'Salida' },
+                  { value: 'arrival', label: 'Llegada' },
+                  { value: 'destination', label: 'Destino' },
                   { value: 'route', label: 'Ruta' },
                 ]}
               />
@@ -1484,7 +1611,7 @@ export function RightPanel({
               <SectionLabel>UNIDADES DE TRANSPORTE · {transportUnits.length}</SectionLabel>
             </div>
             <div className="max-h-[520px] overflow-y-auto flex flex-col gap-2">
-              {transportUnits.slice(0, VISIBLE_OPERATIONAL_ROWS).map(unit => (
+              {transportUnits.slice(0, VISIBLE_UT_ROWS).map(unit => (
                 <UtCard
                   key={unit.flightId}
                   unit={unit}
@@ -1493,6 +1620,11 @@ export function RightPanel({
                   onMapFilter={() => handleMapFilterClick({ type: 'flight', id: unit.flightId }, () => onSelectFlight?.(unit.flightId))}
                 />
               ))}
+              {transportUnits.length > VISIBLE_UT_ROWS && (
+                <div className="text-[11px] text-[#4A6080] px-2 py-3 text-center border-t border-[#1E3058]/40">
+                  Mostrando {VISIBLE_UT_ROWS} de {transportUnits.length.toLocaleString()} · refina con búsqueda o filtros
+                </div>
+              )}
               {transportUnits.length === 0 && (
                 <div className="text-[11px] text-[#4A6080] px-2 py-4">Sin unidades que coincidan con el filtro</div>
               )}
@@ -1809,6 +1941,8 @@ export function RightPanel({
                     options={[
                       { value: 'occupancy', label: 'Ocup. ↓' },
                       { value: 'occupancyAsc', label: 'Ocup. ↑' },
+                      { value: 'nextDeparture', label: 'Próx. salida' },
+                      { value: 'nextArrival', label: 'Próx. llegada' },
                       { value: 'code', label: 'Código' },
                       { value: 'city', label: 'Ciudad' },
                     ]}

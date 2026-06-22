@@ -43,10 +43,6 @@ function formatSimulationClock(date: Date): { date: string; time: string } {
   };
 }
 
-function formatApiDate(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
 function sameEntity(a: SelectedEntity | null, b: SelectedEntity | null): boolean {
   return Boolean(a && b && a.type === b.type && a.id === b.id);
 }
@@ -85,6 +81,10 @@ export default function App() {
   const [rightCollapsed, setRightCollapsed] = useState(true);
   const [bottomCollapsed, setBottomCollapsed] = useState(true);
   const [mapExpanded, setMapExpanded] = useState(false);
+  // Default 'loaded' (MAP-REG-02): en idle el mapa no muestra un mar de aviones vacíos;
+  // el usuario puede ver las vacías con la barra del mapa o los chips del panel.
+  const [utFilter, setUtFilter] = useState('loaded');
+  const [warehouseFilter, setWarehouseFilter] = useState('all');
 
   // Todos los modos usan el reloj simulado interpolado del backend (simClock).
   const displayedSimulationTime = simulation.simClock;
@@ -295,6 +295,7 @@ export default function App() {
         onModeChange={simulation.setMode}
         totalShipments={simulation.shipments.length}
         criticalCount={criticalCount}
+        viewerCount={simulation.viewerCount}
         startDisabled={simulation.simulationComplete || simulation.collapseComplete || simulation.dayToDayComplete}
       />
 
@@ -344,6 +345,9 @@ export default function App() {
               simClockRef={simulation.simClockRef}
               activeFlights={mapActiveFlights}
               flightPlanFlights={mapFlightPlanFlights}
+              utFilter={utFilter}
+              warehouseFilter={warehouseFilter}
+              onUtFilterChange={setUtFilter}
               isExpanded={mapExpanded}
               onToggleExpanded={() => setMapExpanded(v => !v)}
             />
@@ -426,6 +430,27 @@ export default function App() {
                     </span>
                   </div>
                 </div>
+                {/* Salud de la simulación — responde "¿va bien?" de un vistazo */}
+                {simulation.lastCycleUpdate?.semaphores && (() => {
+                  const s = simulation.lastCycleUpdate.semaphores;
+                  const worst = [s.sla, s.storage, s.flights].includes('RED') ? 'RED'
+                    : [s.sla, s.storage, s.flights].includes('AMBER') ? 'AMBER' : 'GREEN';
+                  const color = worst === 'RED' ? '#FF4D4D' : worst === 'AMBER' ? '#FFC857' : '#00FF9C';
+                  const label = worst === 'RED' ? 'Crítica' : worst === 'AMBER' ? 'En riesgo' : 'Saludable';
+                  return (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '5px 12px', borderRadius: 8,
+                      background: `${color}14`, border: `1px solid ${color}55`,
+                      backdropFilter: 'blur(4px)',
+                    }} title={`SLA ${s.slaCompliance?.toFixed?.(0) ?? '?'}% · Almacén ${Math.round((s.storageOccupancy ?? 0) * 100)}% · Flota ${Math.round((s.flightOccupancy ?? 0) * 100)}%`}>
+                      <div style={{ width: 7, height: 7, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
+                      <span style={{ fontSize: 9, color: '#4A6080', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Salud</span>
+                      <span style={{ fontSize: 12, color, fontWeight: 700 }}>{label}</span>
+                      <span style={{ fontSize: 10, color: '#6080A0', fontFamily: 'monospace' }}>SLA {s.slaCompliance?.toFixed?.(0) ?? '?'}%</span>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -531,6 +556,7 @@ export default function App() {
               onSelectFlight={handleSelectFlight}
               onSelectAirport={handleSelectAirport}
               isRunning={simulation.isRunning}
+              simulationTime={displayedSimulationTime}
               mode={simulation.mode}
               activeFlights={filteredActiveFlights}
               flightPlanFlights={filteredFlightPlanFlights}
@@ -558,6 +584,11 @@ export default function App() {
             onSelectAirport={handleSelectAirport}
             onSelectFlight={handleSelectFlight}
             onSelectShipment={handleSelectShipment}
+            utFilter={utFilter}
+            warehouseFilter={warehouseFilter}
+            onUtFilterChange={setUtFilter}
+            onWarehouseFilterChange={setWarehouseFilter}
+            viewerCount={simulation.viewerCount}
           />
         )}
       </div>
@@ -577,7 +608,7 @@ export default function App() {
           onCancel={simulation.cancelFlight}
           flightPlanFlights={filteredFlightPlanFlights.length > 0 ? filteredFlightPlanFlights : simulation.flightPlanFlights}
           activeFlights={filteredActiveFlights.length > 0 ? filteredActiveFlights : simulation.activeFlights}
-          defaultDay={formatApiDate(displayedSimulationTime)}
+          simulationTime={displayedSimulationTime}
         />
       )}
 

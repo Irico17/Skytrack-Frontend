@@ -275,6 +275,8 @@ export interface BackendDaySnapshot {
   batchesCritical: number;
   avgFitness: number;
   collapseLevel: string;
+  avgOccupancy?: number;
+  replanned?: number;
 }
 
 export interface BackendSimulationResults {
@@ -376,4 +378,26 @@ export interface BackendStaticDataUploadResponse {
   shipmentsLoaded: number;
   dbAirportsImported: number;
   dbFlightsImported: number;
+}
+
+export interface BackendStaticDataBatchStartResponse {
+  sessionId: string;
+  message: string;
+  shipmentFilesStaged: number;
+}
+
+export interface BackendStaticDataBatchProgressResponse {
+  sessionId: string;
+  filesInBatch: number;
+  shipmentFilesStaged: number;
+  message: string;
+}
+
+export interface StaticDataUploadProgress {
+  phase: 'starting' | 'shipments' | 'finalizing' | 'done';
+  currentBatch: number;
+  totalBatches: number;
+  filesUploaded: number;
+  totalFiles: number;
+  message?: string;
 }

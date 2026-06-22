@@ -12,6 +12,9 @@ import type {
   BackendShipmentResponse,
   BackendCancellationResult,
   BackendStaticDataUploadResponse,
+  BackendStaticDataBatchStartResponse,
+  BackendStaticDataBatchProgressResponse,
+  StaticDataUploadProgress,
 } from '../types/backend';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '/api';
@@ -178,4 +181,134 @@ export async function uploadStaticDataset(
     throw new Error(`HTTP ${res.status}: ${body}`);
   }
   return await res.json() as BackendStaticDataUploadResponse;
+}
+
+const SHIPMENT_BATCH_SIZE = 10;
+
+async function postMultipart<T>(url: string, form: FormData): Promise<T> {
+  const res = await fetch(`${BASE}${url}`, { method: 'POST', body: form });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`HTTP ${res.status}: ${body}`);
+  }
+  return await res.json() as T;
+}
+
+export async function startStaticDataBatch(
+  airportsFile: File,
+  flightsFile: File,
+  sessionId?: string
+): Promise<BackendStaticDataBatchStartResponse> {
+  const form = new FormData();
+  if (sessionId) form.append('sessionId', sessionId);
+  form.append('airports', airportsFile);
+  form.append('flights', flightsFile);
+  return postMultipart<BackendStaticDataBatchStartResponse>('/data/static/batch/start', form);
+}
+
+export async function appendStaticDataBatchShipments(
+  sessionId: string,
+  shipmentFiles: File[]
+): Promise<BackendStaticDataBatchProgressResponse> {
+  const form = new FormData();
+  form.append('sessionId', sessionId);
+  shipmentFiles.forEach(file => form.append('shipments', file));
+  return postMultipart<BackendStaticDataBatchProgressResponse>('/data/static/batch/shipments', form);
+}
+
+export async function finalizeStaticDataBatch(
+  sessionId: string
+): Promise<BackendStaticDataUploadResponse> {
+  return request<BackendStaticDataUploadResponse>('/data/static/batch/finalize', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId }),
+  });
+}
+
+export async function cancelStaticDataBatch(sessionId: string): Promise<void> {
+  await request<void>('/data/static/batch/cancel', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId }),
+  });
+}
+
+/** Carga por lotes: aeropuertos+vuelos primero, envíos en grupos de 10, swap atómico al finalizar. */
+export async function uploadStaticDatasetBatched(
+  airportsFile: File,
+  flightsFile: File,
+  shipmentFiles: File[],
+  onProgress?: (progress: StaticDataUploadProgress) => void
+): Promise<BackendStaticDataUploadResponse> {
+  const totalFiles = shipmentFiles.length;
+  const totalBatches = Math.max(1, Math.ceil(totalFiles / SHIPMENT_BATCH_SIZE));
+
+  onProgress?.({
+    phase: 'starting',
+    currentBatch: 0,
+    totalBatches,
+    filesUploaded: 0,
+    totalFiles,
+    message: 'Iniciando sesión de carga…',
+  });
+
+  const started = await startStaticDataBatch(airportsFile, flightsFile);
+  const sessionId = started.sessionId;
+  let filesUploaded = 0;
+
+  try {
+    for (let i = 0; i < totalBatches; i++) {
+      const batch = shipmentFiles.slice(i * SHIPMENT_BATCH_SIZE, (i + 1) * SHIPMENT_BATCH_SIZE);
+      if (batch.length === 0) continue;
+
+      onProgress?.({
+        phase: 'shipments',
+        currentBatch: i + 1,
+        totalBatches,
+        filesUploaded,
+        totalFiles,
+        message: `Subiendo lote ${i + 1} de ${totalBatches}…`,
+      });
+
+      const progress = await appendStaticDataBatchShipments(sessionId, batch);
+      filesUploaded = progress.shipmentFilesStaged;
+
+      onProgress?.({
+        phase: 'shipments',
+        currentBatch: i + 1,
+        totalBatches,
+        filesUploaded,
+        totalFiles,
+        message: `Lote ${i + 1} de ${totalBatches} completado`,
+      });
+    }
+
+    onProgress?.({
+      phase: 'finalizing',
+      currentBatch: totalBatches,
+      totalBatches,
+      filesUploaded,
+      totalFiles,
+      message: 'Validando y aplicando cambios…',
+    });
+
+    const result = await finalizeStaticDataBatch(sessionId);
+
+    onProgress?.({
+      phase: 'done',
+      currentBatch: totalBatches,
+      totalBatches,
+      filesUploaded: totalFiles,
+      totalFiles,
+      message: 'Carga completada',
+    });
+
+    return result;
+  } catch (err) {
+    try {
+      await cancelStaticDataBatch(sessionId);
+    } catch {
+      // Ignorar error de limpieza; propagar el error original.
+    }
+    throw err;
+  }
 }
