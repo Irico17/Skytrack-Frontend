@@ -10,6 +10,7 @@ import { CancelFlightModal } from './components/CancelFlightModal';
 import { StaticDataUploadModal } from './components/StaticDataUploadModal';
 import { FiveDayResults } from './components/FiveDayResults';
 import { CollapseResults } from './components/CollapseResults';
+import { DayToDayResults } from './components/DayToDayResults';
 import { ShipmentDetailPanel } from './components/ShipmentDetailPanel';
 import { useSimulation } from './hooks/useSimulation';
 import { SimulationMode, Shipment } from './data/mockData';
@@ -79,14 +80,14 @@ export default function App() {
   const [showStaticDataUpload, setShowStaticDataUpload] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [showCollapseResults, setShowCollapseResults] = useState(false);
+  const [showDayToDayResults, setShowDayToDayResults] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(true);
   const [bottomCollapsed, setBottomCollapsed] = useState(true);
   const [mapExpanded, setMapExpanded] = useState(false);
 
-  const displayedSimulationTime = simulation.mode === 'collapse'
-    ? simulation.simulationTime
-    : simulation.simClock;
+  // Todos los modos usan el reloj simulado interpolado del backend (simClock).
+  const displayedSimulationTime = simulation.simClock;
 
   const simClockDisplay = formatSimulationClock(displayedSimulationTime);
   const hidePanels = mapExpanded;
@@ -106,6 +107,14 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [simulation.collapseComplete, simulation.mode]);
+
+  // Auto-show day-to-day report when operations are closed
+  React.useEffect(() => {
+    if (simulation.dayToDayComplete && simulation.mode === 'realtime') {
+      const timer = setTimeout(() => setShowDayToDayResults(true), 400);
+      return () => clearTimeout(timer);
+    }
+  }, [simulation.dayToDayComplete, simulation.mode]);
 
   const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -267,6 +276,7 @@ export default function App() {
     setSelectedEntity(null);
     setShowResults(false);
     setShowCollapseResults(false);
+    setShowDayToDayResults(false);
   }, [simulation]);
 
   return (
@@ -274,16 +284,18 @@ export default function App() {
       {/* Top Bar */}
       <TopBar
         isRunning={simulation.isRunning}
+        isPaused={simulation.isPaused}
         mode={simulation.mode}
         simulationTime={displayedSimulationTime}
         events={simulation.events}
         onStart={simulation.start}
         onPause={simulation.pause}
+        onResume={simulation.resume}
         onReset={handleReset}
         onModeChange={simulation.setMode}
         totalShipments={simulation.shipments.length}
         criticalCount={criticalCount}
-        startDisabled={simulation.simulationComplete || simulation.collapseComplete}
+        startDisabled={simulation.simulationComplete || simulation.collapseComplete || simulation.dayToDayComplete}
       />
 
       {/* Main Content */}
@@ -308,9 +320,11 @@ export default function App() {
             onAddShipment={() => setShowAddShipment(true)}
             onCancelFlight={() => setShowCancelFlight(true)}
             onUploadStaticData={() => setShowStaticDataUpload(true)}
-            onSkipToCollapseComplete={simulation.skipToCollapseComplete}
+            onCloseOperations={simulation.closeOperations}
             onViewResults={() => setShowResults(true)}
             onViewCollapseResults={() => setShowCollapseResults(true)}
+            onViewDayToDayResults={() => setShowDayToDayResults(true)}
+            dayToDayComplete={simulation.dayToDayComplete}
           />
         )}
 
@@ -327,7 +341,6 @@ export default function App() {
               onSelectFlight={handleSelectFlight}
               onSelectShipment={handleSelectShipment}
               toggles={toggles}
-              simClock={simulation.mode === 'collapse' ? displayedSimulationTime : undefined}
               simClockRef={simulation.simClockRef}
               activeFlights={mapActiveFlights}
               flightPlanFlights={mapFlightPlanFlights}
@@ -411,6 +424,19 @@ export default function App() {
                     <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#6080A0' }}>
                       {realClock.toLocaleTimeString('en-US', { hour12: false })}
                     </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Preparando simulación — antes del primer ciclo del backend */}
+            {simulation.isRunning && !simulation.lastCycleUpdate && (
+              <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
+                <div className="flex items-center gap-3 px-5 py-3 rounded-xl bg-[#0D1E38]/95 border border-[#4DA6FF]/40 backdrop-blur-sm shadow-2xl">
+                  <div className="w-4 h-4 rounded-full border-2 border-[#4DA6FF]/30 border-t-[#4DA6FF] animate-spin" />
+                  <div className="flex flex-col">
+                    <span className="text-xs text-[#C8D8F0]" style={{ fontWeight: 600 }}>Preparando simulación…</span>
+                    <span className="text-[10px] text-[#4A6080]">Cargando datos y ejecutando la primera planificación</span>
                   </div>
                 </div>
               </div>
@@ -573,6 +599,20 @@ export default function App() {
           lastCycleUpdate={simulation.lastCycleUpdate}
           results={simulation.simulationResults}
           onClose={() => setShowResults(false)}
+          onReset={handleReset}
+        />
+      )}
+
+      {/* Day-to-Day Operations Report */}
+      {showDayToDayResults && (
+        <DayToDayResults
+          results={simulation.simulationResults}
+          lastCycleUpdate={simulation.lastCycleUpdate}
+          airports={simulation.airports}
+          shipments={simulation.shipments}
+          events={simulation.events}
+          simulationTime={displayedSimulationTime}
+          onClose={() => setShowDayToDayResults(false)}
           onReset={handleReset}
         />
       )}

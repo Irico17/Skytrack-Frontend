@@ -590,6 +590,7 @@ export function RightPanel({
   const [transportSort, setTransportSort] = useState<'load' | 'departure' | 'route'>('load');
   const [utFilter, setUtFilter] = useState('all');
   const [warehouseFilter, setWarehouseFilter] = useState('all');
+  const [warehouseContinent, setWarehouseContinent] = useState('all');
   const [warehouseSort, setWarehouseSort] = useState<'occupancy' | 'occupancyAsc' | 'code' | 'city'>('occupancy');
   const [shipmentSort, setShipmentSort] = useState<'progress' | 'progressAsc' | 'bags' | 'route'>('progress');
   const [shipmentFilter, setShipmentFilter] = useState('all');
@@ -603,7 +604,7 @@ export function RightPanel({
   const [inspectorStack, setInspectorStack] = useState<InspectorTarget[]>([]);
   const [inspectorSearch, setInspectorSearch] = useState('');
   const [warehouseFlow, setWarehouseFlow] = useState<'all' | 'out' | 'in'>('all');
-  const isBackendStatsMode = mode === '5day' || mode === 'realtime';
+  const isBackendStatsMode = mode === '5day' || mode === 'realtime' || mode === 'collapse';
   const hasBackendStats = isBackendStatsMode && lastCycleUpdate != null;
   const backendMetrics = hasBackendStats ? lastCycleUpdate?.operationalMetrics : undefined;
 
@@ -758,6 +759,22 @@ export function RightPanel({
       });
   }, [activeTab, baseTransportUnits, opsSearch, transportSort, utFilter]);
 
+  // Continentes disponibles según los aeropuertos reales del backend.
+  const continentOptions = useMemo(() => {
+    const present = new Set<string>();
+    for (const a of airports) {
+      if (a.continent) present.add(a.continent);
+    }
+    const labels: Record<string, string> = {
+      AMERICA: 'América', SOUTH_AMERICA: 'Sudamérica', NORTH_AMERICA: 'Norteamérica',
+      EUROPE: 'Europa', ASIA: 'Asia', AFRICA: 'África', OCEANIA: 'Oceanía',
+    };
+    return [
+      { id: 'all', label: 'Todos' },
+      ...Array.from(present).sort().map(c => ({ id: c, label: labels[c] ?? c })),
+    ];
+  }, [airports]);
+
   const filteredWarehouses = useMemo(() => {
     if (activeTab !== 'warehouse') return [];
 
@@ -765,13 +782,14 @@ export function RightPanel({
     return airports
       .filter(a => !query || `${a.id} ${a.city} ${a.country} ${a.name}`.toLowerCase().includes(query))
       .filter(a => warehouseFilter === 'all' || a.status === warehouseFilter)
+      .filter(a => warehouseContinent === 'all' || (a.continent ?? '') === warehouseContinent)
       .sort((a, b) => {
         if (warehouseSort === 'occupancyAsc') return getOccupancyPercent(a.occupancy, a.capacity) - getOccupancyPercent(b.occupancy, b.capacity);
         if (warehouseSort === 'code') return a.id.localeCompare(b.id);
         if (warehouseSort === 'city') return a.city.localeCompare(b.city);
         return getOccupancyPercent(b.occupancy, b.capacity) - getOccupancyPercent(a.occupancy, a.capacity);
       });
-  }, [activeTab, airports, opsSearch, warehouseFilter, warehouseSort]);
+  }, [activeTab, airports, opsSearch, warehouseFilter, warehouseContinent, warehouseSort]);
 
   const operationalShipments = useMemo(() => {
     if (activeTab !== 'shipments') return [];
@@ -1797,6 +1815,9 @@ export function RightPanel({
                   />
                 </div>
                 <FilterChips options={WAREHOUSE_FILTER_OPTIONS} value={warehouseFilter} onChange={setWarehouseFilter} />
+                {continentOptions.length > 1 && (
+                  <FilterChips options={continentOptions} value={warehouseContinent} onChange={setWarehouseContinent} />
+                )}
                 <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.1em', fontWeight: 600 }}>
                   ALMACENES · {filteredWarehouses.length}
                 </span>

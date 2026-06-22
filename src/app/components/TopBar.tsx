@@ -7,11 +7,13 @@ import { SimulationMode, SimEvent } from '../data/mockData';
 
 interface TopBarProps {
   isRunning: boolean;
+  isPaused: boolean;
   mode: SimulationMode;
   simulationTime: Date;
   events: SimEvent[];
   onStart: () => void;
   onPause: () => void;
+  onResume: () => void;
   onReset: () => void;
   onModeChange: (mode: SimulationMode) => void;
   totalShipments: number;
@@ -32,7 +34,7 @@ const MODE_ICONS: Record<SimulationMode, React.ReactNode> = {
 };
 
 export function TopBar({
-  isRunning, mode, simulationTime, events, onStart, onPause, onReset,
+  isRunning, isPaused, mode, simulationTime, events, onStart, onPause, onResume, onReset,
   onModeChange, totalShipments, criticalCount,
   startDisabled = false,
 }: TopBarProps) {
@@ -91,7 +93,23 @@ export function TopBar({
 
       {/* Simulation Controls */}
       <div className="flex items-center gap-2">
-        {!isRunning ? (
+        {isRunning ? (
+          <button
+            onClick={onPause}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FFC857]/15 border border-[#FFC857]/40 text-[#FFC857] text-xs hover:bg-[#FFC857]/25 transition-colors"
+          >
+            <Pause className="w-3 h-3 fill-current" />
+            <span>Pausar</span>
+          </button>
+        ) : isPaused ? (
+          <button
+            onClick={onResume}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors"
+          >
+            <Play className="w-3 h-3 fill-current" />
+            <span>Reanudar</span>
+          </button>
+        ) : (
           <button
             onClick={onStart}
             disabled={startDisabled}
@@ -99,14 +117,6 @@ export function TopBar({
           >
             <Play className="w-3 h-3 fill-current" />
             <span>Iniciar</span>
-          </button>
-        ) : (
-          <button
-            onClick={onPause}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FFC857]/15 border border-[#FFC857]/40 text-[#FFC857] text-xs hover:bg-[#FFC857]/25 transition-colors"
-          >
-            <Pause className="w-3 h-3 fill-current" />
-            <span>Pausar</span>
           </button>
         )}
 
@@ -124,9 +134,9 @@ export function TopBar({
       {/* Status indicators */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-[#00FF9C] animate-pulse' : 'bg-[#4A5568]'}`} />
-          <span className={`text-xs ${isRunning ? 'text-[#00FF9C]' : 'text-[#4A5568]'}`}>
-            {isRunning ? 'EN VIVO' : 'PAUSADO'}
+          <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-[#00FF9C] animate-pulse' : isPaused ? 'bg-[#FFC857]' : 'bg-[#4A5568]'}`} />
+          <span className={`text-xs ${isRunning ? 'text-[#00FF9C]' : isPaused ? 'text-[#FFC857]' : 'text-[#4A5568]'}`}>
+            {isRunning ? 'EN VIVO' : isPaused ? 'PAUSADO' : 'DETENIDO'}
           </span>
         </div>
 

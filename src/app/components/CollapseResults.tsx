@@ -4,8 +4,8 @@ import {
   TrendingDown, Shield, Zap, Clock, Package, BarChart3,
   ArrowUpRight, ArrowDownRight, Minus, CheckCircle, Activity,
 } from 'lucide-react';
-import { CollapseMetrics, DaySnapshot } from '../hooks/useSimulation';
-import { Shipment, SimEvent, Airport, INITIAL_AIRPORTS } from '../data/mockData';
+import { CollapseMetrics } from '../hooks/useSimulation';
+import { Shipment, SimEvent, Airport, getOccupancyPercent } from '../data/mockData';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip,
   ResponsiveContainer, CartesianGrid, ReferenceLine, Cell,
@@ -159,6 +159,21 @@ const CustomAreaTooltip = ({ active, payload, label }: { active?: boolean; paylo
 export function CollapseResults({ collapseMetrics, shipments, events, airports, onClose, onReset }: CollapseResultsProps) {
   const startDate = new Date();
 
+  // Estadísticas de aeropuertos derivadas de datos REALES del backend (ocupación pico vía WS).
+  const airportStats = React.useMemo(() => {
+    const totalAirports = airports.length;
+    let affectedAirports = 0;
+    let peakCongestion = 0;
+    let peakAirport = '—';
+    for (const a of airports) {
+      const peakVal = a.peakOccupancy !== undefined ? a.peakOccupancy : a.occupancy;
+      const pct = Math.round((peakVal / Math.max(a.capacity, 1)) * 100);
+      if (pct >= 90) affectedAirports += 1;
+      if (pct > peakCongestion) { peakCongestion = pct; peakAirport = a.id; }
+    }
+    return { totalAirports, affectedAirports, peakCongestion, peakAirport };
+  }, [airports]);
+
   const networkHealth = React.useMemo(() => {
     const tCol = parseInt(collapseMetrics.timeToCollapse) || 12;
     const tRec = parseInt(collapseMetrics.recoveryTime) || 9;
@@ -177,15 +192,14 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
 
   const airportOverload = React.useMemo(() => {
     return airports.map(a => {
-      const initial = INITIAL_AIRPORTS.find(ia => ia.id === a.id);
-      const normalPct = initial ? Math.round((initial.occupancy / initial.capacity) * 100) : 60;
+      const currentPct = getOccupancyPercent(a.occupancy, a.capacity);
       const peakVal = a.peakOccupancy !== undefined ? a.peakOccupancy : a.occupancy;
       const peakPct = Math.round((peakVal / Math.max(a.capacity, 1)) * 100);
       const color = peakPct >= 90 ? '#FF4D4D' : peakPct >= 75 ? '#FFC857' : '#00FF9C';
       return {
         id: a.id,
         city: a.city,
-        normal: normalPct,
+        normal: currentPct,
         peak: peakPct,
         color
       };
@@ -291,12 +305,12 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
           />
           <MetricCard
             label="AEROPUERTOS AFECTADOS"
-            value={collapseMetrics.affectedAirports}
-            subtext={`De ${collapseMetrics.totalAirports} hubs`}
+            value={airportStats.affectedAirports}
+            subtext={`De ${airportStats.totalAirports} hubs`}
             color="#FF4D4D"
             icon={<AlertOctagon className="w-3.5 h-3.5" />}
             trend="down"
-            trendValue={`${Math.round(collapseMetrics.affectedAirports / collapseMetrics.totalAirports * 100)}% de la red`}
+            trendValue={airportStats.totalAirports > 0 ? `${Math.round(airportStats.affectedAirports / airportStats.totalAirports * 100)}% de la red` : '—'}
           />
           <MetricCard
             label="ENVÍOS RETRASADOS"
@@ -309,9 +323,9 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
           />
           <MetricCard
             label="CONGESTIÓN PICO"
-            value={collapseMetrics.peakCongestion}
+            value={airportStats.peakCongestion}
             unit="%"
-            subtext={`Hub ${collapseMetrics.peakAirport}`}
+            subtext={`Hub ${airportStats.peakAirport}`}
             color="#FF4D4D"
             icon={<TrendingDown className="w-3.5 h-3.5" />}
             trend="down"
@@ -358,7 +372,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
 
           {/* Airport Overload Comparison */}
           <div className="bg-[#0A1628] rounded-xl border border-[#1E3058] p-4">
-            <SectionTitle icon={<BarChart3 className="w-3.5 h-3.5" />}>COMPARACIÓN DE CARGA — NORMAL VS PICO DE COLAPSO</SectionTitle>
+            <SectionTitle icon={<BarChart3 className="w-3.5 h-3.5" />}>CARGA ACTUAL VS PICO DE COLAPSO</SectionTitle>
             <div style={{ height: 200 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={airportOverload} margin={{ top: 5, right: 5, left: -20, bottom: 0 }} barSize={12}>
@@ -366,13 +380,13 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
                   <XAxis dataKey="id" tick={{ fill: '#4A6080', fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis domain={[0, 100]} tick={{ fill: '#4A6080', fontSize: 9 }} axisLine={false} tickLine={false} unit="%" />
                   <ReTooltip cursor={{ fill: 'rgba(255,77,77,0.05)' }} />
-                  <Bar isAnimationActive={false} dataKey="normal" name="Normal" radius={[2, 2, 0, 0]} fill="#4DA6FF" fillOpacity={0.6} />
+                  <Bar isAnimationActive={false} dataKey="normal" name="Actual" radius={[2, 2, 0, 0]} fill="#4DA6FF" fillOpacity={0.6} />
                   <Bar isAnimationActive={false} dataKey="peak" name="Pico" radius={[2, 2, 0, 0]} fill="#FF4D4D" fillOpacity={0.7} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
             <div className="flex items-center gap-4 mt-3 justify-center">
-              {[{ color: '#4DA6FF', label: 'Normal' }, { color: '#FF4D4D', label: 'Pico de Colapso' }].map(l => (
+              {[{ color: '#4DA6FF', label: 'Actual' }, { color: '#FF4D4D', label: 'Pico de Colapso' }].map(l => (
                 <div key={l.label} className="flex items-center gap-1.5">
                   <div className="w-3 h-2 rounded-sm" style={{ backgroundColor: l.color }} />
                   <span className="text-[10px] text-[#4A6080]">{l.label}</span>
@@ -512,7 +526,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
                   <div className="text-[10px] text-[#4A6080] mb-2">{a.city}</div>
                   <div className="flex items-center gap-3 mb-1">
                     <div className="flex-1">
-                      <div className="text-[9px] text-[#4A6080] mb-0.5">Normal</div>
+                      <div className="text-[9px] text-[#4A6080] mb-0.5">Actual</div>
                       <div className="h-1 bg-[#1E3058] rounded-full overflow-hidden">
                         <div className="h-full rounded-full" style={{ width: `${a.normal}%`, backgroundColor: '#4DA6FF' }} />
                       </div>
@@ -539,7 +553,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
       <div className="flex-shrink-0 h-12 bg-[#0A1628] border-t border-[#1E3058] flex items-center px-6 gap-4">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-[#FF4D4D]" />
-          <span className="text-[10px] text-[#4A6080]">Colapso simulado · {collapseMetrics.affectedAirports}/{collapseMetrics.totalAirports} aeropuertos críticos · Resiliencia: {collapseMetrics.resilienceScore}/100</span>
+          <span className="text-[10px] text-[#4A6080]">Colapso (backend) · {airportStats.affectedAirports}/{airportStats.totalAirports} aeropuertos críticos · Cumplimiento SLA: {collapseMetrics.resilienceScore}%</span>
         </div>
         <div className="flex-1" />
         <button

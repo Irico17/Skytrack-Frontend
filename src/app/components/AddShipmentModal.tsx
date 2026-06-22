@@ -13,6 +13,7 @@ export function AddShipmentModal({ onClose, onAdd, airports }: AddShipmentModalP
     origin: '',
     destination: '',
     luggageCount: '',
+    clientId: '',
     status: 'on-time' as Shipment['status'],
   });
   const [error, setError] = useState('');
@@ -30,9 +31,11 @@ export function AddShipmentModal({ onClose, onAdd, airports }: AddShipmentModalP
 
     setSubmitting(true);
     try {
+      const trimmedClient = form.clientId.trim();
       await onAdd({
-        airlineId: 'UI',
-        airline: 'Operación manual',
+        // airlineId transporta el clientId; vacío → el hook autogenera uno único por ejecución.
+        airlineId: trimmedClient,
+        airline: trimmedClient || 'Operación manual',
         origin: form.origin,
         destination: form.destination,
         luggageCount: parseInt(form.luggageCount),
@@ -151,11 +154,27 @@ export function AddShipmentModal({ onClose, onAdd, airports }: AddShipmentModalP
             )}
           </div>
 
+          {/* Client ID (opcional) */}
+          <div>
+            <label className="block text-[11px] text-[#4A6080] mb-1.5" style={{ letterSpacing: '0.1em' }}>
+              CLIENTE
+              <span className="text-[#2A4060] ml-1">(opcional)</span>
+            </label>
+            <input
+              type="text"
+              value={form.clientId}
+              onChange={e => setField('clientId', e.target.value)}
+              className={InputStyle}
+              placeholder="Ej. 0019169 — vacío genera uno automático"
+              maxLength={16}
+            />
+          </div>
+
           {/* Info box */}
           <div className="flex items-start gap-3 p-3 rounded-xl bg-[#4DA6FF]/8 border border-[#4DA6FF]/20">
             <AlertCircle className="w-4 h-4 text-[#4DA6FF] flex-shrink-0 mt-0.5" />
             <div className="text-[11px] text-[#6080A0] leading-relaxed">
-              El lote quedará pendiente hasta el siguiente ciclo de planificación del backend.
+              El lote quedará pendiente hasta el siguiente ciclo de planificación del backend. Si no indicas un cliente, se generará un identificador único para esta ejecución.
             </div>
           </div>
 

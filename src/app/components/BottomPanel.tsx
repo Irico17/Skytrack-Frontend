@@ -423,7 +423,7 @@ export function BottomPanel({
   const [activeTab, setActiveTab] = useState<'detail' | 'shipments' | 'active'>('detail');
   const [shipmentSearch, setShipmentSearch] = useState('');
   const [shipmentStatusFilter, setShipmentStatusFilter] = useState<'all' | 'on-time' | 'delayed' | 'critical' | 'inflight' | 'delivered'>('all');
-  const isBackendStatsMode = mode === '5day' || mode === 'realtime';
+  const isBackendStatsMode = mode === '5day' || mode === 'realtime' || mode === 'collapse';
   const hasBackendStats = isBackendStatsMode && lastCycleUpdate != null;
   const backendMetrics = lastCycleUpdate?.operationalMetrics;
 

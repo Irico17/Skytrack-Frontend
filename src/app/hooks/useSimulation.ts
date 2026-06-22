@@ -1,14 +1,12 @@
 import { useState, useEffect, useRef, useCallback, Dispatch, SetStateAction, startTransition } from 'react';
 import {
   Airport, Flight, Shipment, SimEvent, SimulationMode,
-  INITIAL_AIRPORTS, INITIAL_FLIGHTS, INITIAL_SHIPMENTS,
   getOccupancyStatus,
 } from '../data/mockData';
 import {
   fetchAirports,
   fetchFlightPlan,
   startSimulation,
-  startDayToDaySimulation,
   stopSimulation,
   pauseSimulation,
   resumeSimulation,
@@ -69,12 +67,14 @@ interface SimulationState {
   flights: Flight[];
   shipments: Shipment[];
   isRunning: boolean;
+  isPaused: boolean;
   mode: SimulationMode;
   simulationTime: Date;
   events: SimEvent[];
   hasReplanned: boolean;
   daySnapshots: DaySnapshot[];
   simulationComplete: boolean;
+  dayToDayComplete: boolean;
   daysElapsed: number;
   collapseComplete: boolean;
   collapseMetrics: CollapseMetrics | null;
@@ -88,10 +88,10 @@ interface UseSimulationReturn extends SimulationState {
   setMode: (mode: SimulationMode) => void;
   start: () => void;
   pause: () => void;
+  resume: () => void;
   reset: () => void;
+  closeOperations: () => void;
   replan: () => void;
-  skipToComplete: () => void;
-  skipToCollapseComplete: () => void;
   addShipment: (shipment: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => Promise<void>;
   cancelFlight: (flightId: string, day: string) => Promise<void>;
   uploadStaticData: (airportsFile: File, flightsFile: File, shipmentFiles: File[]) => Promise<BackendStaticDataUploadResponse>;
@@ -112,15 +112,7 @@ interface UseSimulationReturn extends SimulationState {
   lastCycleUpdate: BackendCycleUpdate | null;
 }
 
-// ==================== MOCK HELPERS (para modos realtime y collapse) ====================
-
-const DISRUPTION_MESSAGES = [
-  'Retraso reportado en manejo de equipaje',
-  'Disrupción climática afectando ruta',
-  'Escasez de personal de tierra detectada',
-  'Inspección aduanera causando retrasos',
-  'Problema técnico en punto de transferencia',
-];
+// ==================== CONSTANTES DE REPRODUCCIÓN / RELOJ ====================
 
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
 const PLAYBACK_DELAY_MS = 500;
@@ -130,7 +122,6 @@ const CLOCK_STATE_COMMIT_MS = 250;
 const SOLUTION_REFRESH_DELAY_MS = 1_200;
 const SOLUTION_MAPPING_CHUNK_SIZE = 250;
 const ACTIVE_SIM_STORAGE_KEY = 'skytrack.activeSimulation.v1';
-const MONTHS_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
 type BackendPlaybackMessage = BackendCycleUpdate | BackendStorageUpdate;
 
@@ -183,7 +174,15 @@ function clearStoredActiveSimulation(): void {
 }
 
 function isBackendMode(mode: SimulationMode): boolean {
-  return mode === 'realtime' || mode === '5day';
+  // Los tres escenarios usan el backend real. El colapso ya no es mock local.
+  return mode === 'realtime' || mode === '5day' || mode === 'collapse';
+}
+
+/** Mapea el modo de UI al ScenarioType del backend. */
+function modeToScenario(mode: SimulationMode): 'DAY_TO_DAY' | 'PERIOD_SIMULATION' | 'COLLAPSE_SIMULATION' {
+  if (mode === 'realtime') return 'DAY_TO_DAY';
+  if (mode === 'collapse') return 'COLLAPSE_SIMULATION';
+  return 'PERIOD_SIMULATION';
 }
 
 function formatApiDateTime(date: Date): string {
@@ -247,24 +246,43 @@ function activeSimulationToStored(active: BackendActiveSimulation): StoredActive
   };
 }
 
-function buildPresetSnapshots(startDate: Date): DaySnapshot[] {
-  const fmt = (d: Date) => `${String(d.getDate()).padStart(2,'0')} ${MONTHS_ES[d.getMonth()]}`;
-  const offset = (n: number) => { const d = new Date(startDate); d.setDate(d.getDate() + n); return d; };
-  return [
-    { day:1, date:fmt(offset(1)), onTimePct:80, delayed:4, critical:1, completed:3, totalBags:2840, newEvents:5, avgOccupancy:71, replanned:0, keyEvent:'Almacén DXB al 94%', severity:'warning' },
-    { day:2, date:fmt(offset(2)), onTimePct:68, delayed:7, critical:3, completed:6, totalBags:3120, newEvents:11, avgOccupancy:79, replanned:0, keyEvent:'Disrupción climática: vuelos retrasados', severity:'warning' },
-    { day:3, date:fmt(offset(3)), onTimePct:54, delayed:8, critical:5, completed:8, totalBags:3450, newEvents:18, avgOccupancy:87, replanned:3, keyEvent:'CRÍTICO: Suspensión parcial del hub', severity:'critical' },
-    { day:4, date:fmt(offset(4)), onTimePct:71, delayed:5, critical:2, completed:14, totalBags:3890, newEvents:9, avgOccupancy:76, replanned:9, keyEvent:'Replanificación completa activada', severity:'normal' },
-    { day:5, date:fmt(offset(5)), onTimePct:83, delayed:3, critical:1, completed:20, totalBags:4280, newEvents:4, avgOccupancy:67, replanned:12, keyEvent:'Operaciones normalizadas', severity:'normal' },
-  ];
-}
-
 function buildInitEvents(startDate: Date): SimEvent[] {
   const h = (m: number) => new Date(startDate.getTime() + m * 60000);
   return [
     { id:'init1', type:'alert', message:'Sistema listo para simulación de 5 días', time:h(0), severity:'info' },
     { id:'init2', type:'info', message:'Cargando datos del backend...', time:h(1), severity:'info' },
   ];
+}
+
+/** Sc del escenario de colapso = Sa(5) × K(75) = 375 min simulados por ciclo. */
+const COLLAPSE_SC_MIN = 375;
+
+/**
+ * Construye las métricas de colapso a partir de los resultados REALES del backend
+ * (sin datos mock). Los campos de aeropuertos (afectados/pico) se recalculan en
+ * CollapseResults usando los aeropuertos reales recibidos por WebSocket.
+ */
+function buildCollapseMetricsFromResults(
+  results: BackendSimulationResults,
+  finished: BackendSimulationFinished
+): CollapseMetrics {
+  const delayed = results.daySnapshots.reduce((acc, s) => acc + (s.batchesDelayed ?? 0), 0);
+  const totalSimMin = results.totalCycles * COLLAPSE_SC_MIN;
+  const totalSimHours = Math.max(1, Math.round(totalSimMin / 60));
+  return {
+    timeToCollapse: `${totalSimHours} h sim · ${results.totalCycles} ciclos`,
+    resilienceScore: Math.round(results.slaCompliancePercent),
+    affectedAirports: 0,
+    totalAirports: 0,
+    shipmentsDelayed: delayed,
+    shipmentsLost: results.unroutableBatches,
+    totalShipments: results.totalBatches,
+    peakCongestion: 0,
+    peakAirport: '—',
+    recoveryTime: 'N/A',
+    replannedRoutes: 0,
+    cascadeEvents: delayed + results.unroutableBatches,
+  };
 }
 
 // ==================== HOOK PRINCIPAL ====================
@@ -278,12 +296,14 @@ export function useSimulation(): UseSimulationReturn {
   const [flights, setFlights] = useState<Flight[]>([]);
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [mode, setMode] = useState<SimulationMode>('5day');
   const [simulationTime, setSimulationTime] = useState<Date>(today);
   const [events, setEvents] = useState<SimEvent[]>(() => buildInitEvents(today));
   const [hasReplanned, setHasReplanned] = useState(false);
   const [daySnapshots, setDaySnapshots] = useState<DaySnapshot[]>([]);
   const [simulationComplete, setSimulationComplete] = useState(false);
+  const [dayToDayComplete, setDayToDayComplete] = useState(false);
   const [daysElapsed, setDaysElapsed] = useState(0);
   const [collapseComplete, setCollapseComplete] = useState(false);
   const [collapseMetrics, setCollapseMetrics] = useState<CollapseMetrics | null>(null);
@@ -297,11 +317,13 @@ export function useSimulation(): UseSimulationReturn {
   const activeDiscoveryWsRef = useRef<SimulationWebSocket | null>(null);
   const activeDiscoveryInFlightRef = useRef(false);
 
-  // Refs para el mock (realtime / collapse)
-  const intervalRef    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const tickCountRef   = useRef(0);
-  const lastDayRef     = useRef(0);
-  const collapseTickRef= useRef(0);
+  // Secuencia para clientIds autogenerados en operación día a día (único por ejecución).
+  const uiClientSeqRef = useRef(0);
+  const nextUiClientId = useCallback(() => {
+    const seq = uiClientSeqRef.current++;
+    // Rango 9000000+ para no colisionar con los clientes del dataset (≤ ~0032767).
+    return String(9_000_000 + seq).padStart(7, '0');
+  }, []);
 
   // ===== RELOJ SIMULADO (corre a K× en tiempo real) =====
   const [simClock, setSimClock] = useState<Date>(today);
@@ -501,12 +523,8 @@ export function useSimulation(): UseSimulationReturn {
 
   useEffect(() => {
     if (isRunning) return;
-    if (mode === 'collapse') {
-      setAirports(INITIAL_AIRPORTS);
-      setFlights(INITIAL_FLIGHTS);
-      setShipments(INITIAL_SHIPMENTS);
-      return;
-    }
+    // Todos los modos usan datos reales del backend; al estar inactivo se limpian
+    // vuelos/envíos (los aeropuertos se cargan vía ensureBackendAirports).
     setFlights([]);
     setShipments([]);
   }, [mode, isRunning]);
@@ -563,6 +581,7 @@ export function useSimulation(): UseSimulationReturn {
     } else if (msg.type === 'SIMULATION_ERROR') {
       const failed = msg as BackendSimulationError;
       setIsRunning(false);
+      setIsPaused(false);
       setSimulationComplete(false);
       clockBaseRef.current = null;
       clearStoredActiveSimulation();
@@ -583,7 +602,9 @@ export function useSimulation(): UseSimulationReturn {
     } else if (msg.type === 'SIMULATION_FINISHED') {
       const finished = msg as BackendSimulationFinished;
       setIsRunning(false);
+      setIsPaused(false);
       setSimulationComplete(mode === '5day');
+      setCollapseComplete(mode === 'collapse');
       setDaysElapsed(mode === '5day' ? 5 : daysElapsed);
       clockBaseRef.current = null; // parar el reloj
       clearStoredActiveSimulation();
@@ -598,19 +619,25 @@ export function useSimulation(): UseSimulationReturn {
 
       setEvents(prev => [{
         id: `finish-${Date.now()}`,
-        type: 'info',
-        message: `Simulación completada — ${finished.batchesProcessed} lotes procesados en ${finished.totalCycles} ciclos`,
+        type: mode === 'collapse' ? 'alert' : 'info',
+        message: mode === 'collapse'
+          ? `Colapso logístico detectado — nivel ${finished.collapseLevel} — ${finished.batchesProcessed} lotes en ${finished.totalCycles} ciclos`
+          : `Simulación completada — ${finished.batchesProcessed} lotes procesados en ${finished.totalCycles} ciclos`,
         time: new Date(),
-        severity: 'info',
+        severity: mode === 'collapse' ? 'critical' : 'info',
       }, ...prev.slice(0, 19)]);
 
-      // Cargar resultados finales del archivo JSON
+      // Cargar resultados finales del archivo JSON (5 días y colapso exportan JSON)
       const id = simIdRef.current;
-      if (id && mode === '5day') {
+      if (id && (mode === '5day' || mode === 'collapse')) {
         getSimulationResults(id)
           .then(results => {
             setSimulationResults(results);
-            setDaySnapshots(mapDaySnapshots(results));
+            if (mode === '5day') {
+              setDaySnapshots(mapDaySnapshots(results));
+            } else {
+              setCollapseMetrics(buildCollapseMetricsFromResults(results, finished));
+            }
           })
           .catch(err => console.warn('No se pudieron cargar resultados finales:', err));
       }
@@ -702,6 +729,7 @@ export function useSimulation(): UseSimulationReturn {
 
       if (status.status === 'RUNNING' || status.status === 'PAUSED') {
         setIsRunning(status.status === 'RUNNING');
+        setIsPaused(status.status === 'PAUSED');
         if (status.status === 'PAUSED') {
           clockBaseRef.current = null;
         }
@@ -709,6 +737,7 @@ export function useSimulation(): UseSimulationReturn {
         storeActiveSimulation({ ...session, savedAt: Date.now() });
       } else {
         setIsRunning(false);
+        setIsPaused(false);
         clockBaseRef.current = null;
         wsRef.current?.disconnect();
         wsSimulationIdRef.current = null;
@@ -812,6 +841,7 @@ export function useSimulation(): UseSimulationReturn {
 
       if (status.status === 'RUNNING') {
         setIsRunning(true);
+        setIsPaused(false);
         connectSimulationStream();
         storeActiveSimulation({
           simulationId: id,
@@ -822,9 +852,11 @@ export function useSimulation(): UseSimulationReturn {
         });
       } else if (status.status === 'PAUSED') {
         setIsRunning(false);
+        setIsPaused(true);
         clockBaseRef.current = null;
       } else if (status.status === 'COMPLETED' || status.status === 'STOPPED') {
         setIsRunning(false);
+        setIsPaused(false);
         clockBaseRef.current = null;
         wsRef.current?.disconnect();
         clearStoredActiveSimulation();
@@ -943,100 +975,6 @@ export function useSimulation(): UseSimulationReturn {
   }, [mode, isRunning, applyAirportCapacities, commitClockState]);
 
 
-  // ===== MOCK LOOP (collapse) =====
-
-  const simStartMs = startDate.getTime();
-  const presets    = buildPresetSnapshots(startDate);
-
-  const getSpeed    = useCallback(() => mode === 'collapse' ? 0.006 : 0.0006, [mode]);
-  const getTimeStep = useCallback(() => mode === 'collapse' ? 900000 : 60000, [mode]);
-
-  useEffect(() => {
-    if (!isRunning || mode !== 'collapse') {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      return;
-    }
-
-    intervalRef.current = setInterval(() => {
-      tickCountRef.current += 1;
-      const speed    = getSpeed();
-      const timeStep = getTimeStep();
-
-      setSimulationTime(prev => {
-        const next = new Date(prev.getTime() + timeStep);
-
-        if (mode === 'collapse') {
-          collapseTickRef.current += 1;
-          const collapseDuration = 200;
-          const recoveryDuration = 150;
-          const totalDuration    = collapseDuration + recoveryDuration;
-
-          if (collapseTickRef.current >= totalDuration) {
-            setCollapseComplete(true);
-            setIsRunning(false);
-            setAirports(ap => {
-              const criticalCount = ap.filter(a => a.status === 'critical').length;
-              const peakAirport   = ap.reduce((max, a) => (a.occupancy/a.capacity) > (max.occupancy/max.capacity) ? a : max, ap[0]);
-              const peakPct       = Math.round((peakAirport.occupancy / peakAirport.capacity) * 100);
-              setShipments(sp => {
-                const delayed = sp.filter(s => s.status === 'delayed').length;
-                const lost    = sp.filter(s => s.progress < 0.3 && s.status === 'critical').length;
-                const resilienceScore = Math.round(
-                  ((sp.filter(s => s.status === 'on-time').length / sp.length) * 50) +
-                  (((ap.length - criticalCount) / ap.length) * 30) +
-                  (hasReplanned ? 20 : 5)
-                );
-                setCollapseMetrics({
-                  timeToCollapse: `${Math.round(collapseDuration*(timeStep/100)/60)} min`,
-                  resilienceScore, affectedAirports: criticalCount, totalAirports: ap.length,
-                  shipmentsDelayed: delayed, shipmentsLost: lost, totalShipments: sp.length,
-                  peakCongestion: peakPct, peakAirport: peakAirport.id,
-                  recoveryTime: `${Math.round(recoveryDuration*(timeStep/100)/60)} min`,
-                  replannedRoutes: hasReplanned ? Math.floor(sp.length*0.6) : 0,
-                  cascadeEvents: Math.floor(criticalCount*3 + delayed*1.5),
-                });
-                return sp;
-              });
-              return ap;
-            });
-            return new Date(simStartMs + totalDuration * timeStep);
-          }
-        }
-        return next;
-      });
-
-      setShipments(prev => prev.map(s => {
-        if (s.progress >= 1) return s;
-        const newProgress = Math.min(s.progress + speed, 1);
-        let newStatus = s.status;
-        if (!hasReplanned && Math.random() < 0.0008 && s.status === 'on-time') {
-          newStatus = 'delayed';
-          const msg = DISRUPTION_MESSAGES[Math.floor(Math.random() * DISRUPTION_MESSAGES.length)];
-          setEvents(prev => [{ id:`ev-${Date.now()}`, type:'delay', message:`${s.airline} ${s.origin}→${s.destination}: ${msg}`, time:new Date(), severity:'warning' }, ...prev.slice(0,19)]);
-        }
-        return { ...s, progress: newProgress, status: newStatus };
-      }));
-
-      if (tickCountRef.current % 50 === 0 && Math.random() < 0.3) {
-        setAirports(prev => {
-          const idx = Math.floor(Math.random() * prev.length);
-          const airport = prev[idx];
-          const delta = mode === 'collapse' ? Math.floor(Math.random()*50)+5 : Math.floor(Math.random()*30)-10;
-          const newOccupancy = Math.max(0, Math.min(airport.capacity, airport.occupancy + delta));
-          const pct = newOccupancy / airport.capacity;
-          const newStatus = pct >= 0.9 ? 'critical' : pct >= 0.7 ? 'warning' : 'normal';
-          const previousPeak = airport.peakOccupancy ?? 0;
-          const peakOccupancy = Math.max(previousPeak, newOccupancy);
-          const updated = [...prev];
-          updated[idx] = { ...airport, occupancy: newOccupancy, status: newStatus, peakOccupancy };
-          return updated;
-        });
-      }
-    }, 100);
-
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [isRunning, mode, hasReplanned, getSpeed, getTimeStep]);
-
   // ===== ACCIONES PRINCIPALES =====
 
   const start = useCallback(async () => {
@@ -1048,7 +986,11 @@ export function useSimulation(): UseSimulationReturn {
       const optimisticStart = parseApiDateTimeAsUtc(startDateTimeStr);
 
       setIsRunning(true);
+      setIsPaused(false);
       setSimulationComplete(false);
+      setDayToDayComplete(false);
+      setCollapseComplete(false);
+      setCollapseMetrics(null);
       setDaysElapsed(0);
       setDaySnapshots([]);
       setSimulationResults(null);
@@ -1074,7 +1016,8 @@ export function useSimulation(): UseSimulationReturn {
         }, ...prev.slice(0, 19)]);
 
         // 1. Cargar datos base en paralelo, pero pintar cada uno apenas llegue.
-        const flightPlanDays = isFiveDay ? 5 : 1;
+        //    Día a día proyecta 1 día; 5 días y colapso proyectan una ventana de 5 días.
+        const flightPlanDays = mode === 'realtime' ? 1 : 5;
         void ensureBackendAirports()
           .then(mappedAirports => {
             setEvents(prev => [{
@@ -1127,9 +1070,7 @@ export function useSimulation(): UseSimulationReturn {
         }, ...prev.slice(0, 19)]);
 
         // 2. Iniciar simulación en el backend (retorna K, simStartTime, etc.)
-        const res = isFiveDay
-          ? await startSimulation('PERIOD_SIMULATION', startDateTimeStr)
-          : await startDayToDaySimulation(startDateTimeStr);
+        const res = await startSimulation(modeToScenario(mode), startDateTimeStr);
         simIdRef.current = res.simulationId;
         setSimulationId(res.simulationId);
 
@@ -1196,9 +1137,6 @@ export function useSimulation(): UseSimulationReturn {
           severity: 'critical',
         }, ...prev.slice(0, 19)]);
       }
-    } else {
-      // Modo collapse — lógica local original
-      setIsRunning(true);
     }
   }, [mode, startDate, resetPlaybackBuffer, cancelScheduledSolutionRefresh, disconnectActiveDiscoveryStream, ensureBackendAirports, commitClockState, connectSimulationStream]);
 
@@ -1210,6 +1148,7 @@ export function useSimulation(): UseSimulationReturn {
       clockBaseRef.current = null;
       cancelScheduledSolutionRefresh();
       resetPlaybackBuffer();
+      setIsPaused(true);
     }
     setIsRunning(false);
   }, [mode, resetPlaybackBuffer, cancelScheduledSolutionRefresh, commitClockState]);
@@ -1220,8 +1159,9 @@ export function useSimulation(): UseSimulationReturn {
       const currentClock = simClockRef.current;
       clockBaseRef.current = { simMs: currentClock.getTime(), realMs: Date.now(), K: simKRef.current };
       connectSimulationStream();
+      setIsPaused(false);
+      setIsRunning(true);
     }
-    setIsRunning(true);
   }, [mode, connectSimulationStream]);
 
   const reset = useCallback(async () => {
@@ -1239,25 +1179,22 @@ export function useSimulation(): UseSimulationReturn {
     const now = new Date();
     now.setHours(8, 0, 0, 0);
     setIsRunning(false);
+    setIsPaused(false);
     setSimulationId(null);
-    setShipments(mode === 'collapse' ? INITIAL_SHIPMENTS : []);
-    setFlights(mode === 'collapse' ? INITIAL_FLIGHTS : []);
+    setShipments([]);
+    setFlights([]);
     setActiveFlights([]);
     setFlightPlanFlights([]);
     clockBaseRef.current = null;
     cancelScheduledSolutionRefresh();
     resetPlaybackBuffer();
     setSimulationK(SIMULATION_K);
-    if (mode === 'collapse') {
-      setAirports(INITIAL_AIRPORTS);
-    } else {
-      ensureBackendAirports()
-        .catch(() => {
-          backendAirportsRef.current = [];
-          backendAirportsLoadedRef.current = false;
-          setAirports([]);
-        });
-    }
+    ensureBackendAirports()
+      .catch(() => {
+        backendAirportsRef.current = [];
+        backendAirportsLoadedRef.current = false;
+        setAirports([]);
+      });
     setStartDate(now);
     simClockRef.current = now;
     commitClockState(now, true);
@@ -1266,14 +1203,41 @@ export function useSimulation(): UseSimulationReturn {
     setSimulationResults(null);
     setLastCycleUpdate(null);
     setSimulationComplete(false);
+    setDayToDayComplete(false);
     setDaysElapsed(0);
     setCollapseComplete(false);
     setCollapseMetrics(null);
-    lastDayRef.current = 0;
-    tickCountRef.current = 0;
-    collapseTickRef.current = 0;
     setEvents(buildInitEvents(now));
   }, [mode, resetPlaybackBuffer, cancelScheduledSolutionRefresh, ensureBackendAirports, commitClockState]);
+
+  // ESC-02: cierra la operación día a día, detiene el motor y carga el reporte JSON.
+  const closeOperations = useCallback(async () => {
+    const id = simIdRef.current;
+    if (!id || mode !== 'realtime') return;
+    await stopSimulation(id).catch(console.warn);
+    wsRef.current?.disconnect();
+    wsSimulationIdRef.current = null;
+    setIsRunning(false);
+    setIsPaused(false);
+    clockBaseRef.current = null;
+    cancelScheduledSolutionRefresh();
+    resetPlaybackBuffer();
+    clearStoredActiveSimulation();
+    setEvents(prev => [{
+      id: `close-${Date.now()}`,
+      type: 'info',
+      message: 'Operación día a día cerrada — generando reporte de la última planificación estable...',
+      time: new Date(),
+      severity: 'info',
+    }, ...prev.slice(0, 19)]);
+    try {
+      const results = await getSimulationResults(id);
+      setSimulationResults(results);
+    } catch (err) {
+      console.warn('No se pudo cargar el reporte día a día:', err);
+    }
+    setDayToDayComplete(true);
+  }, [mode, cancelScheduledSolutionRefresh, resetPlaybackBuffer]);
 
   const replan = useCallback(() => {
     if (isBackendMode(mode)) {
@@ -1300,55 +1264,6 @@ export function useSimulation(): UseSimulationReturn {
     setEvents(prev => [{ id:`replan-${Date.now()}`, type:'replan', message:'Replanificación de rutas completa', time:new Date(), severity:'info' }, ...prev.slice(0,19)]);
   }, [mode]);
 
-  const skipToComplete = useCallback(() => {
-    // Solo aplica para modos mock; en 5day real no hay skip
-    if (mode !== '5day') {
-      const endTime = new Date(startDate.getTime() + FIVE_DAYS_MS);
-      setIsRunning(false);
-      simClockRef.current = endTime;
-      setSimulationTime(endTime);
-      setDaysElapsed(5);
-      setDaySnapshots(presets);
-      setSimulationComplete(true);
-      setHasReplanned(true);
-      lastDayRef.current = 5;
-    }
-  }, [mode, startDate, presets]);
-
-  const skipToCollapseComplete = useCallback(() => {
-    setIsRunning(false);
-    setCollapseComplete(true);
-    collapseTickRef.current = 350;
-    setAirports(ap => {
-      const updated = ap.map((a, i) => {
-        const occupancy = i < 6 ? Math.floor(a.capacity * 0.96) : i < 12 ? Math.floor(a.capacity * 0.85) : a.occupancy;
-        const status = occupancy / a.capacity >= 0.9 ? 'critical' as const : occupancy / a.capacity >= 0.7 ? 'warning' as const : 'normal' as const;
-        return {
-          ...a,
-          occupancy,
-          status,
-          peakOccupancy: Math.max(a.peakOccupancy ?? 0, occupancy)
-        };
-      });
-      const criticalCount = updated.filter(a => a.status === 'critical').length;
-      const peakAirport = updated.reduce((max, a) => (a.occupancy/a.capacity) > (max.occupancy/max.capacity) ? a : max, updated[0]);
-      const peakPct = Math.round((peakAirport.occupancy/peakAirport.capacity)*100);
-      setShipments(sp => {
-        const updatedShipments = sp.map((s, i) => {
-          if (i < 4)  return { ...s, progress:0.15, status:'critical' as const };
-          if (i < 10) return { ...s, progress:0.4, status:'delayed' as const };
-          if (i < 16) return { ...s, progress:0.7, status:'on-time' as const, isReplanned:true };
-          return { ...s, progress:0.9, status:'on-time' as const };
-        });
-        const delayed = updatedShipments.filter(s => s.status === 'delayed').length;
-        const lost    = updatedShipments.filter(s => s.status === 'critical').length;
-        setCollapseMetrics({ timeToCollapse:'12 min', resilienceScore:58, affectedAirports:criticalCount, totalAirports:updated.length, shipmentsDelayed:delayed, shipmentsLost:lost, totalShipments:updatedShipments.length, peakCongestion:peakPct, peakAirport:peakAirport.id, recoveryTime:'9 min', replannedRoutes:12, cascadeEvents:24 });
-        return updatedShipments;
-      });
-      return updated;
-    });
-  }, []);
-
   const refreshSolution = useCallback(async (time = simClockRef.current) => {
     const id = simIdRef.current;
     if (!id) return;
@@ -1359,45 +1274,36 @@ export function useSimulation(): UseSimulationReturn {
   }, [applyMappedShipments]);
 
   const addShipment = useCallback(async (data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
-    if (isBackendMode(mode)) {
-      if (!simIdRef.current || !isRunning) {
-        throw new Error('Inicia la operación día a día antes de registrar maletas');
-      }
-
-      const response = await createShipment(simIdRef.current, {
-        clientId: data.airlineId || 'UI',
-        originId: data.origin,
-        destinationId: data.destination,
-        quantity: data.luggageCount,
-      });
-
-      const shipment = mapShipmentResponseToShipment(response);
-      setShipments(prev => [shipment, ...prev.filter(s => s.id !== shipment.id)]);
-      setEvents(prev => [{
-        id: `shipment-${response.batchId}`,
-        type: 'info',
-        message: `${response.quantity} maletas registradas ${response.originId}→${response.destinationId}`,
-        time: new Date(),
-        severity: 'info',
-      }, ...prev.slice(0, 19)]);
-
-      await refreshSolution(simClockRef.current).catch(err => console.warn('Solución aún no disponible para el nuevo lote:', err));
-      return;
+    if (!simIdRef.current || !isRunning) {
+      throw new Error('Inicia la operación día a día antes de registrar maletas');
     }
 
-    const found = INITIAL_FLIGHTS.find(f => f.from === data.origin && f.to === data.destination) || INITIAL_FLIGHTS[0];
-    const now = new Date(simulationTime);
-    now.setHours(now.getHours() + 8);
-    const newShipment: Shipment = {
-      ...data,
-      id: `SHP${String(Math.floor(Math.random()*900)+100)}`,
-      currentFlightId: found.id,
-      progress: 0,
-      isReplanned: false,
-      estimatedDelivery: now.toISOString().slice(0,16).replace('T',' '),
-    };
-    setShipments(prev => [newShipment, ...prev]);
-  }, [mode, isRunning, simulationTime, refreshSolution]);
+    // clientId: usar el ingresado por el usuario o autogenerar uno único por ejecución
+    // (formato numérico de 7 dígitos como el dataset, en un rango que no colisiona).
+    const providedClient = data.airlineId?.trim();
+    const clientId = providedClient && providedClient !== 'UI'
+      ? providedClient
+      : nextUiClientId();
+
+    const response = await createShipment(simIdRef.current, {
+      clientId,
+      originId: data.origin,
+      destinationId: data.destination,
+      quantity: data.luggageCount,
+    });
+
+    const shipment = mapShipmentResponseToShipment(response);
+    setShipments(prev => [shipment, ...prev.filter(s => s.id !== shipment.id)]);
+    setEvents(prev => [{
+      id: `shipment-${response.batchId}`,
+      type: 'info',
+      message: `${response.quantity} maletas registradas ${response.originId}→${response.destinationId} (cliente ${response.clientId})`,
+      time: new Date(),
+      severity: 'info',
+    }, ...prev.slice(0, 19)]);
+
+    await refreshSolution(simClockRef.current).catch(err => console.warn('Solución aún no disponible para el nuevo lote:', err));
+  }, [isRunning, refreshSolution]);
 
   const cancelFlight = useCallback(async (flightId: string, day: string) => {
     if (!isBackendMode(mode)) {
@@ -1486,11 +1392,12 @@ export function useSimulation(): UseSimulationReturn {
     simulationId,
     startDate, setStartDate,
     airports, flights, shipments,
-    isRunning, mode, simulationTime, events,
-    hasReplanned, daySnapshots, simulationComplete, daysElapsed,
+    isRunning, isPaused, mode, simulationTime, events,
+    hasReplanned, daySnapshots, simulationComplete, dayToDayComplete, daysElapsed,
     collapseComplete, collapseMetrics, simulationResults,
-    setMode, start, pause: pause as () => void, reset,
-    replan, skipToComplete, skipToCollapseComplete, addShipment, cancelFlight, uploadStaticData,
+    setMode, start, pause: pause as () => void, resume: resume as () => void, reset,
+    closeOperations: closeOperations as () => void,
+    replan, addShipment, cancelFlight, uploadStaticData,
     setAirports, setFlights, setShipments,
     simClock, simClockRef, activeFlights, flightPlanFlights,
     simulationK,

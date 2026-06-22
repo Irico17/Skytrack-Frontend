@@ -2,7 +2,7 @@ import React from 'react';
 import {
   Filter, Route, Warehouse,
   PlusCircle, Search, X, ChevronDown, ChevronUp,
-  Plane, FastForward, BarChart2, Calendar, Database,
+  Plane, BarChart2, Calendar, Database,
   Clock, Zap,
 } from 'lucide-react';
 import { SimulationMode, AIRLINES, Airport } from '../data/mockData';
@@ -37,9 +37,11 @@ interface LeftSidebarProps {
   onAddShipment: () => void;
   onCancelFlight: () => void;
   onUploadStaticData: () => void;
-  onSkipToCollapseComplete: () => void;
+  onCloseOperations: () => void;
   onViewResults: () => void;
   onViewCollapseResults: () => void;
+  onViewDayToDayResults: () => void;
+  dayToDayComplete: boolean;
 }
 
 interface SectionProps {
@@ -119,8 +121,8 @@ export function LeftSidebar({
   mode, startDate, simulationTime, simulationK = 240, filters, toggles, isRunning,
   daysElapsed, simulationComplete, collapseComplete, airports = [],
   onStartDateChange, onFilterChange, onToggleChange,
-  onAddShipment, onCancelFlight, onUploadStaticData,
-  onSkipToCollapseComplete, onViewResults, onViewCollapseResults,
+  onAddShipment, onCancelFlight, onUploadStaticData, onCloseOperations,
+  onViewResults, onViewCollapseResults, onViewDayToDayResults, dayToDayComplete,
 }: LeftSidebarProps) {
 
   const airlineOptions = mode === '5day' || mode === 'realtime'
@@ -162,7 +164,8 @@ export function LeftSidebar({
       <div className="p-4 border-b border-[#1E3058]">
         <button
           onClick={onAddShipment}
-          disabled={mode === '5day' || (mode === 'realtime' && !isRunning)}
+          disabled={mode !== 'realtime' || !isRunning}
+          title={mode !== 'realtime' ? 'El registro manual de maletas solo aplica a la operación día a día' : !isRunning ? 'Inicia la operación para registrar maletas' : undefined}
           className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           style={{ fontWeight: 600 }}
         >
@@ -171,7 +174,8 @@ export function LeftSidebar({
         </button>
         <button
           onClick={onCancelFlight}
-          disabled={mode !== 'realtime' || !isRunning}
+          disabled={!isRunning}
+          title={!isRunning ? 'Inicia una simulación activa para cancelar vuelos' : undefined}
           className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#FF4D4D]/15 border border-[#FF4D4D]/40 text-[#FF4D4D] text-xs hover:bg-[#FF4D4D]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           style={{ fontWeight: 600 }}
         >
@@ -187,6 +191,27 @@ export function LeftSidebar({
           <Database className="w-4 h-4" />
           Cargar Datos
         </button>
+        {mode === 'realtime' && isRunning && (
+          <button
+            onClick={onCloseOperations}
+            className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#FFC857]/15 border border-[#FFC857]/40 text-[#FFC857] text-xs hover:bg-[#FFC857]/25 transition-colors"
+            style={{ fontWeight: 600 }}
+            title="Detiene la operación y genera el reporte de la última planificación estable"
+          >
+            <BarChart2 className="w-4 h-4" />
+            Cerrar y Ver Reporte
+          </button>
+        )}
+        {mode === 'realtime' && dayToDayComplete && !isRunning && (
+          <button
+            onClick={onViewDayToDayResults}
+            className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#00FF9C]/15 border border-[#00FF9C]/50 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors animate-pulse"
+            style={{ fontWeight: 600 }}
+          >
+            <BarChart2 className="w-4 h-4" />
+            Ver Reporte del Día
+          </button>
+        )}
       </div>
 
       {/* Date/time selector */}
@@ -288,14 +313,11 @@ export function LeftSidebar({
         <Section title="ESCENARIO DE COLAPSO" icon={<Zap className="w-3 h-3" />}>
           <div className="flex flex-col gap-2">
             {!collapseComplete ? (
-              <button
-                onClick={onSkipToCollapseComplete}
-                className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[#FF4D4D]/15 border border-[#FF4D4D]/40 text-[#FF4D4D] text-xs hover:bg-[#FF4D4D]/25 transition-colors"
-                style={{ fontWeight: 600 }}
-              >
-                <FastForward className="w-3.5 h-3.5" />
-                Simular Colapso Completo
-              </button>
+              <div className="rounded-lg border border-[#FF4D4D]/30 bg-[#FF4D4D]/8 px-3 py-2.5 text-[11px] text-[#FF9090] leading-relaxed">
+                {isRunning
+                  ? 'Acelerando la operación (K=75×) hasta que el backend detecte saturación logística. El colapso se declara con datos reales.'
+                  : 'Inicia la simulación para acelerar la red hasta el colapso. Usa Reiniciar para detenerla o cambiar la fecha de inicio.'}
+              </div>
             ) : (
               <button
                 onClick={onViewCollapseResults}

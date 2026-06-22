@@ -11,6 +11,7 @@ export interface Airport {
   name: string;
   city: string;
   country: string;
+  continent?: string;          // "AMERICA", "EUROPE", "ASIA", etc. (del backend)
   coords: [number, number]; // [longitude, latitude]
   capacity: number;
   occupancy: number;

@@ -22,6 +22,7 @@ export function mapAirport(b: BackendAirport): Airport {
     name: `${b.city} (${b.id})`,
     city: b.city,
     country: b.country,
+    continent: b.continent,
     coords: [b.longitude, b.latitude],   // [lon, lat] — formato del mapa
     capacity: b.storageCapacity,
     occupancy: 0,
