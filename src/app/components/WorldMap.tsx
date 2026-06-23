@@ -731,11 +731,19 @@ function WorldMapComponent({
       const curve = Math.min(Math.max(dist * 0.22, 18), 110);
       const cpx = mx - (ddy / dist) * curve;
       const cpy = my + (ddx / dist) * curve;
+      const cx = (1-t)*(1-t)*ox + 2*(1-t)*t*cpx + t*t*dx;
+      const cy = (1-t)*(1-t)*oy + 2*(1-t)*t*cpy + t*t*dy;
+      const angle = Math.atan2(2*(1-t)*(cpy-oy) + 2*t*(dy-cpy), 2*(1-t)*(cpx-ox) + 2*t*(dx-cpx)) * (180 / Math.PI);
 
-      geometry.push({
-        flightId: f.flightId, originId: f.originId, destinationId: f.destinationId,
-        dep, arr, duration, capacity: f.capacity ?? 0,
-        ox, oy, dx, dy, cpx, cpy,
+      // Color: con maletas = azul/ámbar, sin maletas = gris tenue
+      const bags = bagsMap.get(f.flightId);
+      const hasBags = bags && bags.bagsCount > 0;
+      const color = hasBags
+        ? (bags!.meetsSla ? '#4DA6FF' : '#FFC857')
+        : '#3A4A5E'; // gris tenue para vuelos vacíos
+
+      return [{
+        flightId: f.flightId, cx, cy, color, t, angle,
         pathD: `M ${ox} ${oy} Q ${cpx} ${cpy} ${dx} ${dy}`,
       });
     }
@@ -1484,19 +1492,43 @@ function WorldMapComponent({
 
       </svg>
 
-      {/* Barra de filtro rápida del mapa (MAP-REG-05) — sincronizada con el panel (utFilter).
-          Permite alternar Todos / Con carga / Vacías sin abrir el panel derecho. */}
-      {hasBackendFlightData && (
-        <div
-          data-interactive="true"
-          onMouseDown={e => e.stopPropagation()}
-          className="absolute bottom-5 left-4 flex flex-col gap-1.5"
-          style={{ zIndex: 20 }}
-        >
-          <div
-            className="flex items-center gap-1 p-1 rounded-lg"
-            style={{ background: 'rgba(10,20,45,0.92)', border: '1px solid #1E3058', backdropFilter: 'blur(6px)' }}
-            title="Filtro de UTs por semáforo (% de carga)"
+        {/* ── Vuelos Activos (backend solution, animados según simClock) ── */}
+        {activeFlightDots.map(dot => (
+          <g
+            key={dot.flightId}
+            transform={`translate(${dot.cx},${dot.cy}) rotate(${dot.angle + 90})`}
+            style={{ cursor: dot.hasBags ? 'pointer' : 'default', pointerEvents: dot.hasBags ? 'auto' : 'none' }}
+            data-interactive={dot.hasBags ? 'true' : undefined}
+            onClick={(e) => {
+              if (!dot.hasBags) return;
+              e.stopPropagation();
+              onSelectFlight(dot.flightId);
+            }}
+            onMouseEnter={(e) => {
+              if (!dot.hasBags) return;
+              e.stopPropagation();
+              const rect = containerRef.current?.getBoundingClientRect();
+              if (!rect) return;
+              setTooltip({
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top,
+                content: (
+                  <div style={{ minWidth: 150 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                      <div style={{ width: 7, height: 7, borderRadius: '50%', background: dot.color }} />
+                      <span style={{ fontWeight: 700, color: '#E2E8F8', fontSize: 12 }}>{dot.flightId}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#A8C0E0' }}>{dot.originId} → {dot.destinationId}</div>
+                    {dot.hasBags
+                      ? <div style={{ fontSize: 11, color: '#6080A0', marginTop: 4 }}>Maletas: {dot.bagsCount}</div>
+                      : <div style={{ fontSize: 11, color: '#4A6080', marginTop: 4, fontStyle: 'italic' }}>Sin carga asignada</div>
+                    }
+                    <div style={{ fontSize: 11, color: '#6080A0' }}>Progreso: {Math.round(dot.t * 100)}%</div>
+                  </div>
+                ),
+              });
+            }}
+            onMouseLeave={() => setTooltip(null)}
           >
             <span className="text-[9px] text-[#4A6080] px-1" style={{ letterSpacing: '0.08em' }}>UT</span>
             {([
