@@ -643,8 +643,8 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
 
                       <div className="grid grid-cols-2 gap-1.5 mt-1">
                         {[
-                          { label: 'Retrasados', value: snap.delayed, color: '#FFC857' },
-                          { label: 'Críticos', value: snap.critical, color: '#FF4D4D' },
+                          { label: 'Fuera de SLA', value: snap.delayed, color: '#FFC857' },
+                          { label: 'Críticos (retraso severo)', value: snap.critical, color: '#FF4D4D' },
                           { label: 'Completados', value: snap.completed, color: '#00FF9C' },
                           { label: 'Replanificados', value: snap.replanned, color: '#A855F7' },
                         ].map(m => (

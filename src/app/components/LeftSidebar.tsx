@@ -5,7 +5,7 @@ import {
   Plane, BarChart2, Calendar, Database,
   Clock, Zap,
 } from 'lucide-react';
-import { SimulationMode, AIRLINES, Airport } from '../data/mockData';
+import { SimulationMode, Airport } from '../data/mockData';
 
 interface Filters {
   airline: string;
@@ -125,13 +125,6 @@ export function LeftSidebar({
   onViewResults, onViewCollapseResults, onViewDayToDayResults, dayToDayComplete,
 }: LeftSidebarProps) {
 
-  const airlineOptions = mode === '5day' || mode === 'realtime'
-    ? [{ value: '', label: '— Clientes backend' }]
-    : [
-        { value: '', label: 'Todas las Aerolíneas' },
-        ...AIRLINES.map(a => ({ value: a.id, label: a.name }))
-      ];
-
   const cityOptions = [
     { value: '', label: 'Todas las Ciudades' },
     ...airports.map(a => ({ value: a.id, label: `${a.city} (${a.id})` }))
@@ -144,11 +137,10 @@ export function LeftSidebar({
     return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]}`;
   });
   const currentDay = Math.min(Math.ceil(daysElapsed), 5);
-  const elapsedMs = mode === 'collapse'
-    ? Math.max(0, simulationTime.getTime() - startDate.getTime())
-    : Math.max(0, daysElapsed * 24 * 60 * 60 * 1000);
+  // Colapso ahora corre en backend con los mismos parámetros que 5 días (daysElapsed real).
+  const elapsedMs = Math.max(0, daysElapsed * 24 * 60 * 60 * 1000);
   const elapsedHms = formatDurationHms(elapsedMs);
-  const displayedK = mode === 'collapse' ? 75 : mode === 'realtime' ? 1 : simulationK;
+  const displayedK = mode === 'realtime' ? 1 : simulationK;
 
   const formatInputDateTime = (date: Date): string => {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
@@ -334,13 +326,6 @@ export function LeftSidebar({
 
       {/* Filters */}
       <Section title="FILTROS DEL MAPA" icon={<Filter className="w-3 h-3" />}>
-        <SelectField
-          label="AEROLÍNEA (CLIENTE)"
-          value={filters.airline}
-          onChange={v => onFilterChange('airline', v)}
-          options={airlineOptions}
-          disabled={mode === '5day' || mode === 'realtime'}
-        />
         <SelectField
           label="AEROPUERTO DE ORIGEN"
           value={filters.origin}

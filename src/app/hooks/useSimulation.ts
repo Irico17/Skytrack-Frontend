@@ -119,6 +119,8 @@ interface UseSimulationReturn extends SimulationState {
   lastCycleUpdate: BackendCycleUpdate | null;
   /** Clientes WebSocket conectados a la simulación activa (NAV-01). */
   viewerCount: number;
+  /** IDs de vuelos cancelados (con sufijo -D{n}) para marcar/ocultar en UI y mapa. */
+  cancelledFlightIds: Set<string>;
 }
 
 // ==================== CONSTANTES DE REPRODUCCIÓN / RELOJ ====================
@@ -343,6 +345,8 @@ export function useSimulation(): UseSimulationReturn {
   const simClockRef = useRef<Date>(today);
   const playbackBufferRef = useRef<PlaybackFrame[]>([]);
   const lastAppliedPlaybackKeyRef = useRef<string | null>(null);
+  // El visualizador (reloj/mapa) no avanza hasta el PRIMER ciclo del algoritmo (no con STORAGE).
+  const hasFirstCycleRef = useRef(false);
   const solutionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const solutionRefreshSeqRef = useRef(0);
   const backendAirportsRef = useRef<Airport[]>([]);
@@ -357,6 +361,8 @@ export function useSimulation(): UseSimulationReturn {
   // TODOS los vuelos del plan de vuelos (independientes del planificador)
   const [flightPlanFlights, setFlightPlanFlights] = useState<BackendFlightPlanFlight[]>([]);
   const [lastCycleUpdate, setLastCycleUpdate] = useState<BackendCycleUpdate | null>(null);
+  // IDs de vuelos cancelados (con sufijo -D{n}) para marcarlos/ocultarlos en UI y mapa.
+  const [cancelledFlightIds, setCancelledFlightIds] = useState<Set<string>>(() => new Set());
 
   // K dinámico recibido del backend
   const simKRef = useRef(SIMULATION_K);
@@ -556,6 +562,7 @@ export function useSimulation(): UseSimulationReturn {
     if (msg.type === 'CYCLE_UPDATE') {
       const update = msg as BackendCycleUpdate;
       setIsRunning(true);
+      hasFirstCycleRef.current = true; // primer ciclo recibido → el visualizador puede arrancar
       const t = pushPlaybackFrame(update);
 
       // Actualizar snapshot del día para la simulación de 5 días
@@ -650,13 +657,25 @@ export function useSimulation(): UseSimulationReturn {
             }
           })
           .catch(err => console.warn('No se pudieron cargar resultados finales:', err));
+
+        // Poblar los envíos con la solución final para los reportes (aerolíneas/clientes).
+        const finalTime = mode === '5day'
+          ? new Date(parseApiDateTimeAsUtc(formatApiDateTime(startDate)).getTime() + FIVE_DAYS_MS)
+          : simClockRef.current;
+        getSimulationSolution(id)
+          .then(async solution => {
+            if (solution.routes.length === 0) return;
+            const mapped = await mapSolutionToShipmentsCooperatively(solution, finalTime);
+            applyMappedShipments(mapped);
+          })
+          .catch(err => console.warn('No se pudo cargar la solución final para el reporte:', err));
       }
 
       // Desconectar WebSocket
       wsRef.current?.disconnect();
       wsSimulationIdRef.current = null;
     }
-  }, [startDate, mode, daysElapsed, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, cancelScheduledSolutionRefresh, commitClockState]);
+  }, [startDate, mode, daysElapsed, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, cancelScheduledSolutionRefresh, commitClockState, applyMappedShipments]);
 
   const connectSimulationStream = useCallback((simulationId = simIdRef.current) => {
     if (!simulationId) return;
@@ -936,6 +955,8 @@ export function useSimulation(): UseSimulationReturn {
     if (!isBackendMode(mode) || !isRunning) return;
 
     const tick = setInterval(() => {
+      // No avanzar el reloj ni el mapa hasta recibir el primer CYCLE_UPDATE (no con STORAGE).
+      if (!hasFirstCycleRef.current) return;
       const buffer = playbackBufferRef.current;
       if (buffer.length === 0) return;
 
@@ -1033,6 +1054,7 @@ export function useSimulation(): UseSimulationReturn {
       simClockRef.current = optimisticStart;
       commitClockState(optimisticStart, true);
       clockBaseRef.current = null;
+      hasFirstCycleRef.current = false; // espera al primer ciclo antes de animar
       cancelScheduledSolutionRefresh();
       resetPlaybackBuffer();
 
@@ -1217,7 +1239,9 @@ export function useSimulation(): UseSimulationReturn {
     setFlights([]);
     setActiveFlights([]);
     setFlightPlanFlights([]);
+    setCancelledFlightIds(new Set());
     clockBaseRef.current = null;
+    hasFirstCycleRef.current = false;
     cancelScheduledSolutionRefresh();
     resetPlaybackBuffer();
     setSimulationK(SIMULATION_K);
@@ -1361,6 +1385,13 @@ export function useSimulation(): UseSimulationReturn {
       : day;
     const result = await cancelFlightRequest(simIdRef.current, baseFlightId, resolvedDay);
     setHasReplanned(true);
+    if (result.cancelledFlightId) {
+      setCancelledFlightIds(prev => {
+        const next = new Set(prev);
+        next.add(result.cancelledFlightId);
+        return next;
+      });
+    }
     setFlights(prev => prev.map(f => f.id === flightId || f.id === result.cancelledFlightId
       ? { ...f, status: 'critical', isReplanned: true }
       : f
@@ -1440,5 +1471,6 @@ export function useSimulation(): UseSimulationReturn {
     simulationK,
     lastCycleUpdate,
     viewerCount,
+    cancelledFlightIds,
   };
 }

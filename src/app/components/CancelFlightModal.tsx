@@ -34,6 +34,7 @@ export function CancelFlightModal({
   const [day, setDay] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [query, setQuery] = useState('');
 
   const flights = useMemo(() => {
     const map = new Map<string, BackendFlightPlanFlight | BackendActiveFlight>();
@@ -43,6 +44,16 @@ export function CancelFlightModal({
       new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime()
     );
   }, [flightPlanFlights, activeFlights]);
+
+  // Lista filtrada y ACOTADA (máx. 60) — evita renderizar ~15k opciones (lag al abrir).
+  const MAX_RESULTS = 60;
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const base = q
+      ? flights.filter(f => `${f.flightId} ${f.originId} ${f.destinationId}`.toLowerCase().includes(q))
+      : flights;
+    return base.slice(0, MAX_RESULTS);
+  }, [flights, query]);
 
   useEffect(() => {
     if (!flightId) return;
@@ -100,21 +111,36 @@ export function CancelFlightModal({
             <label className="block text-[11px] text-[#4A6080] mb-1.5" style={{ letterSpacing: '0.1em' }}>VUELO</label>
             <div className="relative">
               <Plane className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#4A6080] pointer-events-none" />
-              <select
-                value={flightId}
-                onChange={event => setFlightId(event.target.value)}
-                className={`${inputStyle} pl-9 appearance-none cursor-pointer`}
-                style={{ backgroundImage: 'none' }}
-              >
-                <option value="" className="bg-[#0A1628]">Seleccionar vuelo...</option>
-                {flights.map(flight => (
-                  <option key={flight.flightId} value={flight.flightId} className="bg-[#0A1628]">
-                    {formatFlightLabel(flight)}
-                  </option>
-                ))}
-              </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[#4A6080] pointer-events-none text-xs">▾</div>
+              <input
+                value={query}
+                onChange={e => { setQuery(e.target.value); setFlightId(''); }}
+                placeholder="Buscar por código, origen o destino…"
+                className={`${inputStyle} pl-9`}
+              />
             </div>
+            <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-[#1E3058] divide-y divide-[#1E3058]/50">
+              {filtered.map(flight => {
+                const selected = flight.flightId === flightId;
+                return (
+                  <button
+                    type="button"
+                    key={flight.flightId}
+                    onClick={() => setFlightId(flight.flightId)}
+                    className={`w-full text-left px-3 py-2 text-[12px] transition-colors ${selected
+                      ? 'bg-[#FF4D4D]/15 text-[#FF9090]'
+                      : 'text-[#C8D8F0] hover:bg-[#1A2E4A]/40'}`}
+                  >
+                    {formatFlightLabel(flight)}
+                  </button>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="px-3 py-3 text-[11px] text-[#4A6080]">Sin vuelos que coincidan</div>
+              )}
+            </div>
+            {flights.length > filtered.length && (
+              <div className="mt-1 text-[10px] text-[#4A6080]">Mostrando {filtered.length} de {flights.length.toLocaleString()} · refina la búsqueda</div>
+            )}
           </div>
 
           <div>

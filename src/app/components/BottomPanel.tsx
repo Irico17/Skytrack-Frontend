@@ -284,7 +284,7 @@ function BackendFlightDetail({ flight, airports, shipments, onSelectShipment }: 
         <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
           <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em' }}>MALETAS</div>
           <div className="text-2xl text-[#4DA6FF]" style={{ fontWeight: 700 }}>{flight.bagsCount}</div>
-          <div className="text-[11px] text-[#4A6080] mt-0.5">asignadas por el backend</div>
+          <div className="text-[11px] text-[#4A6080] mt-0.5">asignadas por el planificador</div>
         </div>
         <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058]">
           <div className="text-[10px] text-[#4A6080] mb-2" style={{ letterSpacing: '0.1em' }}>HORARIO</div>
