@@ -7,21 +7,26 @@ import { SimulationMode, SimEvent } from '../data/mockData';
 
 interface TopBarProps {
   isRunning: boolean;
+  isPaused: boolean;
+  isStarting?: boolean;
   mode: SimulationMode;
   simulationTime: Date;
   events: SimEvent[];
   onStart: () => void;
   onPause: () => void;
+  onResume: () => void;
   onReset: () => void;
   onModeChange: (mode: SimulationMode) => void;
-  onReplan: () => void;
-  hasReplanned: boolean;
   totalShipments: number;
   criticalCount: number;
+  viewerCount?: number;
+  startDisabled?: boolean;
+  /** KPIs reales del último ciclo, siempre visibles arriba (null antes del primer ciclo). */
+  kpis?: { inFlight: number | string; delivered: number | string; slaPct: number | string; overloaded: number | string } | null;
 }
 
 const MODE_LABELS: Record<SimulationMode, string> = {
-  realtime: 'Operaciones en Tiempo Real',
+  realtime: 'Operación Día a Día',
   '5day': 'Simulación 5 Días',
   collapse: 'Escenario de Colapso',
 };
@@ -33,8 +38,9 @@ const MODE_ICONS: Record<SimulationMode, React.ReactNode> = {
 };
 
 export function TopBar({
-  isRunning, mode, simulationTime, events, onStart, onPause, onReset,
-  onModeChange, onReplan, hasReplanned, totalShipments, criticalCount
+  isRunning, isPaused, isStarting = false, mode, simulationTime, events, onStart, onPause, onResume, onReset,
+  onModeChange, totalShipments, criticalCount, viewerCount = 0,
+  startDisabled = false, kpis = null,
 }: TopBarProps) {
   const [showModeDropdown, setShowModeDropdown] = React.useState(false);
   const [showAlerts, setShowAlerts] = React.useState(false);
@@ -91,15 +97,7 @@ export function TopBar({
 
       {/* Simulation Controls */}
       <div className="flex items-center gap-2">
-        {!isRunning ? (
-          <button
-            onClick={onStart}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors"
-          >
-            <Play className="w-3 h-3 fill-current" />
-            <span>Iniciar</span>
-          </button>
-        ) : (
+        {isRunning ? (
           <button
             onClick={onPause}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FFC857]/15 border border-[#FFC857]/40 text-[#FFC857] text-xs hover:bg-[#FFC857]/25 transition-colors"
@@ -107,20 +105,24 @@ export function TopBar({
             <Pause className="w-3 h-3 fill-current" />
             <span>Pausar</span>
           </button>
+        ) : isPaused ? (
+          <button
+            onClick={onResume}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors"
+          >
+            <Play className="w-3 h-3 fill-current" />
+            <span>Reanudar</span>
+          </button>
+        ) : (
+          <button
+            onClick={onStart}
+            disabled={startDisabled}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Play className="w-3 h-3 fill-current" />
+            <span>Iniciar</span>
+          </button>
         )}
-
-        <button
-          onClick={onReplan}
-          disabled={hasReplanned}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors
-            ${hasReplanned
-              ? 'bg-[#A855F7]/10 border border-[#A855F7]/30 text-[#A855F7]/60 cursor-not-allowed'
-              : 'bg-[#A855F7]/15 border border-[#A855F7]/40 text-[#A855F7] hover:bg-[#A855F7]/25'
-            }`}
-        >
-          <Zap className="w-3 h-3" />
-          <span>{hasReplanned ? 'Replanificado' : 'Replanificar Rutas'}</span>
-        </button>
 
         <button
           onClick={onReset}
@@ -136,21 +138,26 @@ export function TopBar({
       {/* Status indicators */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-[#00FF9C] animate-pulse' : 'bg-[#4A5568]'}`} />
-          <span className={`text-xs ${isRunning ? 'text-[#00FF9C]' : 'text-[#4A5568]'}`}>
-            {isRunning ? 'EN VIVO' : 'PAUSADO'}
+          <div className={`w-2 h-2 rounded-full ${isStarting ? 'bg-[#4DA6FF] animate-pulse' : isRunning ? 'bg-[#00FF9C] animate-pulse' : isPaused ? 'bg-[#FFC857]' : 'bg-[#4A5568]'}`} />
+          <span className={`text-xs ${isStarting ? 'text-[#4DA6FF]' : isRunning ? 'text-[#00FF9C]' : isPaused ? 'text-[#FFC857]' : 'text-[#4A5568]'}`}>
+            {isStarting ? 'INICIANDO…' : isRunning ? 'EN VIVO' : isPaused ? 'PAUSADO' : 'DETENIDO'}
           </span>
-        </div>
-
-        <div className="flex items-center gap-1.5 text-xs text-[#A8C0E0]">
-          <Clock className="w-3 h-3" />
-          <span className="font-mono">{formatDate(simulationTime)} {formatTime(simulationTime)}</span>
         </div>
 
         <div className="flex items-center gap-1.5 text-xs">
           <Wifi className="w-3 h-3 text-[#00FF9C]" />
           <span className="text-[#A8C0E0]">{totalShipments} Envíos</span>
         </div>
+
+        {/* KPIs principales siempre visibles (del último ciclo del backend). */}
+        {kpis && (
+          <div className="flex items-center gap-3 px-2.5 py-1 rounded-lg bg-[#0D1E38] border border-[#1E3058]">
+            <span className="text-[11px] text-[#4DA6FF]" title="Maletas en vuelo">✈ {kpis.inFlight}</span>
+            <span className="text-[11px] text-[#00FF9C]" title="Maletas entregadas">✓ {kpis.delivered}</span>
+            <span className={`text-[11px] ${Number(kpis.slaPct) >= 85 ? 'text-[#00FF9C]' : Number(kpis.slaPct) >= 70 ? 'text-[#FFC857]' : 'text-[#FF4D4D]'}`} title="Cumplimiento SLA">SLA {kpis.slaPct}%</span>
+            <span className={`text-[11px] ${Number(kpis.overloaded) > 0 ? 'text-[#FF4D4D]' : 'text-[#4A6080]'}`} title="Aeropuertos sobre capacidad">⚠ {kpis.overloaded}</span>
+          </div>
+        )}
 
         {criticalCount > 0 && (
           <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-[#FF4D4D]/15 border border-[#FF4D4D]/30">
@@ -161,6 +168,16 @@ export function TopBar({
       </div>
 
       <div className="flex-1" />
+
+      {viewerCount > 0 && (
+        <div
+          className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#0D1E38] border border-[#1E3058]"
+          title="Visualizadores conectados a esta simulación"
+        >
+          <Wifi className="w-3 h-3 text-[#4DA6FF]" />
+          <span className="text-[10px] text-[#A8C0E0]">{viewerCount} visualizador{viewerCount === 1 ? '' : 'es'}</span>
+        </div>
+      )}
 
       {/* Alert bell */}
       <div className="relative">

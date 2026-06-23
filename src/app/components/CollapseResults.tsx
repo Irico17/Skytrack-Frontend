@@ -4,8 +4,8 @@ import {
   TrendingDown, Shield, Zap, Clock, Package, BarChart3,
   ArrowUpRight, ArrowDownRight, Minus, CheckCircle, Activity,
 } from 'lucide-react';
-import { CollapseMetrics, DaySnapshot } from '../hooks/useSimulation';
-import { Shipment, SimEvent, Airport, INITIAL_AIRPORTS } from '../data/mockData';
+import { CollapseMetrics } from '../hooks/useSimulation';
+import { Shipment, SimEvent, Airport, getOccupancyPercent } from '../data/mockData';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip,
   ResponsiveContainer, CartesianGrid, ReferenceLine, Cell,
@@ -33,39 +33,65 @@ function fmtDateRange(base: Date, offsetEnd: number): string {
   return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-const COLLAPSE_PHASES = [
-  { phase: 'Normal', time: '0 min', desc: 'Operación estándar', status: 'normal' },
-  { phase: 'Degradación', time: '3 min', desc: 'Primeros aeropuertos saturados', status: 'warning' },
-  { phase: 'Colapso', time: '8 min', desc: 'Red sobrepasada — hubs críticos', status: 'critical' },
-  { phase: 'Pico', time: '12 min', desc: 'Máxima congestión alcanzada', status: 'critical' },
-  { phase: 'Replanificación', time: '14 min', desc: 'Rutas alternativas activadas', status: 'warning' },
-  { phase: 'Recuperación', time: '18 min', desc: 'Operaciones estabilizándose', status: 'normal' },
-  { phase: 'Estable', time: '21 min', desc: 'Nueva línea base operativa', status: 'normal' },
-];
+interface AirlineResilienceStat { code: string; name: string; resilience: number; lost: number; color: string }
 
-const COLLAPSE_TIMELINE = [
-  { time: 'T+2 min', type: 'warning', text: 'DXB y AMS superan 85% de capacidad — primer umbral de alerta' },
-  { time: 'T+4 min', type: 'warning', text: 'LHR y PEK entran en estado de advertencia — carga acumulándose' },
-  { time: 'T+6 min', type: 'critical', text: 'DXB colapsa al 98% — vuelos entrantes detenidos, 395 bolsas retenidas' },
-  { time: 'T+8 min', type: 'critical', text: 'Efecto cascada: LHR, AMS, PEK, FRA, CDG, BOM en estado crítico simultáneo' },
-  { time: 'T+10 min', type: 'critical', text: '60% de la red comprometida — 12 envíos sin ruta viable' },
-  { time: 'T+12 min', type: 'critical', text: 'PICO DE COLAPSO: Ocupación máxima registrada en DXB (98%) y AMS (95%)' },
-  { time: 'T+14 min', type: 'info', text: 'Motor de replanificación activado — 12 rutas alternativas calculadas' },
-  { time: 'T+16 min', type: 'info', text: 'Redirigidos vía hubs SIN, DOH, GRU — congestión comenzando a bajar' },
-  { time: 'T+19 min', type: 'info', text: 'DXB bajo 80% — operaciones parciales restauradas' },
-  { time: 'T+21 min', type: 'info', text: 'Red estabilizada — todos los hubs operativos con carga normalizada' },
-];
+function deriveAirlineResilience(shipments: Shipment[]): AirlineResilienceStat[] {
+  if (shipments.length === 0) {
+    return [
+      { code: 'SQ', name: 'Singapore Airlines', resilience: 95, lost: 0, color: '#00FF9C' },
+      { code: 'QR', name: 'Qatar Airways', resilience: 88, lost: 0, color: '#00FF9C' },
+      { code: 'BA', name: 'British Airways', resilience: 72, lost: 1, color: '#FFC857' },
+      { code: 'LH', name: 'Lufthansa', resilience: 55, lost: 2, color: '#FF4D4D' },
+      { code: 'EK', name: 'Emirates', resilience: 31, lost: 4, color: '#FF4D4D' },
+    ];
+  }
+  const map = new Map<string, { code: string; name: string; total: number; onTime: number; lost: number }>();
+  for (const s of shipments) {
+    const code = s.airlineId || s.airline || '—';
+    const e = map.get(code) ?? { code, name: s.airline || code, total: 0, onTime: 0, lost: 0 };
+    e.total += 1;
+    if (s.status === 'on-time') {
+      e.onTime += 1;
+    } else if (s.status === 'critical') {
+      e.lost += 1;
+    }
+    map.set(code, e);
+  }
+  return Array.from(map.values())
+    .map(e => {
+      const resilience = e.total > 0 ? Math.round((e.onTime / e.total) * 100) : 0;
+      const color = resilience >= 85 ? '#00FF9C' : resilience >= 65 ? '#FFC857' : '#FF4D4D';
+      return {
+        code: e.code,
+        name: e.name,
+        resilience,
+        lost: e.lost,
+        color
+      };
+    })
+    .sort((a, b) => b.resilience - a.resilience);
+}
 
-const AIRLINE_RESILIENCE = [
-  { code: 'SQ', name: 'Singapore Airlines', resilience: 94, lost: 0, color: '#00FF9C' },
-  { code: 'QR', name: 'Qatar Airways', resilience: 88, lost: 0, color: '#00FF9C' },
-  { code: 'CX', name: 'Cathay Pacific', resilience: 76, lost: 1, color: '#FFC857' },
-  { code: 'BA', name: 'British Airways', resilience: 68, lost: 1, color: '#FFC857' },
-  { code: 'AF', name: 'Air France', resilience: 62, lost: 1, color: '#FFC857' },
-  { code: 'LH', name: 'Lufthansa', resilience: 55, lost: 2, color: '#FF4D4D' },
-  { code: 'AA', name: 'American Airlines', resilience: 48, lost: 2, color: '#FF4D4D' },
-  { code: 'EK', name: 'Emirates', resilience: 31, lost: 3, color: '#FF4D4D' },
-];
+function buildCollapseTimelineFromEvents(events: SimEvent[]) {
+  const filtered = events.filter(e => e.severity === 'critical' || e.severity === 'warning' || e.type === 'replan');
+  const source = filtered.length > 0 ? filtered : events;
+  if (source.length === 0) {
+    return [
+      { time: 'T+2 min', type: 'warning', text: 'DXB y AMS superan 85% de capacidad — primer umbral de alerta' },
+      { time: 'T+4 min', type: 'warning', text: 'LHR y PEK entran en estado de advertencia — carga acumulándose' },
+      { time: 'T+6 min', type: 'critical', text: 'DXB colapsa al 98% — vuelos entrantes detenidos' },
+      { time: 'T+12 min', type: 'critical', text: 'PICO DE COLAPSO: Ocupación máxima registrada' },
+      { time: 'T+14 min', type: 'info', text: 'Motor de replanificación activado' },
+    ];
+  }
+  return source
+    .slice(0, 10)
+    .map(event => ({
+      time: event.time.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      type: event.severity === 'critical' ? 'critical' : event.severity === 'warning' ? 'warning' : 'info',
+      text: event.message,
+    }));
+}
 
 function MetricCard({
   label, value, unit, subtext, color, icon, trend, trendValue,
@@ -133,27 +159,77 @@ const CustomAreaTooltip = ({ active, payload, label }: { active?: boolean; paylo
 export function CollapseResults({ collapseMetrics, shipments, events, airports, onClose, onReset }: CollapseResultsProps) {
   const startDate = new Date();
 
-  const NETWORK_HEALTH = [
-    { phase: 'Normal', health: 95 },
-    { phase: 'T+3min', health: 82 },
-    { phase: 'T+6min', health: 55 },
-    { phase: 'COLAPSO', health: 28 },
-    { phase: 'T+12min', health: 18 },
-    { phase: 'Replan', health: 42 },
-    { phase: 'T+18min', health: 68 },
-    { phase: 'Estable', health: 85 },
-  ];
+  // Estadísticas de aeropuertos derivadas de datos REALES del backend (ocupación pico vía WS).
+  const airportStats = React.useMemo(() => {
+    const totalAirports = airports.length;
+    let affectedAirports = 0;
+    let peakCongestion = 0;
+    let peakAirport = '—';
+    for (const a of airports) {
+      const peakVal = a.peakOccupancy !== undefined ? a.peakOccupancy : a.occupancy;
+      const pct = Math.round((peakVal / Math.max(a.capacity, 1)) * 100);
+      if (pct >= 90) affectedAirports += 1;
+      if (pct > peakCongestion) { peakCongestion = pct; peakAirport = a.id; }
+    }
+    return { totalAirports, affectedAirports, peakCongestion, peakAirport };
+  }, [airports]);
 
-  const AIRPORT_OVERLOAD = [
-    { id: 'DXB', city: 'Dubái', normal: 93, peak: 98, color: '#FF4D4D' },
-    { id: 'AMS', city: 'Ámsterdam', normal: 85, peak: 95, color: '#FF4D4D' },
-    { id: 'LHR', city: 'Londres', normal: 87, peak: 94, color: '#FF4D4D' },
-    { id: 'PEK', city: 'Pekín', normal: 82, peak: 92, color: '#FF4D4D' },
-    { id: 'FRA', city: 'Fráncfort', normal: 56, peak: 91, color: '#FF4D4D' },
-    { id: 'BOM', city: 'Mumbai', normal: 74, peak: 90, color: '#FFC857' },
-    { id: 'CDG', city: 'París', normal: 71, peak: 86, color: '#FFC857' },
-    { id: 'SIN', city: 'Singapur', normal: 66, peak: 72, color: '#00FF9C' },
-  ];
+  const networkHealth = React.useMemo(() => {
+    const tCol = parseInt(collapseMetrics.timeToCollapse) || 12;
+    const tRec = parseInt(collapseMetrics.recoveryTime) || 9;
+    const resilience = collapseMetrics.resilienceScore;
+    return [
+      { phase: 'Normal', health: 95 },
+      { phase: `T+${Math.round(tCol * 0.25)}m`, health: Math.round(95 - (95 - resilience) * 0.2) },
+      { phase: `T+${Math.round(tCol * 0.66)}m`, health: Math.round(95 - (95 - resilience) * 0.6) },
+      { phase: 'COLAPSO', health: Math.round(resilience * 0.5) },
+      { phase: `T+${tCol}m`, health: Math.round(resilience * 0.3) },
+      { phase: 'Replan', health: Math.round(resilience * 0.7) },
+      { phase: `T+${tCol + Math.round(tRec * 0.66)}m`, health: Math.round(resilience * 0.9) },
+      { phase: 'Estable', health: Math.min(100, Math.round(resilience * 1.15)) },
+    ];
+  }, [collapseMetrics]);
+
+  const airportOverload = React.useMemo(() => {
+    return airports.map(a => {
+      const currentPct = getOccupancyPercent(a.occupancy, a.capacity);
+      const peakVal = a.peakOccupancy !== undefined ? a.peakOccupancy : a.occupancy;
+      const peakPct = Math.round((peakVal / Math.max(a.capacity, 1)) * 100);
+      const color = peakPct >= 90 ? '#FF4D4D' : peakPct >= 75 ? '#FFC857' : '#00FF9C';
+      return {
+        id: a.id,
+        city: a.city,
+        normal: currentPct,
+        peak: peakPct,
+        color
+      };
+    }).sort((a, b) => b.peak - a.peak).slice(0, 8);
+  }, [airports]);
+
+  const collapsePhases = React.useMemo(() => {
+    const tCol = parseInt(collapseMetrics.timeToCollapse) || 12;
+    const tRec = parseInt(collapseMetrics.recoveryTime) || 9;
+    return [
+      { phase: 'Normal', time: '0 min', desc: 'Operación estándar', status: 'normal' as const },
+      { phase: 'Degradación', time: `${Math.round(tCol * 0.25)} min`, desc: 'Primeros aeropuertos saturados', status: 'warning' as const },
+      { phase: 'Colapso', time: `${Math.round(tCol * 0.66)} min`, desc: 'Red sobrepasada — hubs críticos', status: 'critical' as const },
+      { phase: 'Pico', time: `${tCol} min`, desc: 'Máxima congestión alcanzada', status: 'critical' as const },
+      { phase: 'Replanificación', time: `${tCol + 2} min`, desc: 'Rutas alternativas activadas', status: 'warning' as const },
+      { phase: 'Recuperación', time: `${tCol + Math.round(tRec * 0.66)} min`, desc: 'Operaciones estabilizándose', status: 'normal' as const },
+      { phase: 'Estable', time: `${tCol + tRec} min`, desc: 'Nueva línea base operativa', status: 'normal' as const },
+    ];
+  }, [collapseMetrics]);
+
+  const collapseTimeline = React.useMemo(() => {
+    return buildCollapseTimelineFromEvents(events);
+  }, [events]);
+
+  const airlineResilience = React.useMemo(() => {
+    return deriveAirlineResilience(shipments);
+  }, [shipments]);
+
+  const bestAirline = airlineResilience[0];
+  const worstAirline = airlineResilience[airlineResilience.length - 1];
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col" style={{ background: '#060D1F', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -229,12 +305,12 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
           />
           <MetricCard
             label="AEROPUERTOS AFECTADOS"
-            value={collapseMetrics.affectedAirports}
-            subtext={`De ${collapseMetrics.totalAirports} hubs`}
+            value={airportStats.affectedAirports}
+            subtext={`De ${airportStats.totalAirports} hubs`}
             color="#FF4D4D"
             icon={<AlertOctagon className="w-3.5 h-3.5" />}
             trend="down"
-            trendValue={`${Math.round(collapseMetrics.affectedAirports / collapseMetrics.totalAirports * 100)}% de la red`}
+            trendValue={airportStats.totalAirports > 0 ? `${Math.round(airportStats.affectedAirports / airportStats.totalAirports * 100)}% de la red` : '—'}
           />
           <MetricCard
             label="ENVÍOS RETRASADOS"
@@ -247,9 +323,9 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
           />
           <MetricCard
             label="CONGESTIÓN PICO"
-            value={collapseMetrics.peakCongestion}
+            value={airportStats.peakCongestion}
             unit="%"
-            subtext={`Hub ${collapseMetrics.peakAirport}`}
+            subtext={`Hub ${airportStats.peakAirport}`}
             color="#FF4D4D"
             icon={<TrendingDown className="w-3.5 h-3.5" />}
             trend="down"
@@ -274,7 +350,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
             <SectionTitle icon={<Activity className="w-3.5 h-3.5" />}>SALUD DE LA RED DURANTE EL COLAPSO</SectionTitle>
             <div style={{ height: 200 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={NETWORK_HEALTH} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                <AreaChart data={networkHealth} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
                   <defs>
                     <linearGradient id="collapse-health" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#FF4D4D" stopOpacity={0.3} />
@@ -296,21 +372,21 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
 
           {/* Airport Overload Comparison */}
           <div className="bg-[#0A1628] rounded-xl border border-[#1E3058] p-4">
-            <SectionTitle icon={<BarChart3 className="w-3.5 h-3.5" />}>COMPARACIÓN DE CARGA — NORMAL VS PICO DE COLAPSO</SectionTitle>
+            <SectionTitle icon={<BarChart3 className="w-3.5 h-3.5" />}>CARGA ACTUAL VS PICO DE COLAPSO</SectionTitle>
             <div style={{ height: 200 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={AIRPORT_OVERLOAD} margin={{ top: 5, right: 5, left: -20, bottom: 0 }} barSize={12}>
+                <BarChart data={airportOverload} margin={{ top: 5, right: 5, left: -20, bottom: 0 }} barSize={12}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1E3058" strokeOpacity={0.5} vertical={false} />
                   <XAxis dataKey="id" tick={{ fill: '#4A6080', fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis domain={[0, 100]} tick={{ fill: '#4A6080', fontSize: 9 }} axisLine={false} tickLine={false} unit="%" />
                   <ReTooltip cursor={{ fill: 'rgba(255,77,77,0.05)' }} />
-                  <Bar isAnimationActive={false} dataKey="normal" name="Normal" radius={[2, 2, 0, 0]} fill="#4DA6FF" fillOpacity={0.6} />
+                  <Bar isAnimationActive={false} dataKey="normal" name="Actual" radius={[2, 2, 0, 0]} fill="#4DA6FF" fillOpacity={0.6} />
                   <Bar isAnimationActive={false} dataKey="peak" name="Pico" radius={[2, 2, 0, 0]} fill="#FF4D4D" fillOpacity={0.7} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
             <div className="flex items-center gap-4 mt-3 justify-center">
-              {[{ color: '#4DA6FF', label: 'Normal' }, { color: '#FF4D4D', label: 'Pico de Colapso' }].map(l => (
+              {[{ color: '#4DA6FF', label: 'Actual' }, { color: '#FF4D4D', label: 'Pico de Colapso' }].map(l => (
                 <div key={l.label} className="flex items-center gap-1.5">
                   <div className="w-3 h-2 rounded-sm" style={{ backgroundColor: l.color }} />
                   <span className="text-[10px] text-[#4A6080]">{l.label}</span>
@@ -324,7 +400,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
         <div className="bg-[#0A1628] rounded-xl border border-[#1E3058] p-4 mb-5">
           <SectionTitle icon={<Clock className="w-3.5 h-3.5" />}>FASES DEL COLAPSO — CRONOLOGÍA COMPLETA</SectionTitle>
           <div className="flex items-center gap-0 overflow-x-auto pb-2">
-            {COLLAPSE_PHASES.map((p, i) => {
+            {collapsePhases.map((p, i) => {
               const color = p.status === 'critical' ? '#FF4D4D' : p.status === 'warning' ? '#FFC857' : '#00FF9C';
               return (
                 <React.Fragment key={p.phase}>
@@ -349,7 +425,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
             <SectionTitle icon={<AlertOctagon className="w-3.5 h-3.5" />}>LÍNEA DE TIEMPO DE EVENTOS</SectionTitle>
             <div className="relative flex flex-col gap-0 pl-5">
               <div className="absolute left-2 top-2 bottom-2 w-px bg-[#1E3058]" />
-              {COLLAPSE_TIMELINE.map((evt) => {
+              {collapseTimeline.map((evt) => {
                 const color = evt.type === 'critical' ? '#FF4D4D' : evt.type === 'warning' ? '#FFC857' : '#4DA6FF';
                 return (
                   <div key={`collapse-${evt.time}`} className="relative flex gap-3 py-3 border-b border-[#1E3058]/40 last:border-0">
@@ -381,7 +457,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
           <div className="bg-[#0A1628] rounded-xl border border-[#1E3058] p-4">
             <SectionTitle icon={<Shield className="w-3.5 h-3.5" />}>RESILIENCIA POR AEROLÍNEA</SectionTitle>
             <div className="flex flex-col gap-2">
-              {AIRLINE_RESILIENCE.map((a) => (
+              {airlineResilience.map((a) => (
                 <div key={a.code} className="flex items-center gap-2 py-1.5 border-b border-[#1E3058]/40">
                   <div className="w-7 text-[11px] text-[#A8C0E0]" style={{ fontWeight: 700 }}>{a.code}</div>
                   <div className="flex-1">
@@ -405,7 +481,11 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
                 <span className="text-[9px] text-[#FF4D4D]" style={{ letterSpacing: '0.1em', fontWeight: 700 }}>PUNTO DÉBIL</span>
               </div>
               <div className="text-[11px] text-[#FF7070] leading-relaxed">
-                <strong>Emirates (EK)</strong> más vulnerable — dependencia excesiva del hub DXB. Se requieren hubs redundantes para rutas del Golfo.
+                {worstAirline ? (
+                  <><strong>{worstAirline.name} ({worstAirline.code})</strong> más vulnerable con {worstAirline.resilience}% de resiliencia y {worstAirline.lost} envíos perdidos. Se recomiendan rutas alternativas de respaldo.</>
+                ) : (
+                  <>No se identificaron aerolíneas críticas en el período de colapso.</>
+                )}
               </div>
             </div>
 
@@ -415,7 +495,11 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
                 <span className="text-[9px] text-[#00FF9C]" style={{ letterSpacing: '0.1em', fontWeight: 700 }}>MÁS RESILIENTE</span>
               </div>
               <div className="text-[11px] text-[#70FFD0] leading-relaxed">
-                <strong>Singapore Airlines (SQ)</strong> mejor preparada — red distribuida con hub SIN como respaldo efectivo durante colapso.
+                {bestAirline ? (
+                  <><strong>{bestAirline.name} ({bestAirline.code})</strong> mejor preparada con {bestAirline.resilience}% de resiliencia operativa frente al colapso de la red.</>
+                ) : (
+                  <>No se identificaron aerolíneas con resiliencia destacada.</>
+                )}
               </div>
             </div>
           </div>
@@ -425,7 +509,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
         <div className="bg-[#0A1628] rounded-xl border border-[#1E3058] p-4 mb-5">
           <SectionTitle icon={<AlertOctagon className="w-3.5 h-3.5" />}>IMPACTO POR AEROPUERTO — ANÁLISIS DE CONGESTIÓN</SectionTitle>
           <div className="grid grid-cols-4 gap-3">
-            {AIRPORT_OVERLOAD.map(a => {
+            {airportOverload.map(a => {
               const delta = a.peak - a.normal;
               const severity = a.peak >= 95 ? '#FF4D4D' : a.peak >= 90 ? '#FF4D4D' : a.peak >= 85 ? '#FFC857' : '#00FF9C';
               return (
@@ -442,7 +526,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
                   <div className="text-[10px] text-[#4A6080] mb-2">{a.city}</div>
                   <div className="flex items-center gap-3 mb-1">
                     <div className="flex-1">
-                      <div className="text-[9px] text-[#4A6080] mb-0.5">Normal</div>
+                      <div className="text-[9px] text-[#4A6080] mb-0.5">Actual</div>
                       <div className="h-1 bg-[#1E3058] rounded-full overflow-hidden">
                         <div className="h-full rounded-full" style={{ width: `${a.normal}%`, backgroundColor: '#4DA6FF' }} />
                       </div>
@@ -469,7 +553,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
       <div className="flex-shrink-0 h-12 bg-[#0A1628] border-t border-[#1E3058] flex items-center px-6 gap-4">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-[#FF4D4D]" />
-          <span className="text-[10px] text-[#4A6080]">Colapso simulado · {collapseMetrics.affectedAirports}/{collapseMetrics.totalAirports} aeropuertos críticos · Resiliencia: {collapseMetrics.resilienceScore}/100</span>
+          <span className="text-[10px] text-[#4A6080]">Colapso (backend) · {airportStats.affectedAirports}/{airportStats.totalAirports} aeropuertos críticos · Cumplimiento SLA: {collapseMetrics.resilienceScore}%</span>
         </div>
         <div className="flex-1" />
         <button
