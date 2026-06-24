@@ -49,6 +49,19 @@ export interface DaySnapshot {
   severity: 'normal' | 'warning' | 'critical';
 }
 
+export interface CollapseConditions {
+  causeCode: string;
+  causeLabel: string;
+  reason: string;
+  detectedAtReal: string | null;
+  detectedAtSim: string | null;
+  occupancyPct: number;
+  unserviceablePct: number;
+  criticalAirports: number;
+  totalAirports: number;
+  cycle: number;
+}
+
 export interface CollapseMetrics {
   timeToCollapse: string;
   resilienceScore: number;
@@ -62,6 +75,8 @@ export interface CollapseMetrics {
   recoveryTime: string;
   replannedRoutes: number;
   cascadeEvents: number;
+  /** Condiciones reales del colapso (cuándo, qué lo provocó y por qué). Null si no se reportaron. */
+  conditions: CollapseConditions | null;
 }
 
 interface SimulationState {
@@ -280,6 +295,7 @@ function buildCollapseMetricsFromResults(
   const delayed = results.daySnapshots.reduce((acc, s) => acc + (s.batchesDelayed ?? 0), 0);
   const totalSimMin = results.totalCycles * COLLAPSE_SC_MIN;
   const totalSimHours = Math.max(1, Math.round(totalSimMin / 60));
+  const ci = results.collapseInfo;
   return {
     timeToCollapse: `${totalSimHours} h sim · ${results.totalCycles} ciclos`,
     resilienceScore: Math.round(results.slaCompliancePercent),
@@ -293,6 +309,20 @@ function buildCollapseMetricsFromResults(
     recoveryTime: 'N/A',
     replannedRoutes: 0,
     cascadeEvents: delayed + results.unroutableBatches,
+    conditions: ci
+      ? {
+          causeCode: ci.causeCode,
+          causeLabel: ci.causeLabel,
+          reason: ci.reason,
+          detectedAtReal: ci.detectedAtReal,
+          detectedAtSim: ci.detectedAtSim,
+          occupancyPct: ci.occupancyPct,
+          unserviceablePct: ci.unserviceablePct,
+          criticalAirports: ci.criticalAirports,
+          totalAirports: ci.totalAirports,
+          cycle: ci.cycle,
+        }
+      : null,
   };
 }
 

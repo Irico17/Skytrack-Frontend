@@ -1,3 +1,33 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Barras de desplazamiento estilizadas (acordes al tema oscuro). Antes salían
+   blancas/nativas y rompían el diseño. Aplica a toda la app.
+   ────────────────────────────────────────────────────────────────────────── */
+* {
+  scrollbar-width: thin;                      /* Firefox */
+  scrollbar-color: #2A4368 transparent;       /* thumb / track (Firefox) */
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #233653;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #34507a;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}

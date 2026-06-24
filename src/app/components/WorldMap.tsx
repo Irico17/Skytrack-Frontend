@@ -102,6 +102,8 @@ interface WorldMapProps {
   /** Filtros sincronizados con el panel derecho (TASK-021). */
   utFilter?: string;
   warehouseFilter?: string;
+  /** Filtro por región/continente de almacenes (sincronizado con el panel). */
+  warehouseContinent?: string;
   /** Permite que la barra de filtro del mapa actualice el filtro UT compartido (MAP-REG-05). */
   onUtFilterChange?: (value: string) => void;
   onWarehouseFilterChange?: (value: string) => void;
@@ -276,9 +278,9 @@ function drawPlaneMarker(
   denseMode: boolean,
   zoomLevel: number,
 ) {
-  const zoomBoost = hasBags
+  const zoomBoost = (hasBags
     ? Math.min(2.55, 1.68 + Math.max(0, zoomLevel - 1) * 0.48)
-    : Math.min(2.28, 1.65 + Math.max(0, zoomLevel - 1) * 0.39);
+    : Math.min(2.28, 1.65 + Math.max(0, zoomLevel - 1) * 0.39)) * 1.25; // aviones ~25% más grandes
 
   ctx.save();
   ctx.translate(x, y);
@@ -381,7 +383,7 @@ function WorldMapComponent({
   airports, flights, shipments, selectedEntity,
   onSelectAirport, onSelectFlight, onSelectShipment, toggles,
   simClock, simClockRef, activeFlights = [], flightPlanFlights = [],
-  utFilter = 'all', warehouseFilter = 'all', onUtFilterChange, onWarehouseFilterChange,
+  utFilter = 'all', warehouseFilter = 'all', warehouseContinent = 'all', onUtFilterChange, onWarehouseFilterChange,
   cancelledFlightIds,
   isExpanded = false, onToggleExpanded,
 }: WorldMapProps) {
@@ -399,6 +401,9 @@ function WorldMapComponent({
   const flightCountsRef = useRef({ visible: 0, loaded: 0 });
   // Densidad de render del mapa (1 = todos; 0.5 = mitad de las vacías; 0.25 = un cuarto).
   const [mapDensity, setMapDensity] = useState(1);
+  // Barra de filtros del mapa colapsable: se esconde tras un asa y aparece al pasar el mouse,
+  // para no tapar la vista cuando no se usa.
+  const [mapFiltersOpen, setMapFiltersOpen] = useState(false);
   const mapDensityRef = useRef(1);
   mapDensityRef.current = mapDensity;
   const cancelledFlightIdsRef = useRef<Set<string>>(EMPTY_CANCELLED_SET_WM);
@@ -648,8 +653,9 @@ function WorldMapComponent({
   const airportPositions = useMemo(() =>
     airports
       .filter(a => passesWarehouseMapFilter(a, warehouseFilter))
+      .filter(a => warehouseContinent === 'all' || ((a as { continent?: string }).continent ?? '') === warehouseContinent)
       .map(a => ({ ...a, svgPos: project(a.coords[0], a.coords[1]) })),
-    [airports, warehouseFilter]
+    [airports, warehouseFilter, warehouseContinent]
   );
 
   const countryLayers = useMemo(() => geoFeatures.map((geo: any, i: number) => {
@@ -1367,7 +1373,14 @@ function WorldMapComponent({
           const pct = getOccupancyPercent(a.occupancy, a.capacity);
           const isCritical = a.status === 'critical';
           const isWarning = a.status === 'warning';
-          const r = isSelected ? 5 : 3.8;
+          // Almacén ~50% más pequeño que el punto anterior (5 / 3.8 → 2.6 / 1.9).
+          const r = isSelected ? 2.6 : 1.9;
+          // Glifo de almacén (casa/edificio) en lugar de un punto.
+          const gw = r * 1.35;                 // semi-ancho
+          const eave = -r * 0.25;              // alero
+          const peak = -r * 1.3;               // cumbre del techo
+          const base = r * 1.05;               // base
+          const warehousePath = `M ${-gw} ${eave} L 0 ${peak} L ${gw} ${eave} L ${gw} ${base} L ${-gw} ${base} Z`;
 
           return (
             <g
@@ -1408,12 +1421,12 @@ function WorldMapComponent({
               {isSelected && (
                 <circle r={r + 4} fill="none" stroke={color} strokeWidth={1.2} opacity={0.7} filter="url(#glow)" />
               )}
-              {/* Outer halo */}
-              <circle r={r + 2} fill={color} opacity={0.18} />
-              {/* Main dot */}
-              <circle r={r} fill={color} stroke="#040814" strokeWidth={1} />
-              {/* Center pinhole */}
-              <circle r={1.2} fill="#040814" />
+              {/* Halo de visibilidad */}
+              <circle r={r + 2} fill={color} opacity={0.16} />
+              {/* Glifo de almacén (edificio con techo) coloreado por semáforo */}
+              <path d={warehousePath} fill={color} stroke="#040814" strokeWidth={0.7} strokeLinejoin="round" />
+              {/* Puerta del almacén */}
+              <rect x={-gw * 0.32} y={base - r * 0.8} width={gw * 0.64} height={r * 0.8} fill="#040814" opacity={0.55} rx={0.25} />
               {/* Airport label */}
               {showLabels && (
                 <text
@@ -1490,9 +1503,12 @@ function WorldMapComponent({
         <div
           data-interactive="true"
           onMouseDown={e => e.stopPropagation()}
+          onMouseEnter={() => setMapFiltersOpen(true)}
+          onMouseLeave={() => setMapFiltersOpen(false)}
           className="absolute bottom-5 left-4 flex flex-col gap-1.5"
           style={{ zIndex: 20 }}
         >
+         {mapFiltersOpen && (<>
           <div
             className="flex items-center gap-1 p-1 rounded-lg"
             style={{ background: 'rgba(10,20,45,0.92)', border: '1px solid #1E3058', backdropFilter: 'blur(6px)' }}
@@ -1587,12 +1603,15 @@ function WorldMapComponent({
               );
             })}
           </div>
+         </>)}
+          {/* Asa siempre visible: muestra/oculta los filtros al pasar el mouse. Incluye el contador. */}
           <div
-            className="px-2 py-1 rounded-md text-[10px] font-mono text-[#7090B0] self-start"
-            style={{ background: 'rgba(10,20,45,0.85)', border: '1px solid #1E3058' }}
-            title="Vuelos dibujados en el mapa (ventana en vuelo) · con carga"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] self-start"
+            style={{ background: 'rgba(10,20,45,0.92)', border: `1px solid ${mapFiltersOpen ? '#4DA6FF55' : '#1E3058'}` }}
+            title="Pasa el mouse para mostrar/ocultar los filtros del mapa (UT · almacenes · densidad)"
           >
-            ✈ {flightCounts.visible} en vuelo · {flightCounts.loaded} con carga
+            <span style={{ color: mapFiltersOpen ? '#4DA6FF' : '#7090B0', fontWeight: 600 }}>⚙ Filtros</span>
+            <span className="font-mono" style={{ color: '#7090B0' }}>· ✈ {flightCounts.visible} en vuelo · {flightCounts.loaded} con carga</span>
           </div>
         </div>
       )}

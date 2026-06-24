@@ -279,6 +279,19 @@ export interface BackendDaySnapshot {
   replanned?: number;
 }
 
+export interface BackendCollapseInfo {
+  causeCode: string;        // WAREHOUSE_SATURATION | UNSERVICEABLE_BATCHES | CAPACITY_SATURATION | ALGORITHM_FITNESS
+  causeLabel: string;
+  reason: string;
+  detectedAtReal: string | null;  // ISO-8601 (reloj real)
+  detectedAtSim: string | null;   // ISO-8601 (tiempo simulado)
+  occupancyPct: number;
+  unserviceablePct: number;
+  criticalAirports: number;
+  totalAirports: number;
+  cycle: number;
+}
+
 export interface BackendSimulationResults {
   simulationId: string;
   scenario: string;
@@ -293,6 +306,7 @@ export interface BackendSimulationResults {
   totalCycles: number;
   algorithmUsed: string;
   daySnapshots: BackendDaySnapshot[];
+  collapseInfo?: BackendCollapseInfo | null;
 }
 
 export interface BackendSimulationStatus {

@@ -219,6 +219,10 @@ export function mapSolutionToShipments(solution: BackendSolution, simulatedTime:
       progress,
       estimatedDelivery: formatDelivery(finalArrival),
       finalArrivalTime: finalArrival,
+      journeyStartTime: orderedFlights[0]?.departureTime ?? null,
+      legs: orderedFlights.map(f => ({
+        id: f.flightId, from: f.originId, to: f.destinationId, dep: f.depMs, arr: f.arrMs,
+      })),
       deliveredAt: progress >= 1 ? finalArrival : null,
       isReplanned: false,
     };

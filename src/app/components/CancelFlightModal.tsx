@@ -84,7 +84,8 @@ export function CancelFlightModal({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={submitting ? undefined : onClose} />
+      {/* Fondo apenas atenuado y SIN desenfoque para que se siga viendo el mapa/aviones detrás */}
+      <div className="absolute inset-0 bg-black/40" onClick={submitting ? undefined : onClose} />
 
       <div className="relative bg-[#0D1526] border border-[#1E3058] rounded-2xl w-full max-w-md mx-4 shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#1E3058]">

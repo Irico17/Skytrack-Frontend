@@ -49,6 +49,13 @@ export interface Shipment {
   estimatedDelivery: string;
   /** ISO-8601 delivery instant from backend route (ENV-03). */
   finalArrivalTime?: string | null;
+  /** ISO-8601 de la PRIMERA salida del viaje. Permite interpolar el progreso en vivo
+   *  en el panel (misma fórmula que el backend) sin recargar la solución. */
+  journeyStartTime?: string | null;
+  /** Itinerario compacto (tramos, tiempos en ms) para DERIVAR el estado/posición en vivo
+   *  en el panel (en vuelo / transferencia / en origen / entregado) sin recargar la solución
+   *  ni esperar al siguiente ciclo. Se calcula una vez al mapear; el render solo lo lee. */
+  legs?: { id: string; from: string; to: string; dep: number; arr: number }[];
   deliveredAt?: string | null;
   isReplanned: boolean;
 }

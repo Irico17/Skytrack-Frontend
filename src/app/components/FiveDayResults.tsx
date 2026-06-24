@@ -12,6 +12,8 @@ import {
 import { DaySnapshot } from '../hooks/useSimulation';
 import { Shipment, SimEvent, Airport } from '../data/mockData';
 import type { BackendCycleUpdate, BackendSimulationResults } from '../types/backend';
+import { LastCycleSnapshot } from './LastCycleSnapshot';
+import { downloadTextFile, reportLine, reportSection } from '../utils/exportReport';
 
 interface FiveDayResultsProps {
   startDate: Date;
@@ -241,6 +243,9 @@ const CustomBagsTooltip = ({ active, payload, label }: { active?: boolean; paylo
 
 export function FiveDayResults({ startDate, daySnapshots, shipments, events, airports, lastCycleUpdate, results, onClose, onReset }: FiveDayResultsProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'days' | 'airlines' | 'incidents'>('overview');
+  // Paginación del ranking de aerolíneas (evita listas pesadas con muchos clientes).
+  const AIRLINES_PAGE_SIZE = 10;
+  const [airlinePage, setAirlinePage] = useState(0);
 
   const reportSnapshots: DaySnapshot[] = daySnapshots.length > 0 ? daySnapshots : (lastCycleUpdate ? [{
     day: Math.max(1, Math.ceil(lastCycleUpdate.daysElapsed)),
@@ -310,6 +315,42 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
     : 0;
   const slaCompliantAirlines = airlinePerformance.filter(a => a.onTime >= 70).length;
 
+  const handleExportTxt = () => {
+    const num = (n: number | undefined) => (n === undefined || n === null ? '—' : n.toLocaleString());
+    const lines: string[] = [];
+    lines.push('SKYTRACK — REPORTE DE SIMULACIÓN DE 5 DÍAS');
+    lines.push(`Generado: ${new Date().toLocaleString('es-PE', { hour12: false })}`);
+    if (results) {
+      lines.push(`Periodo: ${results.startDate} → ${results.endDate}`);
+      lines.push(reportSection('RESUMEN GLOBAL'));
+      lines.push(reportLine('Maletas transportadas', num(realTotalBags)));
+      lines.push(reportLine('Entregadas', num(deliveredBags)));
+      lines.push(reportLine('Lotes totales', results.totalBatches));
+      lines.push(reportLine('Lotes con ruta', results.routedBatches));
+      lines.push(reportLine('Sin ruta', results.unroutableBatches));
+      lines.push(reportLine('Cumplimiento SLA (%)', Math.round(results.slaCompliancePercent)));
+      lines.push(reportLine('Ciclos', results.totalCycles));
+      lines.push(reportLine('Fitness final', results.fitness.toFixed(2)));
+    }
+    if (lastCycleUpdate) {
+      const om = lastCycleUpdate.operationalMetrics;
+      lines.push(reportSection(`ÚLTIMO CICLO (#${lastCycleUpdate.cycle})`));
+      lines.push(reportLine('Vuelos en vuelo', num(om?.activeLoadedFlights ?? lastCycleUpdate.activeFlights?.length)));
+      lines.push(reportLine('Maletas en vuelo', num(om?.inFlightBags)));
+      lines.push(reportLine('Entregadas', num(om?.deliveredBags)));
+      lines.push(reportLine('Por planificar', num(lastCycleUpdate.batchSummary?.unrouted)));
+    }
+    if (daySnapshots.length > 0) {
+      lines.push(reportSection('POR DÍA'));
+      daySnapshots.forEach(d => lines.push(reportLine(`${d.date}`, `entregas ${d.completed} · a tiempo ${d.onTimePct}% · fuera de SLA ${d.delayed}`)));
+    }
+    if (airlinePerformance.length > 0) {
+      lines.push(reportSection(`RANKING DE AEROLÍNEAS (${airlinePerformance.length})`));
+      airlinePerformance.forEach((a, i) => lines.push(reportLine(`${i + 1}. ${a.code} ${a.name}`, `${a.onTime}% · ${a.bags.toLocaleString()} maletas · ${a.incidents} incid.`)));
+    }
+    downloadTextFile(`reporte_5dias_${Date.now()}.txt`, lines.join('\n') + '\n');
+  };
+
   // Peor día real: el de menor puntualidad (solo si hay más de un día para comparar)
   const worstDayNum = reportSnapshots.length > 1
     ? reportSnapshots.reduce((worst, s) => (s.onTimePct < worst.onTimePct ? s : worst), reportSnapshots[0]).day
@@ -365,11 +406,13 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
 
         {/* Actions */}
         <button
+          onClick={handleExportTxt}
           className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#4DA6FF]/10 border border-[#4DA6FF]/30 text-xs text-[#4DA6FF] hover:bg-[#4DA6FF]/20 transition-colors"
           style={{ fontWeight: 600 }}
+          title="Descargar un resumen del reporte en texto (.txt)"
         >
           <Download className="w-3.5 h-3.5" />
-          Exportar Reporte
+          Exportar TXT
         </button>
         <button
           onClick={onReset}
@@ -412,6 +455,13 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
         {/* ════ OVERVIEW TAB ════ */}
         {activeTab === 'overview' && (
           <div className="flex flex-col gap-5">
+
+            {/* Último ciclo ejecutado — estado final de la simulación */}
+            <LastCycleSnapshot
+              lastCycleUpdate={lastCycleUpdate}
+              accent="#4DA6FF"
+              subtitle="Estado final de la simulación de 5 días"
+            />
 
             {/* KPI Strip */}
             <div className="grid grid-cols-7 gap-3">
@@ -733,7 +783,8 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
               <div className="col-span-2 bg-[#0A1628] rounded-xl border border-[#1E3058] p-4">
                 <SectionTitle icon={<Layers className="w-3.5 h-3.5" />}>RANKING DE AEROLÍNEAS — PUNTUALIDAD EN 5 DÍAS</SectionTitle>
                 <div className="flex flex-col gap-2">
-                  {airlinePerformance.map((a, i) => {
+                  {airlinePerformance.slice(airlinePage * AIRLINES_PAGE_SIZE, airlinePage * AIRLINES_PAGE_SIZE + AIRLINES_PAGE_SIZE).map((a, idx) => {
+                    const i = airlinePage * AIRLINES_PAGE_SIZE + idx;
                     const color = a.onTime >= 85 ? '#00FF9C' : a.onTime >= 75 ? '#4DA6FF' : a.onTime >= 65 ? '#FFC857' : '#FF4D4D';
                     return (
                       <div key={a.code} className="flex items-center gap-3 py-2.5 border-b border-[#1E3058]/40">
@@ -763,6 +814,32 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                     );
                   })}
                 </div>
+                {airlinePerformance.length > AIRLINES_PAGE_SIZE && (
+                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-[#1E3058]/50">
+                    <span className="text-[10px] text-[#4A6080]">
+                      {airlinePage * AIRLINES_PAGE_SIZE + 1}–{Math.min((airlinePage + 1) * AIRLINES_PAGE_SIZE, airlinePerformance.length)} de {airlinePerformance.length}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setAirlinePage(p => Math.max(0, p - 1))}
+                        disabled={airlinePage === 0}
+                        className="px-2.5 py-1 rounded-md text-[11px] bg-[#0D1E38] border border-[#1E3058] text-[#A8C0E0] disabled:opacity-40 hover:border-[#4DA6FF]/40 transition-colors"
+                      >
+                        ← Anterior
+                      </button>
+                      <span className="text-[10px] text-[#7090B0] font-mono">
+                        {airlinePage + 1}/{Math.ceil(airlinePerformance.length / AIRLINES_PAGE_SIZE)}
+                      </span>
+                      <button
+                        onClick={() => setAirlinePage(p => Math.min(Math.ceil(airlinePerformance.length / AIRLINES_PAGE_SIZE) - 1, p + 1))}
+                        disabled={(airlinePage + 1) * AIRLINES_PAGE_SIZE >= airlinePerformance.length}
+                        className="px-2.5 py-1 rounded-md text-[11px] bg-[#0D1E38] border border-[#1E3058] text-[#A8C0E0] disabled:opacity-40 hover:border-[#4DA6FF]/40 transition-colors"
+                      >
+                        Siguiente →
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Summary cards */}

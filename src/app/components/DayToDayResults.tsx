@@ -4,10 +4,12 @@ import {
 } from 'recharts';
 import {
   Globe, X, RotateCcw, CheckCircle, AlertTriangle, Package,
-  Clock, Warehouse, Plane, Users, Activity,
+  Clock, Warehouse, Plane, Users, Activity, Download,
 } from 'lucide-react';
 import { Shipment, SimEvent, Airport, getOccupancyPercent } from '../data/mockData';
 import type { BackendCycleUpdate, BackendSimulationResults } from '../types/backend';
+import { LastCycleSnapshot } from './LastCycleSnapshot';
+import { downloadTextFile, reportLine, reportSection } from '../utils/exportReport';
 
 interface DayToDayResultsProps {
   results: BackendSimulationResults | null;
@@ -73,6 +75,39 @@ export function DayToDayResults({ results, lastCycleUpdate, airports, shipments,
   const totalRoutes = results?.routedBatches ?? lastCycleUpdate?.totalRoutes ?? shipments.length;
   const totalBags = metrics?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? shipments.reduce((a, s) => a + s.luggageCount, 0);
 
+  const handleExportTxt = () => {
+    const num = (n: number | undefined) => (n === undefined || n === null ? '—' : n.toLocaleString());
+    const lines: string[] = [];
+    lines.push('SKYTRACK — REPORTE DE OPERACIÓN DÍA A DÍA');
+    lines.push(`Generado: ${new Date().toLocaleString('es-PE', { hour12: false })}`);
+    lines.push(`Hora simulada al cierre: ${simulationTime.toLocaleString('es-PE', { hour12: false })}`);
+    lines.push(reportSection('RESUMEN'));
+    lines.push(reportLine('Rutas planificadas', totalRoutes));
+    lines.push(reportLine('Cumplimiento SLA (%)', slaPct));
+    lines.push(reportLine('Maletas asignadas', typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags));
+    lines.push(reportLine('Lotes totales', results?.totalBatches ?? shipments.length));
+    lines.push(reportLine('Lotes con ruta', results?.routedBatches ?? '—'));
+    lines.push(reportLine('Sin ruta', results?.unroutableBatches ?? (lastCycleUpdate?.batchSummary.unrouted ?? '—')));
+    lines.push(reportLine('Ciclos ejecutados', results?.totalCycles ?? lastCycleUpdate?.cycle ?? '—'));
+    lines.push(reportLine('Fitness final', results ? results.fitness.toFixed(2) : (lastCycleUpdate ? lastCycleUpdate.fitness.toFixed(2) : '—')));
+    if (lastCycleUpdate) {
+      lines.push(reportSection(`ÚLTIMO CICLO EJECUTADO (#${lastCycleUpdate.cycle})`));
+      lines.push(reportLine('Vuelos en vuelo', num(metrics?.activeLoadedFlights ?? lastCycleUpdate.activeFlights?.length)));
+      lines.push(reportLine('Maletas en vuelo', num(metrics?.inFlightBags)));
+      lines.push(reportLine('Planificadas', num(metrics?.totalAssignedBags ?? lastCycleUpdate.totalBags)));
+      lines.push(reportLine('Por planificar', num(lastCycleUpdate.batchSummary?.unrouted)));
+      lines.push(reportLine('Entregadas', num(metrics?.deliveredBags)));
+      lines.push(reportLine('En almacén', num(metrics?.storedBags)));
+      lines.push(reportLine('En origen (sin despegar)', num(metrics?.notDepartedBags)));
+      lines.push(reportLine('Pendientes de entrega', num(metrics?.pendingDeliveryBags)));
+    }
+    if (clientData.length > 0) {
+      lines.push(reportSection('TOP CLIENTES (maletas)'));
+      clientData.forEach(c => lines.push(reportLine(c.clientId, c.bags.toLocaleString())));
+    }
+    downloadTextFile(`reporte_dia_a_dia_${Date.now()}.txt`, lines.join('\n') + '\n');
+  };
+
   return (
     <div className="fixed inset-0 z-[100] flex flex-col" style={{ background: '#060D1F', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       {/* Header */}
@@ -95,6 +130,10 @@ export function DayToDayResults({ results, lastCycleUpdate, airports, shipments,
           <span className="font-mono">{simulationTime.toLocaleString('es-ES', { hour12: false })}</span>
         </div>
         <div className="flex-1" />
+        <button onClick={handleExportTxt} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1A2E4A] border border-[#1E3058] text-xs text-[#A8C0E0] hover:border-[#00FF9C]/40 transition-colors" style={{ fontWeight: 600 }} title="Descargar un resumen del reporte en texto (.txt)">
+          <Download className="w-3.5 h-3.5" />
+          Exportar TXT
+        </button>
         <button onClick={onReset} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1A2E4A] border border-[#1E3058] text-xs text-[#A8C0E0] hover:border-[#4DA6FF]/40 transition-colors" style={{ fontWeight: 600 }}>
           <RotateCcw className="w-3.5 h-3.5" />
           Nueva Operación
@@ -106,7 +145,14 @@ export function DayToDayResults({ results, lastCycleUpdate, airports, shipments,
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-6 py-5">
-        {/* KPI strip */}
+        {/* Último ciclo ejecutado — lo más importante: estado de la red al detener la operación */}
+        <LastCycleSnapshot
+          lastCycleUpdate={lastCycleUpdate}
+          accent="#4DA6FF"
+          subtitle={`Estado al detener la operación · ciclo #${lastCycleUpdate?.cycle ?? DASH}`}
+        />
+
+        {/* KPI strip (acumulado de toda la operación) */}
         <div className="grid grid-cols-6 gap-3 mb-5">
           <KpiCard label="RUTAS PLANIFICADAS" value={totalRoutes} color="#4DA6FF" icon={<Activity className="w-3.5 h-3.5" />} subtext="Lotes con ruta asignada" />
           <KpiCard label="CUMPLIMIENTO SLA" value={slaPct} unit="%" color={slaPct >= 85 ? '#00FF9C' : slaPct >= 70 ? '#FFC857' : '#FF4D4D'} icon={<CheckCircle className="w-3.5 h-3.5" />} subtext="Rutas a tiempo" />

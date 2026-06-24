@@ -95,6 +95,8 @@ export default function App() {
   // con el selector de densidad del mapa (100/50/25%) y el LOD adaptativo del canvas.
   const [utFilter, setUtFilter] = useState('all');
   const [warehouseFilter, setWarehouseFilter] = useState('all');
+  // Filtro por región/continente de almacenes — compartido para que afecte mapa Y panel.
+  const [warehouseContinent, setWarehouseContinent] = useState('all');
 
   // Todos los modos usan el reloj simulado interpolado del backend (simClock).
   const displayedSimulationTime = simulation.simClock;
@@ -378,6 +380,7 @@ export default function App() {
               flightPlanFlights={mapFlightPlanFlights}
               utFilter={utFilter}
               warehouseFilter={warehouseFilter}
+              warehouseContinent={warehouseContinent}
               onUtFilterChange={setUtFilter}
               onWarehouseFilterChange={setWarehouseFilter}
               cancelledFlightIds={simulation.cancelledFlightIds}
@@ -616,8 +619,10 @@ export default function App() {
             onSelectShipment={handleSelectShipment}
             utFilter={utFilter}
             warehouseFilter={warehouseFilter}
+            warehouseContinent={warehouseContinent}
             onUtFilterChange={setUtFilter}
             onWarehouseFilterChange={setWarehouseFilter}
+            onWarehouseContinentChange={setWarehouseContinent}
             viewerCount={simulation.viewerCount}
             cancelledFlightIds={simulation.cancelledFlightIds}
           />
@@ -686,6 +691,7 @@ export default function App() {
           shipments={simulation.shipments}
           events={simulation.events}
           airports={simulation.airports}
+          lastCycleUpdate={simulation.lastCycleUpdate}
           onClose={() => setShowCollapseResults(false)}
           onReset={handleReset}
         />

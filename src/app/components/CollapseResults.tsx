@@ -2,10 +2,13 @@ import React from 'react';
 import {
   AlertTriangle, X, RotateCcw, ChevronRight, Globe, AlertOctagon,
   TrendingDown, Shield, Zap, Clock, Package, BarChart3,
-  ArrowUpRight, ArrowDownRight, Minus, CheckCircle, Activity,
+  ArrowUpRight, ArrowDownRight, Minus, CheckCircle, Activity, Download,
 } from 'lucide-react';
+import { downloadTextFile, reportLine, reportSection } from '../utils/exportReport';
 import { CollapseMetrics } from '../hooks/useSimulation';
 import { Shipment, SimEvent, Airport, getOccupancyPercent } from '../data/mockData';
+import type { BackendCycleUpdate } from '../types/backend';
+import { LastCycleSnapshot } from './LastCycleSnapshot';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip,
   ResponsiveContainer, CartesianGrid, ReferenceLine, Cell,
@@ -16,6 +19,7 @@ interface CollapseResultsProps {
   shipments: Shipment[];
   events: SimEvent[];
   airports: Airport[];
+  lastCycleUpdate?: BackendCycleUpdate | null;
   onClose: () => void;
   onReset: () => void;
 }
@@ -31,6 +35,13 @@ function fmtDate(base: Date, offset: number): string {
 function fmtDateRange(base: Date, offsetEnd: number): string {
   const d = new Date(base);
   return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]} ${d.getFullYear()}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 interface AirlineResilienceStat { code: string; name: string; resilience: number; lost: number; color: string }
@@ -156,8 +167,9 @@ const CustomAreaTooltip = ({ active, payload, label }: { active?: boolean; paylo
   );
 };
 
-export function CollapseResults({ collapseMetrics, shipments, events, airports, onClose, onReset }: CollapseResultsProps) {
+export function CollapseResults({ collapseMetrics, shipments, events, airports, lastCycleUpdate, onClose, onReset }: CollapseResultsProps) {
   const startDate = new Date();
+  const conditions = collapseMetrics.conditions;
 
   // Estadísticas de aeropuertos derivadas de datos REALES del backend (ocupación pico vía WS).
   const airportStats = React.useMemo(() => {
@@ -231,6 +243,44 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
   const bestAirline = airlineResilience[0];
   const worstAirline = airlineResilience[airlineResilience.length - 1];
 
+  const handleExportTxt = () => {
+    const num = (n: number | undefined) => (n === undefined || n === null ? '—' : n.toLocaleString());
+    const m = collapseMetrics;
+    const lines: string[] = [];
+    lines.push('SKYTRACK — REPORTE DE ESCENARIO DE COLAPSO');
+    lines.push(`Generado: ${new Date().toLocaleString('es-PE', { hour12: false })}`);
+    if (conditions) {
+      lines.push(reportSection('CONDICIONES DEL COLAPSO'));
+      lines.push(reportLine('Causa', conditions.causeLabel));
+      lines.push(reportLine('Código de causa', conditions.causeCode));
+      lines.push(reportLine('Detectado (hora real)', fmtDateTime(conditions.detectedAtReal)));
+      lines.push(reportLine('Detectado (hora simulada)', fmtDateTime(conditions.detectedAtSim)));
+      lines.push(reportLine('Ocupación (%)', Math.round(conditions.occupancyPct)));
+      lines.push(reportLine('No atendibles (%)', Math.round(conditions.unserviceablePct)));
+      lines.push(reportLine('Aeropuertos críticos', `${conditions.criticalAirports}/${conditions.totalAirports}`));
+      lines.push(reportLine('Ciclo', conditions.cycle));
+      lines.push(`\nMotivo: ${conditions.reason}`);
+    }
+    lines.push(reportSection('MÉTRICAS'));
+    lines.push(reportLine('Tiempo al colapso', m.timeToCollapse));
+    lines.push(reportLine('Puntuación resiliencia (SLA %)', m.resilienceScore));
+    lines.push(reportLine('Aeropuertos afectados', `${airportStats.affectedAirports}/${airportStats.totalAirports}`));
+    lines.push(reportLine('Congestión pico (%)', airportStats.peakCongestion));
+    lines.push(reportLine('Envíos retrasados', m.shipmentsDelayed));
+    lines.push(reportLine('Envíos perdidos', m.shipmentsLost));
+    lines.push(reportLine('Total envíos', m.totalShipments));
+    if (lastCycleUpdate) {
+      const om = lastCycleUpdate.operationalMetrics;
+      lines.push(reportSection(`ÚLTIMO CICLO ANTES DEL COLAPSO (#${lastCycleUpdate.cycle})`));
+      lines.push(reportLine('Vuelos en vuelo', num(om?.activeLoadedFlights ?? lastCycleUpdate.activeFlights?.length)));
+      lines.push(reportLine('Maletas en vuelo', num(om?.inFlightBags)));
+      lines.push(reportLine('Planificadas', num(om?.totalAssignedBags ?? lastCycleUpdate.totalBags)));
+      lines.push(reportLine('Por planificar', num(lastCycleUpdate.batchSummary?.unrouted)));
+      lines.push(reportLine('Entregadas', num(om?.deliveredBags)));
+    }
+    downloadTextFile(`reporte_colapso_${Date.now()}.txt`, lines.join('\n') + '\n');
+  };
+
   return (
     <div className="fixed inset-0 z-[100] flex flex-col" style={{ background: '#060D1F', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
 
@@ -258,11 +308,22 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
 
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#FF4D4D]/10 border border-[#FF4D4D]/30">
           <AlertTriangle className="w-3.5 h-3.5 text-[#FF4D4D]" />
-          <span className="text-xs text-[#FF4D4D]" style={{ fontWeight: 600 }}>Colapso Detectado</span>
+          <span className="text-xs text-[#FF4D4D]" style={{ fontWeight: 600 }}>
+            {conditions ? `Colapso: ${conditions.causeLabel}` : 'Colapso Detectado'}
+          </span>
         </div>
 
         <div className="flex-1" />
 
+        <button
+          onClick={handleExportTxt}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1A2E4A] border border-[#1E3058] text-xs text-[#A8C0E0] hover:border-[#00FF9C]/40 transition-colors"
+          style={{ fontWeight: 600 }}
+          title="Descargar un resumen del reporte en texto (.txt)"
+        >
+          <Download className="w-3.5 h-3.5" />
+          Exportar TXT
+        </button>
         <button
           onClick={onReset}
           className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1A2E4A] border border-[#1E3058] text-xs text-[#A8C0E0] hover:border-[#4DA6FF]/40 transition-colors"
@@ -341,6 +402,64 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
             trendValue="Impacto multiplicado"
           />
         </div>
+
+        {/* Condiciones del colapso (datos reales del backend) */}
+        <div className="bg-[#0A1628] rounded-xl border border-[#FF4D4D]/30 p-4 mb-5">
+          <SectionTitle icon={<AlertOctagon className="w-3.5 h-3.5" />}>CONDICIONES DEL COLAPSO</SectionTitle>
+          {conditions ? (
+            <div className="grid grid-cols-12 gap-4">
+              {/* Causa + motivo */}
+              <div className="col-span-7">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#FF4D4D]/15 text-[#FF4D4D] font-mono" style={{ fontWeight: 700, letterSpacing: '0.05em' }}>
+                    {conditions.causeCode}
+                  </span>
+                  <span className="text-sm text-white" style={{ fontWeight: 700 }}>{conditions.causeLabel}</span>
+                </div>
+                <p className="text-xs text-[#A8C0E0] leading-relaxed">{conditions.reason}</p>
+              </div>
+              {/* Cuándo + métricas */}
+              <div className="col-span-5 grid grid-cols-2 gap-2">
+                <div className="bg-[#0D1E38] rounded-lg p-2.5 border border-[#1E3058]">
+                  <div className="flex items-center gap-1 text-[9px] text-[#4A6080] mb-1"><Clock className="w-3 h-3" /> HORA REAL</div>
+                  <div className="text-[11px] text-[#C8D8F0]" style={{ fontWeight: 600 }}>{fmtDateTime(conditions.detectedAtReal)}</div>
+                </div>
+                <div className="bg-[#0D1E38] rounded-lg p-2.5 border border-[#1E3058]">
+                  <div className="flex items-center gap-1 text-[9px] text-[#4A6080] mb-1"><Clock className="w-3 h-3" /> HORA SIMULADA</div>
+                  <div className="text-[11px] text-[#C8D8F0]" style={{ fontWeight: 600 }}>{fmtDateTime(conditions.detectedAtSim)}</div>
+                </div>
+                <div className="bg-[#0D1E38] rounded-lg p-2.5 border border-[#1E3058]">
+                  <div className="text-[9px] text-[#4A6080] mb-1">OCUPACIÓN · NO ATENDIBLES</div>
+                  <div className="text-[11px]" style={{ fontWeight: 600 }}>
+                    <span className="text-[#FFC857]">{Math.round(conditions.occupancyPct)}%</span>
+                    <span className="text-[#4A6080]"> · </span>
+                    <span className="text-[#FF7070]">{Math.round(conditions.unserviceablePct)}%</span>
+                  </div>
+                </div>
+                <div className="bg-[#0D1E38] rounded-lg p-2.5 border border-[#1E3058]">
+                  <div className="text-[9px] text-[#4A6080] mb-1">AEROPUERTOS CRÍTICOS · CICLO</div>
+                  <div className="text-[11px]" style={{ fontWeight: 600 }}>
+                    <span className="text-[#FF7070]">{conditions.criticalAirports}/{conditions.totalAirports}</span>
+                    <span className="text-[#4A6080]"> · </span>
+                    <span className="text-[#C8D8F0]">#{conditions.cycle}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-[#4A6080] leading-relaxed">
+              La simulación finalizó sin declarar colapso por umbral (saturación &lt; 80% y lotes no atendibles &lt; 20%),
+              o se detuvo manualmente antes de alcanzarlo. Las métricas mostradas reflejan el último estado de la red.
+            </p>
+          )}
+        </div>
+
+        {/* Último ciclo ejecutado antes del colapso — estado de la red al cortar */}
+        <LastCycleSnapshot
+          lastCycleUpdate={lastCycleUpdate}
+          accent="#FF4D4D"
+          subtitle="Estado de la red en el último ciclo antes del colapso"
+        />
 
         {/* Charts Row */}
         <div className="grid grid-cols-2 gap-4 mb-5">

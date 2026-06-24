@@ -41,8 +41,10 @@ interface RightPanelProps {
   onSelectShipment?: (id: string) => void;
   utFilter?: string;
   warehouseFilter?: string;
+  warehouseContinent?: string;
   onUtFilterChange?: (value: string) => void;
   onWarehouseFilterChange?: (value: string) => void;
+  onWarehouseContinentChange?: (value: string) => void;
   viewerCount?: number;
   cancelledFlightIds?: Set<string>;
 }
@@ -186,37 +188,37 @@ const BAG_STATE_OPTIONS = [
 
 const UT_FILTER_OPTIONS = [
   { id: 'all', label: 'Todas' },
-  { id: 'empty', label: 'Vacío' },
-  { id: 'normal', label: 'Normal' },
-  { id: 'warning', label: 'Adv.' },
-  { id: 'critical', label: 'Crít.' },
-  { id: 'inflight', label: 'En vuelo' },
-  { id: 'cancelled', label: 'Cancelados' },
+  { id: 'empty', label: 'Vacío', color: '#3A4A5E' },
+  { id: 'normal', label: 'Normal', color: '#00FF9C' },
+  { id: 'warning', label: 'Adv.', color: '#FFC857' },
+  { id: 'critical', label: 'Crít.', color: '#FF4D4D' },
+  { id: 'inflight', label: 'En vuelo', color: '#4DA6FF' },
+  { id: 'cancelled', label: 'Cancelados', color: '#A855F7' },
 ];
 
 const WAREHOUSE_FILTER_OPTIONS = [
   { id: 'all', label: 'Todos' },
-  { id: 'empty', label: 'Vacío' },
-  { id: 'normal', label: 'Normal' },
-  { id: 'warning', label: 'Advertencia' },
-  { id: 'critical', label: 'Crítico' },
+  { id: 'empty', label: 'Vacío', color: '#3A4A5E' },
+  { id: 'normal', label: 'Normal', color: '#00FF9C' },
+  { id: 'warning', label: 'Advertencia', color: '#FFC857' },
+  { id: 'critical', label: 'Crítico', color: '#FF4D4D' },
 ];
 
 const SHIPMENT_FILTER_OPTIONS = [
   { id: 'all', label: 'Todos' },
-  { id: 'on-time', label: 'A tiempo' },
-  { id: 'delayed', label: 'Retrasado' },
-  { id: 'critical', label: 'Crítico' },
-  { id: 'inflight', label: 'En vuelo' },
-  { id: 'delivered', label: 'Entregados' },
+  { id: 'on-time', label: 'A tiempo', color: '#00FF9C' },
+  { id: 'delayed', label: 'Retrasado', color: '#FFC857' },
+  { id: 'critical', label: 'Crítico', color: '#FF4D4D' },
+  { id: 'inflight', label: 'En vuelo', color: '#4DA6FF' },
+  { id: 'delivered', label: 'Entregados', color: '#00FF9C' },
 ];
 // En modo backend la solución solo distingue a-tiempo/retrasado (sin "crítico"): se omite ese chip.
 const SHIPMENT_FILTER_OPTIONS_BACKEND = [
   { id: 'all', label: 'Todos' },
-  { id: 'on-time', label: 'A tiempo' },
-  { id: 'delayed', label: 'Retrasado' },
-  { id: 'inflight', label: 'En vuelo' },
-  { id: 'delivered', label: 'Entregados' },
+  { id: 'on-time', label: 'A tiempo', color: '#00FF9C' },
+  { id: 'delayed', label: 'Retrasado', color: '#FFC857' },
+  { id: 'inflight', label: 'En vuelo', color: '#4DA6FF' },
+  { id: 'delivered', label: 'Entregados', color: '#00FF9C' },
 ];
 
 const BAG_STATE_LABELS: Record<string, string> = {
@@ -321,7 +323,7 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
 }
 
 function FilterChips({ options, value, onChange }: {
-  options: { id: string; label: string }[];
+  options: { id: string; label: string; color?: string }[];
   value: string;
   onChange: (id: string) => void;
 }) {
@@ -329,15 +331,28 @@ function FilterChips({ options, value, onChange }: {
     <div className="flex gap-1 overflow-x-auto pb-1">
       {options.map(option => {
         const active = value === option.id;
+        const c = option.color;
+        // Si la opción tiene color (semáforo), el chip se tiñe con ese color: punto + borde +
+        // texto al activarse, para distinguir de un vistazo normal/adv./crítico/etc.
+        const activeStyle = c
+          ? { backgroundColor: `${c}22`, borderColor: c, color: c }
+          : undefined;
         return (
           <button
             key={option.id}
             onClick={() => onChange(option.id)}
-            className={`h-7 px-2 rounded-lg border text-[10px] whitespace-nowrap transition-colors flex-shrink-0 ${active
-              ? 'bg-[#4DA6FF]/15 border-[#4DA6FF] text-[#4DA6FF]'
+            style={active ? activeStyle : undefined}
+            className={`h-7 px-2 rounded-lg border text-[10px] whitespace-nowrap transition-colors flex-shrink-0 flex items-center gap-1.5 ${active
+              ? (c ? '' : 'bg-[#4DA6FF]/15 border-[#4DA6FF] text-[#4DA6FF]')
               : 'bg-[#081426] border-[#1E3058] text-[#4A6080] hover:text-[#A8C0E0] hover:border-[#4DA6FF]/40'
             }`}
           >
+            {c && (
+              <span
+                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: c, opacity: active ? 1 : 0.65 }}
+              />
+            )}
             {option.label}
           </button>
         );
@@ -422,13 +437,78 @@ function UtCard({ unit, mapActive, onOpen, onMapFilter }: {
   );
 }
 
-function ShipmentCard({ shipment, mapActive, onOpen, onMapFilter }: {
+/**
+ * Progreso del viaje interpolado EN VIVO contra el reloj simulado (misma fórmula lineal que
+ * el backend: (ahora − primera salida)/(llegada final − primera salida)). Permite que la barra
+ * avance suave entre refrescos de la solución, sin recargar nada. Cae al valor del backend si
+ * falta el timing. No reordena ni filtra (solo el valor mostrado), así no hay reflujo de la lista.
+ */
+function liveJourneyProgress(s: Shipment, nowMs: number): number {
+  if (s.progress >= 1 || s.deliveredAt) return 1;
+  const start = s.journeyStartTime ? new Date(s.journeyStartTime).getTime() : NaN;
+  const end = s.finalArrivalTime ? new Date(s.finalArrivalTime).getTime() : NaN;
+  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+    return Math.max(0, Math.min(1, (nowMs - start) / (end - start)));
+  }
+  return s.progress;
+}
+
+type LiveState = 'pending' | 'at_origin' | 'in_flight' | 'at_transfer' | 'delivered';
+
+/**
+ * Deriva EN VIVO (desde el reloj simulado) el estado y la posición tramo a tramo de un envío,
+ * usando su itinerario compacto `legs`. Así el panel iguala al mapa: muestra "en vuelo F123",
+ * "transferencia en BBB", "en origen" o "entregado" sin esperar al refresco de la solución.
+ * Solo se evalúa para las filas que se renderizan, así que es barato.
+ */
+function liveShipmentState(s: Shipment, nowMs: number): {
+  state: LiveState; flightId: string | null; airportId: string | null; progress: number;
+} {
+  const progress = liveJourneyProgress(s, nowMs);
+  const legs = s.legs;
+  if (!legs || legs.length === 0) {
+    const hasUt = s.currentFlightId && s.currentFlightId !== 'PENDING';
+    if (s.progress >= 1 || s.deliveredAt) return { state: 'delivered', flightId: null, airportId: s.destination, progress: 1 };
+    return { state: hasUt ? 'in_flight' : 'pending', flightId: hasUt ? s.currentFlightId : null, airportId: hasUt ? null : s.origin, progress };
+  }
+  const first = legs[0];
+  const last = legs[legs.length - 1];
+  if (nowMs >= last.arr) return { state: 'delivered', flightId: null, airportId: last.to, progress: 1 };
+  if (nowMs < first.dep) return { state: 'at_origin', flightId: null, airportId: first.from, progress: 0 };
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+    if (nowMs >= leg.dep && nowMs <= leg.arr) {
+      return { state: 'in_flight', flightId: leg.id, airportId: null, progress };
+    }
+    const next = legs[i + 1];
+    if (next && nowMs > leg.arr && nowMs < next.dep) {
+      // Entre la llegada de este tramo y la salida del siguiente → en transferencia.
+      return { state: 'at_transfer', flightId: null, airportId: leg.to, progress };
+    }
+  }
+  return { state: 'in_flight', flightId: s.currentFlightId !== 'PENDING' ? s.currentFlightId : null, airportId: null, progress };
+}
+
+const LIVE_STATE_META: Record<LiveState, { label: string; color: string }> = {
+  pending: { label: 'Sin ruta', color: '#FF4D4D' },
+  at_origin: { label: 'En origen', color: '#7090B0' },
+  in_flight: { label: 'En vuelo', color: '#4DA6FF' },
+  at_transfer: { label: 'Transferencia', color: '#FFC857' },
+  delivered: { label: 'Entregado', color: '#00FF9C' },
+};
+
+function ShipmentCard({ shipment, mapActive, onOpen, onMapFilter, nowMs }: {
   shipment: Shipment;
   mapActive: boolean;
   onOpen?: () => void;
   onMapFilter?: () => void;
+  nowMs?: number;
 }) {
   const color = getStatusColor(shipment.status);
+  const live = liveShipmentState(shipment, nowMs ?? Date.now());
+  const pct = Math.round(live.progress * 100);
+  const liveMeta = LIVE_STATE_META[live.state];
+  const liveWhere = live.flightId ? `Vuelo ${live.flightId}` : live.airportId ? `Almacén ${live.airportId}` : '';
   return (
     <div
       onClick={onOpen}
@@ -441,14 +521,23 @@ function ShipmentCard({ shipment, mapActive, onOpen, onMapFilter }: {
             <span className="text-[11px] text-white truncate" style={{ fontWeight: 700 }}>{shipment.id}</span>
             <span className="text-[9px] text-[#4A6080] border border-[#1E3058] rounded px-1 flex-shrink-0">{shipment.luggageCount} maletas</span>
           </div>
-          <div className="text-[10px] text-[#4A6080] mt-0.5 truncate">
-            {shipment.origin} → {shipment.destination} · {shipment.currentFlightId}
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 flex items-center gap-1"
+              style={{ backgroundColor: `${liveMeta.color}1F`, color: liveMeta.color, fontWeight: 600 }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: liveMeta.color }} />
+              {liveMeta.label}
+            </span>
+            <span className="text-[10px] text-[#4A6080] truncate">
+              {shipment.origin} → {shipment.destination}{liveWhere ? ` · ${liveWhere}` : ''}
+            </span>
           </div>
           <div className="flex items-center gap-2 mt-1.5">
             <div className="flex-1 h-1.5 rounded bg-[#1E3058] overflow-hidden">
-              <div className="h-full rounded" style={{ width: `${Math.round(shipment.progress * 100)}%`, backgroundColor: color }} />
+              <div className="h-full rounded transition-[width] duration-300 ease-linear" style={{ width: `${pct}%`, backgroundColor: color }} />
             </div>
-            <span className="text-[10px] font-mono" style={{ color }}>{Math.round(shipment.progress * 100)}%</span>
+            <span className="text-[10px] font-mono" style={{ color }}>{pct}%</span>
           </div>
         </div>
         {onMapFilter && (
@@ -657,6 +746,7 @@ export function RightPanel({
   activeMapFilter = null, selectedEntity = null, onToggleMapFilter, onTraceRoute,
   onSelectAirport, onSelectFlight, onSelectShipment,
   utFilter: utFilterProp, warehouseFilter: warehouseFilterProp,
+  warehouseContinent: warehouseContinentProp, onWarehouseContinentChange,
   onUtFilterChange, onWarehouseFilterChange,
   viewerCount = 0, cancelledFlightIds,
 }: RightPanelProps) {
@@ -670,8 +760,13 @@ export function RightPanel({
   const warehouseFilter = warehouseFilterProp ?? warehouseFilterLocal;
   const setUtFilter = onUtFilterChange ?? setUtFilterLocal;
   const setWarehouseFilter = onWarehouseFilterChange ?? setWarehouseFilterLocal;
-  const [warehouseContinent, setWarehouseContinent] = useState('all');
-  const [warehouseSort, setWarehouseSort] = useState<'occupancy' | 'occupancyAsc' | 'code' | 'city' | 'nextDeparture' | 'nextArrival'>('occupancy');
+  const [warehouseContinentLocal, setWarehouseContinentLocal] = useState('all');
+  const warehouseContinent = warehouseContinentProp ?? warehouseContinentLocal;
+  const setWarehouseContinent = onWarehouseContinentChange ?? setWarehouseContinentLocal;
+  const [warehouseSort, setWarehouseSort] = useState<'occupancy' | 'occupancyAsc' | 'code' | 'city' | 'nextDeparture' | 'nextArrival'>('city');
+  // Reloj simulado en ms — RightPanel ya re-renderiza ~4×/seg cuando avanza el reloj, así que
+  // las barras de progreso interpoladas se actualizan casi en vivo sin timers extra.
+  const nowMs = simulationTime.getTime();
   const [shipmentSort, setShipmentSort] = useState<'progress' | 'progressAsc' | 'bags' | 'route'>('progress');
   const [clientSort, setClientSort] = useState<'bags' | 'shipments' | 'delivered' | 'name'>('bags');
   const [shipmentFilter, setShipmentFilter] = useState('all');
@@ -738,14 +833,14 @@ export function RightPanel({
   // F9: indicador de filtros activos + limpiar por vista (la búsqueda es compartida).
   const viewFiltersActive =
     (activeTab === 'transport' && (opsSearch !== '' || utFilter !== 'all' || transportSort !== 'load')) ||
-    (activeTab === 'warehouse' && (opsSearch !== '' || warehouseFilter !== 'all' || warehouseContinent !== 'all' || warehouseSort !== 'occupancy')) ||
+    (activeTab === 'warehouse' && (opsSearch !== '' || warehouseFilter !== 'all' || warehouseContinent !== 'all' || warehouseSort !== 'city')) ||
     (activeTab === 'shipments' && (opsSearch !== '' || shipmentFilter !== 'all' || shipmentSort !== 'progress')) ||
     (activeTab === 'clients' && opsSearch !== '') ||
     (activeTab === 'bags' && (opsSearch !== '' || bagStateFilter !== 'ALL'));
   const clearViewFilters = () => {
     setOpsSearch('');
     if (activeTab === 'transport') { setUtFilter('all'); setTransportSort('load'); }
-    else if (activeTab === 'warehouse') { setWarehouseFilter('all'); setWarehouseContinent('all'); setWarehouseSort('occupancy'); }
+    else if (activeTab === 'warehouse') { setWarehouseFilter('all'); setWarehouseContinent('all'); setWarehouseSort('city'); }
     else if (activeTab === 'shipments') { setShipmentFilter('all'); setShipmentSort('progress'); }
     else if (activeTab === 'bags') { setBagStateFilter('ALL'); }
   };
@@ -989,6 +1084,9 @@ export function RightPanel({
       .filter(s => {
         if (shipmentFilter === 'all') return true;
         if (shipmentFilter === 'inflight') {
+          // Estado en vivo (tramo a tramo) — si tiene itinerario, lo deriva del reloj;
+          // si no, cae al método anterior (vuelo actual ∈ UTs en vuelo).
+          if (s.legs && s.legs.length > 0) return liveShipmentState(s, nowMs).state === 'in_flight';
           return s.progress < 1 && !!s.currentFlightId && s.currentFlightId !== 'PENDING'
             && inFlightIds.has(stripProjectedDaySuffix(s.currentFlightId));
         }
@@ -1192,6 +1290,7 @@ export function RightPanel({
                 mapActive={isFilterActive('shipment', s.id)}
                 onOpen={() => openInspector({ kind: 'shipment', id: s.id })}
                 onMapFilter={() => handleMapFilterClick({ type: 'shipment', id: s.id }, () => onSelectShipment?.(s.id))}
+                nowMs={nowMs}
               />
             ))}
             {utShipments.length === 0 && (
@@ -1309,6 +1408,7 @@ export function RightPanel({
                 mapActive={isFilterActive('shipment', s.id)}
                 onOpen={() => openInspector({ kind: 'shipment', id: s.id })}
                 onMapFilter={() => handleMapFilterClick({ type: 'shipment', id: s.id }, () => onSelectShipment?.(s.id))}
+                nowMs={nowMs}
               />
             ))}
             {relatedShipments.length === 0 && (
@@ -1348,6 +1448,20 @@ export function RightPanel({
                     {shipment.origin} → {shipment.destination}
                   </div>
                   <div className="text-[10px] text-[#4A6080] truncate">Entrega estimada: {shipment.estimatedDelivery}</div>
+                  {(() => {
+                    const live = liveShipmentState(shipment, nowMs);
+                    const m = LIVE_STATE_META[live.state];
+                    const where = live.flightId ? `Vuelo ${live.flightId}` : live.airportId ? `Almacén ${live.airportId}` : '';
+                    return (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-[9px] px-1.5 py-0.5 rounded flex items-center gap-1" style={{ backgroundColor: `${m.color}1F`, color: m.color, fontWeight: 600 }}>
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.color }} />
+                          {m.label}
+                        </span>
+                        {where && <span className="text-[10px] text-[#7090B0] truncate">{where}</span>}
+                      </div>
+                    );
+                  })()}
                 </div>
                 <button
                   onClick={() => handleMapFilterClick({ type: 'shipment', id }, () => onSelectShipment?.(id))}
@@ -1359,9 +1473,9 @@ export function RightPanel({
               </div>
               <div className="flex items-center gap-2 mt-2">
                 <div className="flex-1 h-2 rounded-full bg-[#1E3058] overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${Math.round(shipment.progress * 100)}%`, backgroundColor: color }} />
+                  <div className="h-full rounded-full transition-[width] duration-300 ease-linear" style={{ width: `${Math.round(liveJourneyProgress(shipment, nowMs) * 100)}%`, backgroundColor: color }} />
                 </div>
-                <span className="text-[11px] font-mono" style={{ color }}>{Math.round(shipment.progress * 100)}%</span>
+                <span className="text-[11px] font-mono" style={{ color }}>{Math.round(liveJourneyProgress(shipment, nowMs) * 100)}%</span>
               </div>
               <div className="grid grid-cols-2 gap-x-3 mt-1">
                 <ReportRow label="Maletas" value={shipment.luggageCount} color="#4DA6FF" />
@@ -1451,6 +1565,7 @@ export function RightPanel({
                 mapActive={isFilterActive('shipment', s.id)}
                 onOpen={() => openInspector({ kind: 'shipment', id: s.id })}
                 onMapFilter={() => handleMapFilterClick({ type: 'shipment', id: s.id }, () => onSelectShipment?.(s.id))}
+                nowMs={nowMs}
               />
             ))}
             {visibleShipments.length === 0 && (
@@ -1754,6 +1869,7 @@ export function RightPanel({
                   mapActive={isFilterActive('shipment', shipment.id)}
                   onOpen={() => openInspector({ kind: 'shipment', id: shipment.id })}
                   onMapFilter={() => handleMapFilterClick({ type: 'shipment', id: shipment.id }, () => onSelectShipment?.(shipment.id))}
+                  nowMs={nowMs}
                 />
               ))}
               {operationalShipments.length === 0 && (
