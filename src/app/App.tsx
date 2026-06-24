@@ -57,6 +57,7 @@ function sameFlightId(candidate: string, selected: string): boolean {
 
 export default function App() {
   const simulation = useSimulation();
+  const [lightMode, setLightMode] = useState(false);
   const [realClock, setRealClock] = React.useState(new Date());
   React.useEffect(() => {
     const t = setInterval(() => setRealClock(new Date()), 1000);
@@ -304,7 +305,7 @@ export default function App() {
   }, [simulation]);
 
   return (
-    <div className="h-screen w-screen bg-[#060D1F] flex flex-col overflow-hidden" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div className={`h-screen w-screen bg-[#060D1F] flex flex-col overflow-hidden ${lightMode ? 'light-theme' : ''}`} style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       {/* Top Bar */}
       <TopBar
         isRunning={simulation.isRunning}
@@ -322,6 +323,8 @@ export default function App() {
         criticalCount={criticalCount}
         viewerCount={simulation.viewerCount}
         startDisabled={simulation.simulationComplete || simulation.collapseComplete || simulation.dayToDayComplete}
+        lightMode={lightMode}
+        onToggleTheme={() => setLightMode(v => !v)}
         kpis={simulation.lastCycleUpdate ? {
           inFlight: simulation.lastCycleUpdate.operationalMetrics?.inFlightBags ?? '—',
           delivered: simulation.lastCycleUpdate.operationalMetrics?.deliveredBags ?? '—',

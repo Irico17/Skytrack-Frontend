@@ -127,7 +127,9 @@ export function LeftSidebar({
 
   const cityOptions = [
     { value: '', label: 'Todas las Ciudades' },
-    ...airports.map(a => ({ value: a.id, label: `${a.city} (${a.id})` }))
+    ...airports
+      .map(a => ({ value: a.id, label: `${a.city} (${a.id})` }))
+      .sort((a, b) => a.label.localeCompare(b.label))
   ];
 
   const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
