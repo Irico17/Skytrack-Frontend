@@ -119,6 +119,17 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+.light-theme {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.light-theme img,
+.light-theme video,
+.light-theme canvas,
+.light-theme svg.map-icon {
+  filter: invert(1) hue-rotate(180deg);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
