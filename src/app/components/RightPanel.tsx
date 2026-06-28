@@ -1079,7 +1079,7 @@ export function RightPanel({
     const inFlightIds = new Set(activeFlights.map(f => stripProjectedDaySuffix(f.flightId)));
 
     const query = opsSearch.trim().toLowerCase();
-    return shipments
+    const filtered = shipments
       .filter(s => !query || `${s.id} ${s.origin} ${s.destination} ${s.airlineId} ${s.airline} ${s.currentFlightId}`.toLowerCase().includes(query))
       .filter(s => {
         if (shipmentFilter === 'all') return true;
@@ -1092,14 +1092,28 @@ export function RightPanel({
         }
         if (shipmentFilter === 'delivered') return isDeliveredInSimWindow(s, simulationTime);
         return s.status === shipmentFilter;
-      })
-      .sort((a, b) => {
-        if (shipmentSort === 'bags') return b.luggageCount - a.luggageCount;
-        if (shipmentSort === 'route') return `${a.origin}-${a.destination}`.localeCompare(`${b.origin}-${b.destination}`);
-        if (shipmentSort === 'progressAsc') return a.progress - b.progress || a.id.localeCompare(b.id);
-        return b.progress - a.progress || a.id.localeCompare(b.id);
       });
-  }, [activeTab, shipments, opsSearch, shipmentSort, shipmentFilter, activeFlights, simulationTime]);
+
+    if (shipmentSort === 'progress' || shipmentSort === 'progressAsc') {
+      // Ordenar por el progreso EN VIVO (interpolado), no por el estático: así "mayor/menor
+      // progreso" se reordena solo conforme avanzan las barras. Se precalcula una vez por
+      // envío (evita re-parsear fechas en cada comparación del sort).
+      const lp = new Map<string, number>();
+      for (const s of filtered) lp.set(s.id, liveJourneyProgress(s, nowMs));
+      return filtered.sort((a, b) => {
+        const pa = lp.get(a.id) ?? 0;
+        const pb = lp.get(b.id) ?? 0;
+        return shipmentSort === 'progressAsc'
+          ? (pa - pb || a.id.localeCompare(b.id))
+          : (pb - pa || a.id.localeCompare(b.id));
+      });
+    }
+    return filtered.sort((a, b) => {
+      if (shipmentSort === 'bags') return b.luggageCount - a.luggageCount;
+      if (shipmentSort === 'route') return `${a.origin}-${a.destination}`.localeCompare(`${b.origin}-${b.destination}`);
+      return a.id.localeCompare(b.id);
+    });
+  }, [activeTab, shipments, opsSearch, shipmentSort, shipmentFilter, activeFlights, simulationTime, nowMs]);
 
   const luggageByClient = useMemo(() => {
     if (activeTab !== 'clients') return [];
