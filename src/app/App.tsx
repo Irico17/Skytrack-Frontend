@@ -8,6 +8,7 @@ import { RightPanel } from './components/RightPanel';
 import { AddShipmentModal } from './components/AddShipmentModal';
 import { CancelFlightModal } from './components/CancelFlightModal';
 import { StaticDataUploadModal } from './components/StaticDataUploadModal';
+import { UploadShipmentsFileModal } from './components/UploadShipmentsFileModal';
 import { FiveDayResults } from './components/FiveDayResults';
 import { CollapseResults } from './components/CollapseResults';
 import { DayToDayResults } from './components/DayToDayResults';
@@ -38,8 +39,8 @@ const MONTHS_ES_SHORT = ['ene','feb','mar','abr','may','jun','jul','ago','sep','
 
 function formatSimulationClock(date: Date): { date: string; time: string } {
   return {
-    date: `${String(date.getUTCDate()).padStart(2, '0')} ${MONTHS_ES_SHORT[date.getUTCMonth()]}`,
-    time: `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')}`,
+    date: `${String(date.getDate()).padStart(2, '0')} ${MONTHS_ES_SHORT[date.getMonth()]}`,
+    time: `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`,
   };
 }
 
@@ -57,7 +58,6 @@ function sameFlightId(candidate: string, selected: string): boolean {
 
 export default function App() {
   const simulation = useSimulation();
-  const [lightMode, setLightMode] = useState(false);
   const [realClock, setRealClock] = React.useState(new Date());
   React.useEffect(() => {
     const t = setInterval(() => setRealClock(new Date()), 1000);
@@ -85,6 +85,7 @@ export default function App() {
   const [showAddShipment, setShowAddShipment] = useState(false);
   const [showCancelFlight, setShowCancelFlight] = useState(false);
   const [showStaticDataUpload, setShowStaticDataUpload] = useState(false);
+  const [showUploadShipmentsFile, setShowUploadShipmentsFile] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [showCollapseResults, setShowCollapseResults] = useState(false);
   const [showDayToDayResults, setShowDayToDayResults] = useState(false);
@@ -96,6 +97,8 @@ export default function App() {
   // con el selector de densidad del mapa (100/50/25%) y el LOD adaptativo del canvas.
   const [utFilter, setUtFilter] = useState('all');
   const [warehouseFilter, setWarehouseFilter] = useState('all');
+  // Filtro por región/continente de almacenes — compartido para que afecte mapa Y panel.
+  const [warehouseContinent, setWarehouseContinent] = useState('all');
 
   // Todos los modos usan el reloj simulado interpolado del backend (simClock).
   const displayedSimulationTime = simulation.simClock;
@@ -305,7 +308,7 @@ export default function App() {
   }, [simulation]);
 
   return (
-    <div className={`h-screen w-screen bg-[#060D1F] flex flex-col overflow-hidden ${lightMode ? 'light-theme' : ''}`} style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div className="h-screen w-screen bg-[#060D1F] flex flex-col overflow-hidden" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       {/* Top Bar */}
       <TopBar
         isRunning={simulation.isRunning}
@@ -323,8 +326,6 @@ export default function App() {
         criticalCount={criticalCount}
         viewerCount={simulation.viewerCount}
         startDisabled={simulation.simulationComplete || simulation.collapseComplete || simulation.dayToDayComplete}
-        lightMode={lightMode}
-        onToggleTheme={() => setLightMode(v => !v)}
         kpis={simulation.lastCycleUpdate ? {
           inFlight: simulation.lastCycleUpdate.operationalMetrics?.inFlightBags ?? '—',
           delivered: simulation.lastCycleUpdate.operationalMetrics?.deliveredBags ?? '—',
@@ -353,6 +354,7 @@ export default function App() {
             onFilterChange={handleFilterChange}
             onToggleChange={handleToggleChange}
             onAddShipment={() => setShowAddShipment(true)}
+            onUploadShipmentsFile={() => setShowUploadShipmentsFile(true)}
             onCancelFlight={() => setShowCancelFlight(true)}
             onUploadStaticData={() => setShowStaticDataUpload(true)}
             onCloseOperations={simulation.closeOperations}
@@ -381,6 +383,7 @@ export default function App() {
               flightPlanFlights={mapFlightPlanFlights}
               utFilter={utFilter}
               warehouseFilter={warehouseFilter}
+              warehouseContinent={warehouseContinent}
               onUtFilterChange={setUtFilter}
               onWarehouseFilterChange={setWarehouseFilter}
               cancelledFlightIds={simulation.cancelledFlightIds}
@@ -415,7 +418,9 @@ export default function App() {
             )}
 
             {/* ==== RELOJ DUAL: Tiempo simulado + real ==== */}
-            {(simulation.isRunning || simulation.mode === '5day') && (
+            {/* 5 días y colapso quedan visibles aunque se detengan (para ver el estado
+                final al volver del reporte); el resto solo mientras corre. */}
+            {(simulation.isRunning || simulation.mode === '5day' || simulation.mode === 'collapse') && (
               <div style={{
                 position: 'absolute', top: 12, left: 12,
                 display: 'flex', flexDirection: 'column', gap: 6,
@@ -446,6 +451,15 @@ export default function App() {
                       <span style={{ fontSize: 9, color: '#4A6080' }}>Día {Math.min(Math.ceil(simulation.daysElapsed), 5)}/5</span>
                       <div style={{ width: 48, height: 3, background: '#1E3058', borderRadius: 2, overflow: 'hidden' }}>
                         <div style={{ width: `${(simulation.daysElapsed / 5) * 100}%`, height: '100%', background: '#4DA6FF', borderRadius: 2, transition: 'width 0.3s' }} />
+                      </div>
+                    </div>
+                  )}
+                  {/* Colapso: mismo chip que 5 días, pero SIN tope "/5" (no tiene fin fijo) */}
+                  {simulation.mode === 'collapse' && simulation.daysElapsed > 0 && (
+                    <div style={{ marginLeft: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                      <span style={{ fontSize: 9, color: '#4A6080' }}>Día {Math.floor(simulation.daysElapsed) + 1} · sin límite</span>
+                      <div style={{ width: 48, height: 3, background: '#1E3058', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ width: '100%', height: '100%', background: '#FF4D4D', borderRadius: 2, opacity: simulation.isRunning ? 0.7 : 0.3 }} className={simulation.isRunning ? 'animate-pulse' : ''} />
                       </div>
                     </div>
                   )}
@@ -619,8 +633,10 @@ export default function App() {
             onSelectShipment={handleSelectShipment}
             utFilter={utFilter}
             warehouseFilter={warehouseFilter}
+            warehouseContinent={warehouseContinent}
             onUtFilterChange={setUtFilter}
             onWarehouseFilterChange={setWarehouseFilter}
+            onWarehouseContinentChange={setWarehouseContinent}
             viewerCount={simulation.viewerCount}
             cancelledFlightIds={simulation.cancelledFlightIds}
           />
@@ -650,6 +666,14 @@ export default function App() {
         <StaticDataUploadModal
           onClose={() => setShowStaticDataUpload(false)}
           onUpload={simulation.uploadStaticData}
+          onUploadPartial={simulation.uploadStaticDataPartial}
+        />
+      )}
+
+      {showUploadShipmentsFile && (
+        <UploadShipmentsFileModal
+          onClose={() => setShowUploadShipmentsFile(false)}
+          onUpload={simulation.uploadShipmentsFile}
         />
       )}
 
@@ -689,6 +713,7 @@ export default function App() {
           shipments={simulation.shipments}
           events={simulation.events}
           airports={simulation.airports}
+          lastCycleUpdate={simulation.lastCycleUpdate}
           onClose={() => setShowCollapseResults(false)}
           onReset={handleReset}
         />

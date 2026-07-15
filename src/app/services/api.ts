@@ -41,7 +41,7 @@ export function fetchAirports(): Promise<BackendAirport[]> {
 
 // ==================== PLAN DE VUELOS ====================
 
-/** Carga todos los vuelos del plan proyectados a un rango de fecha/hora. */
+/** Carga vuelos proyectados desde un instante ISO-8601 con zona (normalmente UTC/Z). */
 export async function fetchFlightPlan(startDateTime: string, days = 5): Promise<BackendFlightPlanFlight[]> {
   const res = await request<{ flights: BackendFlightPlanFlight[]; totalFlights: number }>(
     `/data/flights?startDateTime=${encodeURIComponent(startDateTime)}&days=${days}`
@@ -53,7 +53,7 @@ export async function fetchFlightPlan(startDateTime: string, days = 5): Promise<
 
 /**
  * Inicia una simulación de 5 días.
- * @param startDateTime Fecha/hora de inicio en formato "yyyy-MM-ddTHH:mm" (o undefined para usar todos los datos)
+ * @param startDateTime Instante ISO-8601 con zona, por ejemplo "2026-07-22T15:00:00.000Z"
  */
 export function startSimulation(
   scenario: 'PERIOD_SIMULATION' | 'DAY_TO_DAY' | 'COLLAPSE_SIMULATION',
@@ -183,7 +183,58 @@ export async function uploadStaticDataset(
   return await res.json() as BackendStaticDataUploadResponse;
 }
 
-const SHIPMENT_BATCH_SIZE = 10;
+/**
+ * Carga PARCIAL de datos estáticos: solo se reemplaza lo que se envía (aeropuertos,
+ * vuelos y/o envíos). Los envíos se AGREGAN por nombre sin borrar los existentes,
+ * salvo shipmentsMode='replace'.
+ */
+export async function uploadStaticDatasetPartial(
+  airportsFile: File | null,
+  flightsFile: File | null,
+  shipmentFiles: File[],
+  shipmentsMode: 'append' | 'replace' = 'append'
+): Promise<BackendStaticDataUploadResponse> {
+  const form = new FormData();
+  if (airportsFile) form.append('airports', airportsFile);
+  if (flightsFile) form.append('flights', flightsFile);
+  shipmentFiles.forEach(file => form.append('shipments', file));
+
+  const res = await fetch(`${BASE}/data/static?shipmentsMode=${shipmentsMode}`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`HTTP ${res.status}: ${body}`);
+  }
+  return await res.json() as BackendStaticDataUploadResponse;
+}
+
+/**
+ * Carga un ARCHIVO de envíos contra una operación día a día ACTIVA (prueba del curso:
+ * "Durante la ejecución, se realiza la carga del archivo de envíos").
+ * El origen se deduce del nombre `_envios_XXXX_.txt` o se pasa explícito.
+ */
+export async function uploadShipmentsFileToSimulation(
+  simId: string,
+  file: File,
+  originId?: string
+): Promise<{ originId: string; registered: number; failed: number; errors?: string[] }> {
+  const form = new FormData();
+  form.append('file', file);
+  const qs = originId ? `?originId=${encodeURIComponent(originId)}` : '';
+  const res = await fetch(`${BASE}/simulations/${simId}/shipments/upload${qs}`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`HTTP ${res.status}: ${body}`);
+  }
+  return await res.json();
+}
+
+const SHIPMENT_BATCH_SIZE = 5;
 
 async function postMultipart<T>(url: string, form: FormData): Promise<T> {
   const res = await fetch(`${BASE}${url}`, { method: 'POST', body: form });
@@ -229,6 +280,29 @@ export async function cancelStaticDataBatch(sessionId: string): Promise<void> {
   await request<void>('/data/static/batch/cancel', {
     method: 'POST',
     body: JSON.stringify({ sessionId }),
+  });
+}
+
+/** Igual que startStaticDataBatch pero aeropuertos/vuelos son OPCIONALES (carga parcial). */
+export async function startPartialStaticDataBatch(
+  airportsFile: File | null,
+  flightsFile: File | null,
+  sessionId?: string
+): Promise<BackendStaticDataBatchStartResponse> {
+  const form = new FormData();
+  if (sessionId) form.append('sessionId', sessionId);
+  if (airportsFile) form.append('airports', airportsFile);
+  if (flightsFile) form.append('flights', flightsFile);
+  return postMultipart<BackendStaticDataBatchStartResponse>('/data/static/batch/partial/start', form);
+}
+
+export async function finalizePartialStaticDataBatch(
+  sessionId: string,
+  shipmentsMode: 'append' | 'replace' = 'append'
+): Promise<BackendStaticDataUploadResponse> {
+  return request<BackendStaticDataUploadResponse>('/data/static/batch/partial/finalize', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, shipmentsMode }),
   });
 }
 
@@ -292,6 +366,93 @@ export async function uploadStaticDatasetBatched(
     });
 
     const result = await finalizeStaticDataBatch(sessionId);
+
+    onProgress?.({
+      phase: 'done',
+      currentBatch: totalBatches,
+      totalBatches,
+      filesUploaded: totalFiles,
+      totalFiles,
+      message: 'Carga completada',
+    });
+
+    return result;
+  } catch (err) {
+    try {
+      await cancelStaticDataBatch(sessionId);
+    } catch {
+      // Ignorar error de limpieza; propagar el error original.
+    }
+    throw err;
+  }
+}
+
+/**
+ * Carga PARCIAL por lotes: aeropuertos/vuelos opcionales, envíos en grupos de
+ * SHIPMENT_BATCH_SIZE. Evita mandar todos los archivos de envíos en una sola petición
+ * gigante — vista en despliegue real: un proxy delante del backend puede cortarla (413
+ * con cuerpo vacío) aunque nginx y Spring ya acepten el tamaño total.
+ */
+export async function uploadStaticDatasetPartialBatched(
+  airportsFile: File | null,
+  flightsFile: File | null,
+  shipmentFiles: File[],
+  shipmentsMode: 'append' | 'replace' = 'append',
+  onProgress?: (progress: StaticDataUploadProgress) => void
+): Promise<BackendStaticDataUploadResponse> {
+  const totalFiles = shipmentFiles.length;
+  const totalBatches = Math.max(1, Math.ceil(totalFiles / SHIPMENT_BATCH_SIZE));
+
+  onProgress?.({
+    phase: 'starting',
+    currentBatch: 0,
+    totalBatches,
+    filesUploaded: 0,
+    totalFiles,
+    message: 'Iniciando sesión de carga…',
+  });
+
+  const started = await startPartialStaticDataBatch(airportsFile, flightsFile);
+  const sessionId = started.sessionId;
+  let filesUploaded = 0;
+
+  try {
+    for (let i = 0; i < totalBatches; i++) {
+      const batch = shipmentFiles.slice(i * SHIPMENT_BATCH_SIZE, (i + 1) * SHIPMENT_BATCH_SIZE);
+      if (batch.length === 0) continue;
+
+      onProgress?.({
+        phase: 'shipments',
+        currentBatch: i + 1,
+        totalBatches,
+        filesUploaded,
+        totalFiles,
+        message: `Subiendo lote ${i + 1} de ${totalBatches}…`,
+      });
+
+      const progress = await appendStaticDataBatchShipments(sessionId, batch);
+      filesUploaded = progress.shipmentFilesStaged;
+
+      onProgress?.({
+        phase: 'shipments',
+        currentBatch: i + 1,
+        totalBatches,
+        filesUploaded,
+        totalFiles,
+        message: `Lote ${i + 1} de ${totalBatches} completado`,
+      });
+    }
+
+    onProgress?.({
+      phase: 'finalizing',
+      currentBatch: totalBatches,
+      totalBatches,
+      filesUploaded,
+      totalFiles,
+      message: 'Validando y aplicando cambios…',
+    });
+
+    const result = await finalizePartialStaticDataBatch(sessionId, shipmentsMode);
 
     onProgress?.({
       phase: 'done',

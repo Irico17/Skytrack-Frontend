@@ -35,6 +35,7 @@ interface LeftSidebarProps {
   onFilterChange: (key: keyof Filters, value: string) => void;
   onToggleChange: (key: keyof Toggles) => void;
   onAddShipment: () => void;
+  onUploadShipmentsFile?: () => void;
   onCancelFlight: () => void;
   onUploadStaticData: () => void;
   onCloseOperations: () => void;
@@ -121,15 +122,16 @@ export function LeftSidebar({
   mode, startDate, simulationTime, simulationK = 240, filters, toggles, isRunning,
   daysElapsed, simulationComplete, collapseComplete, airports = [],
   onStartDateChange, onFilterChange, onToggleChange,
-  onAddShipment, onCancelFlight, onUploadStaticData, onCloseOperations,
+  onAddShipment, onUploadShipmentsFile, onCancelFlight, onUploadStaticData, onCloseOperations,
   onViewResults, onViewCollapseResults, onViewDayToDayResults, dayToDayComplete,
 }: LeftSidebarProps) {
 
   const cityOptions = [
     { value: '', label: 'Todas las Ciudades' },
+    // Ordenado alfabéticamente por nombre de ciudad para encontrarlas rápido.
     ...airports
       .map(a => ({ value: a.id, label: `${a.city} (${a.id})` }))
-      .sort((a, b) => a.label.localeCompare(b.label))
+      .sort((a, b) => a.label.localeCompare(b.label)),
   ];
 
   const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -166,6 +168,18 @@ export function LeftSidebar({
           <PlusCircle className="w-4 h-4" />
           Registrar Maletas
         </button>
+        {onUploadShipmentsFile && (
+          <button
+            onClick={onUploadShipmentsFile}
+            disabled={mode !== 'realtime' || !isRunning}
+            title={mode !== 'realtime' ? 'Solo aplica a la operación día a día' : !isRunning ? 'Inicia la operación para cargar el archivo' : undefined}
+            className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+            style={{ fontWeight: 600 }}
+          >
+            <PlusCircle className="w-4 h-4" />
+            Cargar Archivo de Envíos
+          </button>
+        )}
         <button
           onClick={onCancelFlight}
           disabled={!isRunning}
@@ -209,7 +223,7 @@ export function LeftSidebar({
       </div>
 
       {/* Date/time selector */}
-      <Section title="FECHA Y HORA DE INICIO" icon={<Calendar className="w-3 h-3" />}>
+      <Section title="FECHA Y HORA DE INICIO (LOCAL)" icon={<Calendar className="w-3 h-3" />}>
         <div className="flex flex-col gap-2">
           <div className="relative">
             <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[#4A6080] pointer-events-none" />
@@ -226,6 +240,9 @@ export function LeftSidebar({
           </div>
           <div className="text-[9px] text-[#4A6080]">
             {formatDateDisplay(startDate)} → {formatDateDisplay(new Date(startDate.getTime() + 5 * 24 * 60 * 60 * 1000))}
+          </div>
+          <div className="text-[9px] text-[#3A5070]">
+            Zona del navegador: {Intl.DateTimeFormat().resolvedOptions().timeZone}
           </div>
         </div>
       </Section>
@@ -302,16 +319,37 @@ export function LeftSidebar({
         </Section>
       )}
 
-      {/* Collapse scenario actions — only visible in collapse mode */}
+      {/* Colapso — misma visualización que 5 días (contador de días transcurridos), pero
+          SIN el tope "/5": el colapso no tiene fin fijo, dura hasta que el backend detecte
+          saturación real. La única diferencia real entre ambos modos es esa: uno se
+          detiene a los 5 días, el otro sigue hasta colapsar. */}
       {mode === 'collapse' && (
         <Section title="ESCENARIO DE COLAPSO" icon={<Zap className="w-3 h-3" />}>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {!collapseComplete ? (
-              <div className="rounded-lg border border-[#FF4D4D]/30 bg-[#FF4D4D]/8 px-3 py-2.5 text-[11px] text-[#FF9090] leading-relaxed">
-                {isRunning
-                  ? 'Acelerando la operación (K=75×) hasta que el backend detecte saturación logística. El colapso se declara con datos reales.'
-                  : 'Inicia la simulación para acelerar la red hasta el colapso. Usa Reiniciar para detenerla o cambiar la fecha de inicio.'}
-              </div>
+              <>
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] text-[#4A6080]">Progreso de Simulación</span>
+                    <span className="text-[10px] text-[#FF4D4D]" style={{ fontWeight: 600 }}>
+                      {daysElapsed > 0 ? `Día ${Math.floor(daysElapsed) + 1} (sin límite)` : 'Sin iniciar'}
+                    </span>
+                  </div>
+                  {/* Barra "viva": sin tope fijo, se anima mientras corre para reflejar que
+                      no hay un total conocido de antemano (a diferencia de la de 5 días). */}
+                  <div className="h-2 bg-[#1E3058] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full bg-[#FF4D4D] ${isRunning ? 'animate-pulse' : ''}`}
+                      style={{ width: isRunning ? '100%' : '0%', opacity: isRunning ? 0.55 : 0, transition: 'opacity 0.3s' }}
+                    />
+                  </div>
+                </div>
+                <div className="rounded-lg border border-[#FF4D4D]/30 bg-[#FF4D4D]/8 px-3 py-2.5 text-[11px] text-[#FF9090] leading-relaxed">
+                  {isRunning
+                    ? `Acelerando la operación (K=${displayedK}×) hasta que el backend detecte saturación logística. El colapso se declara con datos reales.`
+                    : 'Inicia la simulación para acelerar la red hasta el colapso. Usa Reiniciar para detenerla o cambiar la fecha de inicio.'}
+                </div>
+              </>
             ) : (
               <button
                 onClick={onViewCollapseResults}

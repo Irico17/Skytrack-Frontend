@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Activity, AlertTriangle, Bell, Layers, Play, Pause,
-  RotateCcw, Globe, Wifi, Clock, Zap, ChevronDown, Sun, Moon
+  RotateCcw, Globe, Wifi, Clock, Zap, ChevronDown
 } from 'lucide-react';
 import { SimulationMode, SimEvent } from '../data/mockData';
 
@@ -21,8 +21,6 @@ interface TopBarProps {
   criticalCount: number;
   viewerCount?: number;
   startDisabled?: boolean;
-  lightMode?: boolean;
-  onToggleTheme?: () => void;
   /** KPIs reales del último ciclo, siempre visibles arriba (null antes del primer ciclo). */
   kpis?: { inFlight: number | string; delivered: number | string; slaPct: number | string; overloaded: number | string } | null;
 }
@@ -43,7 +41,6 @@ export function TopBar({
   isRunning, isPaused, isStarting = false, mode, simulationTime, events, onStart, onPause, onResume, onReset,
   onModeChange, totalShipments, criticalCount, viewerCount = 0,
   startDisabled = false, kpis = null,
-  lightMode = false, onToggleTheme,
 }: TopBarProps) {
   const [showModeDropdown, setShowModeDropdown] = React.useState(false);
   const [showAlerts, setShowAlerts] = React.useState(false);
@@ -181,15 +178,6 @@ export function TopBar({
           <span className="text-[10px] text-[#A8C0E0]">{viewerCount} visualizador{viewerCount === 1 ? '' : 'es'}</span>
         </div>
       )}
-
-      {/* Theme toggle */}
-      <button
-        onClick={onToggleTheme}
-        className="w-8 h-8 rounded-lg bg-[#0D1E38] border border-[#1E3058] flex items-center justify-center hover:border-[#4DA6FF]/50 transition-colors"
-        title={lightMode ? 'Cambiar a tema oscuro' : 'Cambiar a tema claro'}
-      >
-        {lightMode ? <Moon className="w-4 h-4 text-[#4DA6FF]" /> : <Sun className="w-4 h-4 text-[#FFC857]" />}
-      </button>
 
       {/* Alert bell */}
       <div className="relative">

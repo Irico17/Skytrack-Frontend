@@ -102,6 +102,8 @@ interface WorldMapProps {
   /** Filtros sincronizados con el panel derecho (TASK-021). */
   utFilter?: string;
   warehouseFilter?: string;
+  /** Filtro por región/continente de almacenes (sincronizado con el panel). */
+  warehouseContinent?: string;
   /** Permite que la barra de filtro del mapa actualice el filtro UT compartido (MAP-REG-05). */
   onUtFilterChange?: (value: string) => void;
   onWarehouseFilterChange?: (value: string) => void;
@@ -276,9 +278,9 @@ function drawPlaneMarker(
   denseMode: boolean,
   zoomLevel: number,
 ) {
-  const zoomBoost = hasBags
+  const zoomBoost = (hasBags
     ? Math.min(2.55, 1.68 + Math.max(0, zoomLevel - 1) * 0.48)
-    : Math.min(2.28, 1.65 + Math.max(0, zoomLevel - 1) * 0.39);
+    : Math.min(2.28, 1.65 + Math.max(0, zoomLevel - 1) * 0.39)) * 1.25; // aviones ~25% más grandes
 
   ctx.save();
   ctx.translate(x, y);
@@ -381,7 +383,7 @@ function WorldMapComponent({
   airports, flights, shipments, selectedEntity,
   onSelectAirport, onSelectFlight, onSelectShipment, toggles,
   simClock, simClockRef, activeFlights = [], flightPlanFlights = [],
-  utFilter = 'all', warehouseFilter = 'all', onUtFilterChange, onWarehouseFilterChange,
+  utFilter = 'all', warehouseFilter = 'all', warehouseContinent = 'all', onUtFilterChange, onWarehouseFilterChange,
   cancelledFlightIds,
   isExpanded = false, onToggleExpanded,
 }: WorldMapProps) {
@@ -399,6 +401,9 @@ function WorldMapComponent({
   const flightCountsRef = useRef({ visible: 0, loaded: 0 });
   // Densidad de render del mapa (1 = todos; 0.5 = mitad de las vacías; 0.25 = un cuarto).
   const [mapDensity, setMapDensity] = useState(1);
+  // Barra de filtros del mapa colapsable: se esconde tras un asa y aparece al pasar el mouse,
+  // para no tapar la vista cuando no se usa.
+  const [mapFiltersOpen, setMapFiltersOpen] = useState(false);
   const mapDensityRef = useRef(1);
   mapDensityRef.current = mapDensity;
   const cancelledFlightIdsRef = useRef<Set<string>>(EMPTY_CANCELLED_SET_WM);
@@ -648,8 +653,9 @@ function WorldMapComponent({
   const airportPositions = useMemo(() =>
     airports
       .filter(a => passesWarehouseMapFilter(a, warehouseFilter))
+      .filter(a => warehouseContinent === 'all' || ((a as { continent?: string }).continent ?? '') === warehouseContinent)
       .map(a => ({ ...a, svgPos: project(a.coords[0], a.coords[1]) })),
-    [airports, warehouseFilter]
+    [airports, warehouseFilter, warehouseContinent]
   );
 
   const countryLayers = useMemo(() => geoFeatures.map((geo: any, i: number) => {
@@ -731,19 +737,11 @@ function WorldMapComponent({
       const curve = Math.min(Math.max(dist * 0.22, 18), 110);
       const cpx = mx - (ddy / dist) * curve;
       const cpy = my + (ddx / dist) * curve;
-      const cx = (1-t)*(1-t)*ox + 2*(1-t)*t*cpx + t*t*dx;
-      const cy = (1-t)*(1-t)*oy + 2*(1-t)*t*cpy + t*t*dy;
-      const angle = Math.atan2(2*(1-t)*(cpy-oy) + 2*t*(dy-cpy), 2*(1-t)*(cpx-ox) + 2*t*(dx-cpx)) * (180 / Math.PI);
 
-      // Color: con maletas = azul/ámbar, sin maletas = gris tenue
-      const bags = bagsMap.get(f.flightId);
-      const hasBags = bags && bags.bagsCount > 0;
-      const color = hasBags
-        ? (bags!.meetsSla ? '#4DA6FF' : '#FFC857')
-        : '#3A4A5E'; // gris tenue para vuelos vacíos
-
-      return [{
-        flightId: f.flightId, cx, cy, color, t, angle,
+      geometry.push({
+        flightId: f.flightId, originId: f.originId, destinationId: f.destinationId,
+        dep, arr, duration, capacity: f.capacity ?? 0,
+        ox, oy, dx, dy, cpx, cpy,
         pathD: `M ${ox} ${oy} Q ${cpx} ${cpy} ${dx} ${dy}`,
       });
     }
@@ -769,6 +767,74 @@ function WorldMapComponent({
       f.flightId === selectedId || f.flightId.replace(/-D\d+$/, '') === selectedBaseId
     ) ?? null;
   }, [selectedEntity, flightPlanGeometry]);
+
+  /**
+   * Geometría de TODOS los tramos (legs) del ENVÍO seleccionado, para dibujar su ruta
+   * completa en el mapa (requisito de la prueba día a día: "se selecciona un envío y se
+   * debe mostrar en el mapa todas las rutas del envío de manera gráfica"). Aplica igual
+   * a los 3 escenarios — los legs vienen de la solución del backend en todos los modos.
+   *
+   * SUB-LOTES: un envío puede dividirse por capacidad en varios sub-lotes (ids con
+   * sufijo -S1/-S2...), cada uno con SU PROPIA ruta (vuelos distintos). Seleccionar
+   * cualquiera de ellos dibuja la familia COMPLETA (todas las rutas de todos los
+   * sub-lotes del mismo envío base), con un color por sub-lote para distinguirlas.
+   * Si el envío aún no tiene ruta asignada (PENDING), no hay tramos que dibujar.
+   */
+  const SUBLOT_COLORS = ['#00FF9C', '#4DA6FF', '#FFC857', '#FF7AD9', '#B78CFF', '#FF9060'];
+
+  const selectedShipmentGeometry = useMemo(() => {
+    if (selectedEntity?.type !== 'shipment') return null;
+    const stripSublot = (id: string) => id.replace(/(-S\d+)+$/, '');
+    const baseId = stripSublot(selectedEntity.id);
+    // Familia completa: el lote base y/o todos sus sub-lotes -S1/-S2...
+    const family = shipments.filter(s => stripSublot(s.id) === baseId);
+    if (family.length === 0) return null;
+    // Orden estable (base primero, luego -S1, -S2...) para que los colores no salten.
+    family.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+
+    const sublots = family
+      .map((shipment, sublotIndex) => {
+        const legs = (shipment.legs ?? [])
+          .map((leg, index) => {
+            const origin = airportGeometryById[leg.from];
+            const dest = airportGeometryById[leg.to];
+            if (!origin || !dest) return null;
+            const [ox, oy] = origin.svgPos;
+            const [dx, dy] = dest.svgPos;
+            const mx = (ox + dx) / 2;
+            const my = (oy + dy) / 2;
+            const ddx = dx - ox; const ddy = dy - oy;
+            const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+            // Curvatura levemente distinta por sub-lote: si dos sub-lotes comparten un
+            // tramo (mismo par de aeropuertos), sus arcos no se superponen exactamente
+            // y ambos quedan visibles.
+            const curve = Math.min(Math.max(dist * (0.22 + sublotIndex * 0.05), 18), 130);
+            const cpx = mx - (ddy / dist) * curve;
+            const cpy = my + (ddx / dist) * curve;
+            return {
+              key: `${shipment.id}-leg-${index}`,
+              flightId: leg.id,
+              from: leg.from,
+              to: leg.to,
+              ox, oy, dx, dy, cpx, cpy,
+              pathD: `M ${ox} ${oy} Q ${cpx} ${cpy} ${dx} ${dy}`,
+              isFirst: index === 0,
+              isLast: index === (shipment.legs?.length ?? 0) - 1,
+            };
+          })
+          .filter((leg): leg is NonNullable<typeof leg> => leg !== null);
+        return {
+          shipmentId: shipment.id,
+          quantity: shipment.luggageCount,
+          color: SUBLOT_COLORS[sublotIndex % SUBLOT_COLORS.length],
+          legs,
+        };
+      })
+      .filter(sublot => sublot.legs.length > 0);
+
+    if (sublots.length === 0) return null;
+    return { baseId, sublots };
+  }, [selectedEntity, shipments, airportGeometryById]);
 
   useEffect(() => {
     if (!selectedEntity) return;
@@ -817,6 +883,16 @@ function WorldMapComponent({
     }
 
     if (selectedEntity.type === 'shipment') {
+      // Con ruta asignada: encuadrar TODOS los tramos de TODOS los sub-lotes (incluye
+      // escalas intermedias y curvas de control, para que nada quede fuera del encuadre).
+      if (selectedShipmentGeometry) {
+        const allLegs = selectedShipmentGeometry.sublots.flatMap(sl => sl.legs);
+        const xs = allLegs.flatMap(l => [l.ox, l.dx, l.cpx]);
+        const ys = allLegs.flatMap(l => [l.oy, l.dy, l.cpy]);
+        fitBounds(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), 45);
+        return;
+      }
+      // Sin ruta aún (PENDING): encuadrar el par origen-destino como referencia.
       const shipment = shipments.find(s => s.id === selectedEntity.id);
       if (!shipment) return;
       const origin = airportById[shipment.origin];
@@ -830,7 +906,7 @@ function WorldMapComponent({
         50,
       );
     }
-  }, [selectedEntity, airportById, selectedFlightGeometry, shipments]);
+  }, [selectedEntity, airportById, selectedFlightGeometry, selectedShipmentGeometry, shipments]);
 
   const maxFlightDuration = useMemo(() => {
     let maxDuration = 0;
@@ -1367,6 +1443,75 @@ function WorldMapComponent({
           </foreignObject>
         )}
 
+        {/* ── Ruta completa del ENVÍO seleccionado (todos sus sub-lotes y tramos) ──
+            Requisito día a día: "se selecciona un envío y se debe mostrar en el mapa todas
+            las rutas del envío de manera gráfica". Un envío dividido por capacidad tiene
+            varios sub-lotes con rutas propias — se dibujan TODAS, un color por sub-lote.
+            Aplica a los 3 escenarios. Se dibuja DESPUÉS del canvas para quedar encima. */}
+        {selectedShipmentGeometry && (
+          <g style={{ pointerEvents: 'none' }}>
+            {selectedShipmentGeometry.sublots.map(sublot => (
+              <g key={sublot.shipmentId}>
+                {sublot.legs.map(leg => (
+                  <g key={leg.key}>
+                    {/* Halo del tramo */}
+                    <path
+                      d={leg.pathD}
+                      stroke={sublot.color}
+                      strokeWidth={3.5}
+                      strokeOpacity={0.18}
+                      fill="none"
+                      filter="url(#glow)"
+                    />
+                    {/* Trazo del tramo (animado para indicar dirección de avance) */}
+                    <path
+                      d={leg.pathD}
+                      stroke={sublot.color}
+                      strokeWidth={1.2}
+                      strokeOpacity={0.95}
+                      fill="none"
+                      strokeDasharray="6 4"
+                    >
+                      <animate attributeName="stroke-dashoffset" values="20;0" dur="1.2s" repeatCount="indefinite" />
+                    </path>
+                    {/* Origen del viaje (solo primer tramo) */}
+                    {leg.isFirst && (
+                      <circle cx={leg.ox} cy={leg.oy} r={3} fill="#4DA6FF" stroke="#040814" strokeWidth={0.8} />
+                    )}
+                    {/* Escala intermedia (destino de tramo no final) */}
+                    {!leg.isLast && (
+                      <circle cx={leg.dx} cy={leg.dy} r={2.4} fill="#FFC857" stroke="#040814" strokeWidth={0.8} />
+                    )}
+                    {/* Destino final del sub-lote */}
+                    {leg.isLast && (
+                      <g transform={`translate(${leg.dx},${leg.dy})`}>
+                        <circle r={3.4} fill={sublot.color} opacity={0.25}>
+                          <animate attributeName="r" values="3.4;7;3.4" dur="1.8s" repeatCount="indefinite" />
+                          <animate attributeName="opacity" values="0.3;0;0.3" dur="1.8s" repeatCount="indefinite" />
+                        </circle>
+                        <circle r={3} fill={sublot.color} stroke="#040814" strokeWidth={0.8} />
+                      </g>
+                    )}
+                  </g>
+                ))}
+              </g>
+            ))}
+            {/* Leyenda compacta cuando hay varios sub-lotes: id y maletas por color */}
+            {selectedShipmentGeometry.sublots.length > 1 && (
+              <g transform={`translate(${viewBox.x + 10}, ${viewBox.y + 12})`}>
+                {selectedShipmentGeometry.sublots.map((sublot, i) => (
+                  <g key={`legend-${sublot.shipmentId}`} transform={`translate(0, ${i * 9})`}>
+                    <line x1={0} y1={0} x2={10} y2={0} stroke={sublot.color} strokeWidth={1.5} strokeDasharray="4 2" />
+                    <text x={13} y={2.5} fontSize={6.5} fill="#C8D8F0" style={{ userSelect: 'none' }}>
+                      {sublot.shipmentId} · {sublot.quantity} maletas
+                    </text>
+                  </g>
+                ))}
+              </g>
+            )}
+          </g>
+        )}
+
         {/* ── Airport Markers (fallback estático o con datos reales del backend) ── */}
         {(shouldShowStaticFallback || hasBackendFlightData) && airportPositions.map(a => {
           const isSelected = selectedEntity?.type === 'airport' && selectedEntity.id === a.id;
@@ -1375,7 +1520,14 @@ function WorldMapComponent({
           const pct = getOccupancyPercent(a.occupancy, a.capacity);
           const isCritical = a.status === 'critical';
           const isWarning = a.status === 'warning';
-          const r = isSelected ? 5 : 3.8;
+          // Almacén ~50% más pequeño que el punto anterior (5 / 3.8 → 2.6 / 1.9).
+          const r = isSelected ? 2.6 : 1.9;
+          // Glifo de almacén (casa/edificio) en lugar de un punto.
+          const gw = r * 1.35;                 // semi-ancho
+          const eave = -r * 0.25;              // alero
+          const peak = -r * 1.3;               // cumbre del techo
+          const base = r * 1.05;               // base
+          const warehousePath = `M ${-gw} ${eave} L 0 ${peak} L ${gw} ${eave} L ${gw} ${base} L ${-gw} ${base} Z`;
 
           return (
             <g
@@ -1416,12 +1568,12 @@ function WorldMapComponent({
               {isSelected && (
                 <circle r={r + 4} fill="none" stroke={color} strokeWidth={1.2} opacity={0.7} filter="url(#glow)" />
               )}
-              {/* Outer halo */}
-              <circle r={r + 2} fill={color} opacity={0.18} />
-              {/* Main dot */}
-              <circle r={r} fill={color} stroke="#040814" strokeWidth={1} />
-              {/* Center pinhole */}
-              <circle r={1.2} fill="#040814" />
+              {/* Halo de visibilidad */}
+              <circle r={r + 2} fill={color} opacity={0.16} />
+              {/* Glifo de almacén (edificio con techo) coloreado por semáforo */}
+              <path d={warehousePath} fill={color} stroke="#040814" strokeWidth={0.7} strokeLinejoin="round" />
+              {/* Puerta del almacén */}
+              <rect x={-gw * 0.32} y={base - r * 0.8} width={gw * 0.64} height={r * 0.8} fill="#040814" opacity={0.55} rx={0.25} />
               {/* Airport label */}
               {showLabels && (
                 <text
@@ -1492,43 +1644,22 @@ function WorldMapComponent({
 
       </svg>
 
-        {/* ── Vuelos Activos (backend solution, animados según simClock) ── */}
-        {activeFlightDots.map(dot => (
-          <g
-            key={dot.flightId}
-            transform={`translate(${dot.cx},${dot.cy}) rotate(${dot.angle + 90})`}
-            style={{ cursor: dot.hasBags ? 'pointer' : 'default', pointerEvents: dot.hasBags ? 'auto' : 'none' }}
-            data-interactive={dot.hasBags ? 'true' : undefined}
-            onClick={(e) => {
-              if (!dot.hasBags) return;
-              e.stopPropagation();
-              onSelectFlight(dot.flightId);
-            }}
-            onMouseEnter={(e) => {
-              if (!dot.hasBags) return;
-              e.stopPropagation();
-              const rect = containerRef.current?.getBoundingClientRect();
-              if (!rect) return;
-              setTooltip({
-                x: e.clientX - rect.left,
-                y: e.clientY - rect.top,
-                content: (
-                  <div style={{ minWidth: 150 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                      <div style={{ width: 7, height: 7, borderRadius: '50%', background: dot.color }} />
-                      <span style={{ fontWeight: 700, color: '#E2E8F8', fontSize: 12 }}>{dot.flightId}</span>
-                    </div>
-                    <div style={{ fontSize: 11, color: '#A8C0E0' }}>{dot.originId} → {dot.destinationId}</div>
-                    {dot.hasBags
-                      ? <div style={{ fontSize: 11, color: '#6080A0', marginTop: 4 }}>Maletas: {dot.bagsCount}</div>
-                      : <div style={{ fontSize: 11, color: '#4A6080', marginTop: 4, fontStyle: 'italic' }}>Sin carga asignada</div>
-                    }
-                    <div style={{ fontSize: 11, color: '#6080A0' }}>Progreso: {Math.round(dot.t * 100)}%</div>
-                  </div>
-                ),
-              });
-            }}
-            onMouseLeave={() => setTooltip(null)}
+      {/* Barra de filtro rápida del mapa (MAP-REG-05) — sincronizada con el panel (utFilter).
+          Permite alternar Todos / Con carga / Vacías sin abrir el panel derecho. */}
+      {hasBackendFlightData && (
+        <div
+          data-interactive="true"
+          onMouseDown={e => e.stopPropagation()}
+          onMouseEnter={() => setMapFiltersOpen(true)}
+          onMouseLeave={() => setMapFiltersOpen(false)}
+          className="absolute bottom-5 left-4 flex flex-col gap-1.5"
+          style={{ zIndex: 20 }}
+        >
+         {mapFiltersOpen && (<>
+          <div
+            className="flex items-center gap-1 p-1 rounded-lg"
+            style={{ background: 'rgba(10,20,45,0.92)', border: '1px solid #1E3058', backdropFilter: 'blur(6px)' }}
+            title="Filtro de UTs por semáforo (% de carga)"
           >
             <span className="text-[9px] text-[#4A6080] px-1" style={{ letterSpacing: '0.08em' }}>UT</span>
             {([
@@ -1619,12 +1750,15 @@ function WorldMapComponent({
               );
             })}
           </div>
+         </>)}
+          {/* Asa siempre visible: muestra/oculta los filtros al pasar el mouse. Incluye el contador. */}
           <div
-            className="px-2 py-1 rounded-md text-[10px] font-mono text-[#7090B0] self-start"
-            style={{ background: 'rgba(10,20,45,0.85)', border: '1px solid #1E3058' }}
-            title="Vuelos dibujados en el mapa (ventana en vuelo) · con carga"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] self-start"
+            style={{ background: 'rgba(10,20,45,0.92)', border: `1px solid ${mapFiltersOpen ? '#4DA6FF55' : '#1E3058'}` }}
+            title="Pasa el mouse para mostrar/ocultar los filtros del mapa (UT · almacenes · densidad)"
           >
-            ✈ {flightCounts.visible} en vuelo · {flightCounts.loaded} con carga
+            <span style={{ color: mapFiltersOpen ? '#4DA6FF' : '#7090B0', fontWeight: 600 }}>⚙ Filtros</span>
+            <span className="font-mono" style={{ color: '#7090B0' }}>· ✈ {flightCounts.visible} en vuelo · {flightCounts.loaded} con carga</span>
           </div>
         </div>
       )}
