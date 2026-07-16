@@ -268,6 +268,8 @@ export interface BackendStartResponse {
 export interface BackendDaySnapshot {
   day: number;
   date: string;
+  windowStart?: string | null;
+  windowEnd?: string | null;
   routesCompleted: number;
   totalBags?: number;
   batchesOnTime: number;
@@ -297,6 +299,8 @@ export interface BackendSimulationResults {
   scenario: string;
   startDate: string;
   endDate: string;
+  startDateTime?: string | null;
+  endDateTime?: string | null;
   completedAt: string;
   fitness: number;
   totalBatches: number;

@@ -223,7 +223,7 @@ export function LeftSidebar({
       </div>
 
       {/* Date/time selector */}
-      <Section title="FECHA Y HORA DE INICIO" icon={<Calendar className="w-3 h-3" />}>
+      <Section title="FECHA Y HORA DE INICIO (LOCAL)" icon={<Calendar className="w-3 h-3" />}>
         <div className="flex flex-col gap-2">
           <div className="relative">
             <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[#4A6080] pointer-events-none" />
@@ -240,6 +240,9 @@ export function LeftSidebar({
           </div>
           <div className="text-[9px] text-[#4A6080]">
             {formatDateDisplay(startDate)} → {formatDateDisplay(new Date(startDate.getTime() + 5 * 24 * 60 * 60 * 1000))}
+          </div>
+          <div className="text-[9px] text-[#3A5070]">
+            Zona del navegador: {Intl.DateTimeFormat().resolvedOptions().timeZone}
           </div>
         </div>
       </Section>

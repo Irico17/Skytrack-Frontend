@@ -37,7 +37,8 @@ function fmtDate(base: Date, offset: number): string {
 
 function fmtDateRange(base: Date, offsetEnd: number): string {
   const d = new Date(base);
-  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]} ${d.getFullYear()}`;
+  d.setDate(d.getDate() + offsetEnd);
+  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]} ${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 function buildDailyBags(startDate: Date) {
@@ -246,6 +247,10 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
   // Paginación del ranking de aerolíneas (evita listas pesadas con muchos clientes).
   const AIRLINES_PAGE_SIZE = 10;
   const [airlinePage, setAirlinePage] = useState(0);
+  const reportStart = results?.startDateTime ? new Date(results.startDateTime) : startDate;
+  const reportEnd = results?.endDateTime
+    ? new Date(results.endDateTime)
+    : new Date(startDate.getTime() + 5 * 24 * 60 * 60 * 1000);
 
   const reportSnapshots: DaySnapshot[] = daySnapshots.length > 0 ? daySnapshots : (lastCycleUpdate ? [{
     day: Math.max(1, Math.ceil(lastCycleUpdate.daysElapsed)),
@@ -321,7 +326,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
     lines.push('SKYTRACK — REPORTE DE SIMULACIÓN DE 5 DÍAS');
     lines.push(`Generado: ${new Date().toLocaleString('es-PE', { hour12: false })}`);
     if (results) {
-      lines.push(`Periodo: ${results.startDate} → ${results.endDate}`);
+      lines.push(`Periodo: ${fmtDateRange(reportStart, 0)} → ${fmtDateRange(reportEnd, 0)}`);
       lines.push(reportSection('RESUMEN GLOBAL'));
       lines.push(reportLine('Maletas transportadas', num(realTotalBags)));
       lines.push(reportLine('Entregadas', num(deliveredBags)));
@@ -399,7 +404,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
 
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0D1E38] border border-[#1E3058] text-xs text-[#A8C0E0]">
           <Clock className="w-3 h-3 text-[#4A6080]" />
-          <span>{fmtDateRange(startDate, 0)} – {fmtDateRange(startDate, 5)}</span>
+          <span>{fmtDateRange(reportStart, 0)} – {fmtDateRange(reportEnd, 0)}</span>
         </div>
 
         <div className="flex-1" />
@@ -982,7 +987,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-[#00FF9C]" />
           <span className="text-[10px] text-[#4A6080]">
-            Período: {fmtDateRange(startDate, 0)} – {fmtDateRange(startDate, 5)} · 
+            Período: {fmtDateRange(reportStart, 0)} – {fmtDateRange(reportEnd, 0)} · 
             Modo: Planificación 5 días · 
             Algoritmo: {results?.algorithmUsed ?? 'GATS'} · 
             Ciclos: {results?.totalCycles ?? lastCycleUpdate?.cycle ?? 0} · 

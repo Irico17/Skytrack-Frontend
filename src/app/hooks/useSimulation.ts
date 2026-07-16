@@ -31,6 +31,7 @@ import {
 } from '../services/mapper';
 import type { BackendCycleUpdate, BackendSimulationFinished, BackendSimulationError, BackendActiveFlight, BackendFlightPlanFlight, BackendStorageUpdate, BackendAirportCapacity, BackendSolution, BackendStaticDataUploadResponse, BackendSimulationResults, BackendSimulationStatus, BackendActiveSimulation, StaticDataUploadProgress } from '../types/backend';
 import { computeCancellationTargetDay, findFlightById } from '../utils/cancellationDay';
+import { formatLocalDateTime, parseApiInstant, toApiInstant } from '../utils/simulationTime';
 
 /** Factor de aceleración del tiempo simulado: 1 min real = K min simulados.
  *  Fallback; el valor real llega del backend (PERIOD_SIMULATION K=180). */
@@ -223,22 +224,13 @@ function modeToScenario(mode: SimulationMode): 'DAY_TO_DAY' | 'PERIOD_SIMULATION
   return 'PERIOD_SIMULATION';
 }
 
-function formatApiDateTime(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
-function parseApiDateTimeAsUtc(value: string): Date {
-  const hasZone = /(?:Z|[+-]\d{2}:\d{2})$/.test(value);
-  const parsed = new Date(hasZone ? value : `${value}Z`);
-  return Number.isNaN(parsed.getTime()) ? new Date(value) : parsed;
-}
-
 function parseBackendSimMs(value?: string | null): number | null {
   if (!value) return null;
-  const normalized = value.replace(/\[[^\]]+\]$/, '');
-  const parsed = new Date(normalized);
-  const ms = parsed.getTime();
-  return Number.isFinite(ms) ? ms : null;
+  try {
+    return parseApiInstant(value).getTime();
+  } catch {
+    return null;
+  }
 }
 
 function yieldToBrowser(): Promise<void> {
@@ -627,7 +619,7 @@ export function useSimulation(): UseSimulationReturn {
     }
 
     flightPlanRefreshInFlightRef.current = true;
-    fetchFlightPlan(formatApiDateTime(currentSimTime), FLIGHT_PLAN_REFRESH_WINDOW_DAYS)
+    fetchFlightPlan(toApiInstant(currentSimTime), FLIGHT_PLAN_REFRESH_WINDOW_DAYS)
       .then(projectedFlights => {
         setFlightPlanFlights(projectedFlights);
         setFlights(mapFlightPlanFlights(projectedFlights));
@@ -715,7 +707,7 @@ export function useSimulation(): UseSimulationReturn {
       resetPlaybackBuffer();
 
       if (mode === '5day') {
-        const finalTime = new Date(parseApiDateTimeAsUtc(formatApiDateTime(startDate)).getTime() + FIVE_DAYS_MS);
+        const finalTime = new Date(startDate.getTime() + FIVE_DAYS_MS);
         simClockRef.current = finalTime;
         commitClockState(finalTime, true);
       }
@@ -746,7 +738,7 @@ export function useSimulation(): UseSimulationReturn {
 
         // Poblar los envíos con la solución final para los reportes (aerolíneas/clientes).
         const finalTime = mode === '5day'
-          ? new Date(parseApiDateTimeAsUtc(formatApiDateTime(startDate)).getTime() + FIVE_DAYS_MS)
+          ? new Date(startDate.getTime() + FIVE_DAYS_MS)
           : simClockRef.current;
         getSimulationSolution(id)
           .then(async solution => {
@@ -781,8 +773,12 @@ export function useSimulation(): UseSimulationReturn {
 
   const applyBackendStatusClock = useCallback((status: BackendSimulationStatus) => {
     if (!status.simulatedTime) return;
-    const statusTime = new Date(status.simulatedTime);
-    if (Number.isNaN(statusTime.getTime())) return;
+    let statusTime: Date;
+    try {
+      statusTime = parseApiInstant(status.simulatedTime);
+    } catch {
+      return;
+    }
     simClockRef.current = statusTime;
     commitClockState(statusTime, true);
 
@@ -804,7 +800,7 @@ export function useSimulation(): UseSimulationReturn {
     setFlightPlanFlights(projectedFlights);
     setFlights(mapFlightPlanFlights(projectedFlights));
     if (selectedMode === 'collapse') {
-      const base = parseApiDateTimeAsUtc(startDateTimeStr);
+      const base = parseApiInstant(startDateTimeStr);
       flightPlanWindowEndRef.current = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
     }
     return projectedFlights;
@@ -833,7 +829,7 @@ export function useSimulation(): UseSimulationReturn {
 
   const restoreBackendSession = useCallback(async (session: StoredActiveSimulation, sourceLabel: string) => {
     disconnectActiveDiscoveryStream();
-    const restoredStartDate = parseApiDateTimeAsUtc(session.startDateTime);
+    const restoredStartDate = parseApiInstant(session.startDateTime);
     setMode(session.mode);
     setStartDate(restoredStartDate);
     setSimulationComplete(false);
@@ -1035,7 +1031,7 @@ export function useSimulation(): UseSimulationReturn {
         storeActiveSimulation({
           simulationId: id,
           mode,
-          startDateTime: formatApiDateTime(startDate),
+          startDateTime: toApiInstant(startDate),
           K: simKRef.current,
           savedAt: Date.now(),
         });
@@ -1056,7 +1052,7 @@ export function useSimulation(): UseSimulationReturn {
         void ensureBackendAirports().catch(err => console.warn('No se pudieron recargar aeropuertos:', err));
       }
       if (flightPlanFlights.length === 0) {
-        void loadProjectedFlightPlan(formatApiDateTime(startDate), mode)
+        void loadProjectedFlightPlan(toApiInstant(startDate), mode)
           .catch(err => console.warn('No se pudo recargar el plan de vuelos:', err));
       }
 
@@ -1173,8 +1169,8 @@ export function useSimulation(): UseSimulationReturn {
       disconnectActiveDiscoveryStream();
       const isFiveDay = mode === '5day';
       const runDate = startDate;
-      const startDateTimeStr = formatApiDateTime(runDate);
-      const optimisticStart = parseApiDateTimeAsUtc(startDateTimeStr);
+      const startDateTimeStr = toApiInstant(runDate);
+      const optimisticStart = new Date(runDate.getTime());
 
       setIsRunning(true);
       setIsPaused(false);
@@ -1237,7 +1233,7 @@ export function useSimulation(): UseSimulationReturn {
             setFlights(mapFlightPlanFlights(projectedFlights));
             if (mode === 'collapse') {
               flightPlanWindowEndRef.current = new Date(
-                parseApiDateTimeAsUtc(startDateTimeStr).getTime() + flightPlanDays * 24 * 60 * 60 * 1000
+                parseApiInstant(startDateTimeStr).getTime() + flightPlanDays * 24 * 60 * 60 * 1000
               );
             }
             console.log(`✓ Cargados ${projectedFlights.length} vuelos del plan de vuelos`);
@@ -1275,7 +1271,7 @@ export function useSimulation(): UseSimulationReturn {
         const K = res.K ?? SIMULATION_K;
         simKRef.current = K;
         setSimulationK(K);
-        const simStartMs = new Date(res.simStartTime).getTime();
+        const simStartMs = parseApiInstant(res.simStartTime).getTime();
         const simStartDate = new Date(simStartMs);
         clockBaseRef.current = { simMs: simStartMs, realMs: Date.now(), K };
         simClockRef.current = simStartDate;
@@ -1304,7 +1300,7 @@ export function useSimulation(): UseSimulationReturn {
           type: 'info',
           message: isFiveDay
             ? `Simulación iniciada — K=${K}× — Sa=${res.Sa ?? '?'} min — Sc=${res.Sc ? `${Math.round(res.Sc / 60)} h` : '?'} — Duración: ${res.totalRealMinutes?.toFixed(0) ?? '?'} min reales`
-            : `Operación día a día iniciada — ${startDateTimeStr} — K=${K}×`,
+            : `Operación día a día iniciada — ${formatLocalDateTime(runDate)} — K=${K}×`,
           time: new Date(),
           severity: 'info',
         }, ...prev.slice(0, 19)]);
@@ -1312,7 +1308,7 @@ export function useSimulation(): UseSimulationReturn {
         getSimulationStatus(res.simulationId)
           .then(status => {
             if (status.simulatedTime) {
-              const statusTime = new Date(status.simulatedTime);
+              const statusTime = parseApiInstant(status.simulatedTime);
               simClockRef.current = statusTime;
               commitClockState(statusTime, true);
             }
@@ -1548,7 +1544,7 @@ export function useSimulation(): UseSimulationReturn {
       refreshSolution(simClockRef.current),
     ]);
     if (status.simulatedTime) {
-      const statusTime = new Date(status.simulatedTime);
+      const statusTime = parseApiInstant(status.simulatedTime);
       simClockRef.current = statusTime;
       commitClockState(statusTime, true);
     }
@@ -1581,12 +1577,12 @@ export function useSimulation(): UseSimulationReturn {
       // mientras la simulación corre (refreshCollapseFlightPlanIfNeeded).
       const planDate = mode === 'realtime' ? new Date() : startDate;
       const days = mode === 'realtime' ? 1 : 5;
-      const projectedFlights = await fetchFlightPlan(formatApiDateTime(planDate), days);
+      const projectedFlights = await fetchFlightPlan(toApiInstant(planDate), days);
       setFlightPlanFlights(projectedFlights);
       setFlights(mapFlightPlanFlights(projectedFlights));
       if (mode === 'collapse') {
         flightPlanWindowEndRef.current = new Date(
-          parseApiDateTimeAsUtc(formatApiDateTime(planDate)).getTime() + days * 24 * 60 * 60 * 1000
+          planDate.getTime() + days * 24 * 60 * 60 * 1000
         );
       }
     }
@@ -1630,12 +1626,12 @@ export function useSimulation(): UseSimulationReturn {
     if (isBackendMode(mode) && (airportsFile || flightsFile)) {
       const planDate = mode === 'realtime' ? new Date() : startDate;
       const days = mode === 'realtime' ? 1 : 5;
-      const projectedFlights = await fetchFlightPlan(formatApiDateTime(planDate), days);
+      const projectedFlights = await fetchFlightPlan(toApiInstant(planDate), days);
       setFlightPlanFlights(projectedFlights);
       setFlights(mapFlightPlanFlights(projectedFlights));
       if (mode === 'collapse') {
         flightPlanWindowEndRef.current = new Date(
-          parseApiDateTimeAsUtc(formatApiDateTime(planDate)).getTime() + days * 24 * 60 * 60 * 1000
+          planDate.getTime() + days * 24 * 60 * 60 * 1000
         );
       }
     }

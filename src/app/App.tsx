@@ -39,8 +39,8 @@ const MONTHS_ES_SHORT = ['ene','feb','mar','abr','may','jun','jul','ago','sep','
 
 function formatSimulationClock(date: Date): { date: string; time: string } {
   return {
-    date: `${String(date.getUTCDate()).padStart(2, '0')} ${MONTHS_ES_SHORT[date.getUTCMonth()]}`,
-    time: `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')}`,
+    date: `${String(date.getDate()).padStart(2, '0')} ${MONTHS_ES_SHORT[date.getMonth()]}`,
+    time: `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`,
   };
 }
 

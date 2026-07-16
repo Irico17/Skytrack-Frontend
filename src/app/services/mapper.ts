@@ -61,12 +61,13 @@ export function mapSemaphoreToStatus(backendColor: string): 'normal' | 'warning'
 const MONTHS_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
 function formatDate(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    return `${String(d.getDate()).padStart(2,'0')} ${MONTHS_ES[d.getMonth()]}`;
-  } catch {
-    return dateStr;
+  const legacyDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (legacyDate) {
+    return `${legacyDate[3]} ${MONTHS_ES[Number(legacyDate[2]) - 1]}`;
   }
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return `${String(d.getDate()).padStart(2,'0')} ${MONTHS_ES[d.getMonth()]}`;
 }
 
 /**
@@ -76,7 +77,7 @@ function formatDate(dateStr: string): string {
 export function mapDaySnapshots(results: BackendSimulationResults): DaySnapshot[] {
   return results.daySnapshots.map(s => ({
     day: s.day,
-    date: formatDate(s.date),
+    date: formatDate(s.windowStart ?? s.date),
     onTimePct: s.routesCompleted > 0
       ? Math.round((s.batchesOnTime / s.routesCompleted) * 100)
       : 0,

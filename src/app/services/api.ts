@@ -41,7 +41,7 @@ export function fetchAirports(): Promise<BackendAirport[]> {
 
 // ==================== PLAN DE VUELOS ====================
 
-/** Carga todos los vuelos del plan proyectados a un rango de fecha/hora. */
+/** Carga vuelos proyectados desde un instante ISO-8601 con zona (normalmente UTC/Z). */
 export async function fetchFlightPlan(startDateTime: string, days = 5): Promise<BackendFlightPlanFlight[]> {
   const res = await request<{ flights: BackendFlightPlanFlight[]; totalFlights: number }>(
     `/data/flights?startDateTime=${encodeURIComponent(startDateTime)}&days=${days}`
@@ -53,7 +53,7 @@ export async function fetchFlightPlan(startDateTime: string, days = 5): Promise<
 
 /**
  * Inicia una simulación de 5 días.
- * @param startDateTime Fecha/hora de inicio en formato "yyyy-MM-ddTHH:mm" (o undefined para usar todos los datos)
+ * @param startDateTime Instante ISO-8601 con zona, por ejemplo "2026-07-22T15:00:00.000Z"
  */
 export function startSimulation(
   scenario: 'PERIOD_SIMULATION' | 'DAY_TO_DAY' | 'COLLAPSE_SIMULATION',
