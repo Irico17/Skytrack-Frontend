@@ -9,6 +9,7 @@ import type {
 } from '../types/backend';
 import type { Airport, Flight, Shipment } from '../data/mockData';
 import type { DaySnapshot } from '../hooks/useSimulation';
+import { parseApiInstant } from '../utils/simulationTime';
 
 // ==================== AIRPORT ====================
 
@@ -135,18 +136,24 @@ export function buildCycleDaySnapshot(
 // ==================== FLIGHTS / SOLUTION ====================
 
 function formatClock(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false });
+  try {
+    const date = parseApiInstant(iso);
+    return date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false });
+  } catch {
+    return iso;
+  }
 }
 
 function formatDelivery(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString('es-ES', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  });
+  try {
+    const date = parseApiInstant(iso);
+    return date.toLocaleString('es-ES', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+  } catch {
+    return iso;
+  }
 }
 
 function clamp(value: number, min = 0, max = 1): number {
@@ -194,13 +201,13 @@ export function mapSolutionToShipments(solution: BackendSolution, simulatedTime:
     const orderedFlights = route.flights
       .map(f => ({
         ...f,
-        depMs: new Date(f.departureTime).getTime(),
-        arrMs: new Date(f.arrivalTime).getTime(),
+        depMs: parseApiInstant(f.departureTime).getTime(),
+        arrMs: parseApiInstant(f.arrivalTime).getTime(),
       }))
       .sort((a, b) => a.depMs - b.depMs);
     const finalArrival = route.finalArrivalTime;
     const startMs = orderedFlights[0]?.depMs ?? now;
-    const endMs = new Date(finalArrival).getTime();
+    const endMs = parseApiInstant(finalArrival).getTime();
     const progress = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
       ? clamp((now - startMs) / (endMs - startMs))
       : 0;

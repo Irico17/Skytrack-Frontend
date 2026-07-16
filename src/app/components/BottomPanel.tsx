@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { Airport, Flight, Shipment, getStatusColor, getOccupancyPercent } from '../data/mockData';
 import { isDeliveredInSimWindow } from '../utils/shipmentFilters';
+import { parseApiInstant } from '../utils/simulationTime';
 import type { BackendActiveFlight, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
 
 interface SelectedEntity {
@@ -259,8 +260,14 @@ function BackendFlightDetail({ flight, airports, shipments, onSelectShipment }: 
   const origin = airports.find(a => a.id === flight.originId);
   const dest = airports.find(a => a.id === flight.destinationId);
   const color = flight.meetsSla ? '#4DA6FF' : '#FFC857';
-  const departure = new Date(flight.departureTime).toISOString().slice(11, 16);
-  const arrival = new Date(flight.arrivalTime).toISOString().slice(11, 16);
+  let departure = flight.departureTime;
+  let arrival = flight.arrivalTime;
+  try {
+    departure = parseApiInstant(flight.departureTime).toISOString().slice(11, 16);
+    arrival = parseApiInstant(flight.arrivalTime).toISOString().slice(11, 16);
+  } catch {
+    // keep raw strings if unparseable
+  }
   const baseFlightId = flight.flightId.replace(/-D\d+$/, '');
   const flightShipments = shipments.filter(s =>
     s.currentFlightId === flight.flightId || s.currentFlightId.replace(/-D\d+$/, '') === baseFlightId

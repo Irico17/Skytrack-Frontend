@@ -1015,14 +1015,13 @@ export function useSimulation(): UseSimulationReturn {
     void hydrateStoredSimulation();
   }, [hydrateStoredSimulation]);
 
-  const resyncActiveBackendSimulation = useCallback(async (reason: 'visible' | 'focus' = 'visible') => {
+  const resyncActiveBackendSimulation = useCallback(async (_reason: 'visible' | 'focus' = 'visible') => {
     const id = simIdRef.current;
     if (!id || !isBackendMode(mode) || isResyncingRef.current) return;
     isResyncingRef.current = true;
 
     try {
       const status = await getSimulationStatus(id);
-      applyBackendStatusClock(status);
 
       if (status.status === 'RUNNING') {
         setIsRunning(true);
@@ -1035,11 +1034,32 @@ export function useSimulation(): UseSimulationReturn {
           K: simKRef.current,
           savedAt: Date.now(),
         });
+
+        // No forzar el reloj ni vaciar el buffer de playback mientras la simulación
+        // ya está reproduciendo frames WS: eso hacía saltar el tiempo atrás (aviones
+        // que "llegan y retroceden") o congelarlo hasta el próximo STORAGE/CYCLE.
+        // Solo re-anclar si aún no hubo primer ciclo o el buffer está vacío.
+        if (!hasFirstCycleRef.current || playbackBufferRef.current.length === 0) {
+          applyBackendStatusClock(status);
+          if (status.simulatedTime) {
+            hasFirstCycleRef.current = true;
+            pushPlaybackFrame({
+              type: 'STORAGE_UPDATE',
+              simulationId: id,
+              cycle: status.currentCycle ?? 0,
+              simulatedTime: status.simulatedTime,
+              daysElapsed: Math.max(0, (parseApiInstant(status.simulatedTime).getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)),
+              airportCapacities: [],
+            } as BackendStorageUpdate);
+          }
+        }
       } else if (status.status === 'PAUSED') {
+        applyBackendStatusClock(status);
         setIsRunning(false);
         setIsPaused(true);
         clockBaseRef.current = null;
       } else if (status.status === 'COMPLETED' || status.status === 'STOPPED') {
+        applyBackendStatusClock(status);
         setIsRunning(false);
         setIsPaused(false);
         clockBaseRef.current = null;
@@ -1055,16 +1075,12 @@ export function useSimulation(): UseSimulationReturn {
         void loadProjectedFlightPlan(toApiInstant(startDate), mode)
           .catch(err => console.warn('No se pudo recargar el plan de vuelos:', err));
       }
-
-      if (reason === 'visible') {
-        resetPlaybackBuffer();
-      }
     } catch (err) {
       console.warn('No se pudo resincronizar la simulación activa:', err);
     } finally {
       isResyncingRef.current = false;
     }
-  }, [mode, startDate, flightPlanFlights.length, applyBackendStatusClock, connectSimulationStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, resetPlaybackBuffer]);
+  }, [mode, startDate, flightPlanFlights.length, applyBackendStatusClock, connectSimulationStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, pushPlaybackFrame]);
 
   useEffect(() => {
     const handleVisibility = () => {

@@ -11,6 +11,7 @@ import {
 import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercent } from '../data/mockData';
 import { getBagTraceability } from '../services/api';
 import { isDeliveredInSimWindow } from '../utils/shipmentFilters';
+import { parseApiInstant } from '../utils/simulationTime';
 import type { BackendActiveFlight, BackendBagItem, BackendBagTraceability, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
 
 interface MapEntityFilter {
@@ -256,17 +257,22 @@ function bagStateColor(state: string): string {
 
 function formatTraceTime(value?: string | null): string {
   if (!value) return DASH;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('es-ES', {
-    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-  });
+  try {
+    const date = parseApiInstant(value);
+    return date.toLocaleString('es-ES', {
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+  } catch {
+    return value;
+  }
 }
 
 function formatHourUtc(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toISOString().slice(11, 16);
+  try {
+    return parseApiInstant(value).toISOString().slice(11, 16);
+  } catch {
+    return value;
+  }
 }
 
 function stripProjectedDaySuffix(flightId: string): string {
@@ -445,8 +451,14 @@ function UtCard({ unit, mapActive, onOpen, onMapFilter }: {
  */
 function liveJourneyProgress(s: Shipment, nowMs: number): number {
   if (s.progress >= 1 || s.deliveredAt) return 1;
-  const start = s.journeyStartTime ? new Date(s.journeyStartTime).getTime() : NaN;
-  const end = s.finalArrivalTime ? new Date(s.finalArrivalTime).getTime() : NaN;
+  let start = NaN;
+  let end = NaN;
+  try {
+    if (s.journeyStartTime) start = parseApiInstant(s.journeyStartTime).getTime();
+    if (s.finalArrivalTime) end = parseApiInstant(s.finalArrivalTime).getTime();
+  } catch {
+    return s.progress;
+  }
   if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
     return Math.max(0, Math.min(1, (nowMs - start) / (end - start)));
   }
@@ -922,9 +934,13 @@ export function RightPanel({
   const baseTransportUnits = useMemo<TransportUnit[]>(() => {
     const simMs = simulationTime.getTime();
     const isAirborne = (dep: string, arr: string) => {
-      const d = new Date(dep).getTime();
-      const a = new Date(arr).getTime();
-      return Number.isFinite(d) && Number.isFinite(a) && simMs >= d && simMs < a;
+      try {
+        const d = parseApiInstant(dep).getTime();
+        const a = parseApiInstant(arr).getTime();
+        return Number.isFinite(d) && Number.isFinite(a) && simMs >= d && simMs < a;
+      } catch {
+        return false;
+      }
     };
     if (flightPlanFlights.length > 0) {
       return flightPlanFlights.map(f => {
@@ -987,12 +1003,18 @@ export function RightPanel({
     const nextDeparture = new Map<string, number>();
     const nextArrival = new Map<string, number>();
     for (const f of flightPlanFlights) {
-      const depMs = new Date(f.departureTime).getTime();
+      let depMs = NaN;
+      let arrMs = NaN;
+      try {
+        depMs = parseApiInstant(f.departureTime).getTime();
+        arrMs = parseApiInstant(f.arrivalTime).getTime();
+      } catch {
+        continue;
+      }
       if (Number.isFinite(depMs) && depMs >= simMs) {
         const prev = nextDeparture.get(f.originId);
         if (prev == null || depMs < prev) nextDeparture.set(f.originId, depMs);
       }
-      const arrMs = new Date(f.arrivalTime).getTime();
       if (Number.isFinite(arrMs) && arrMs >= simMs) {
         const prev = nextArrival.get(f.destinationId);
         if (prev == null || arrMs < prev) nextArrival.set(f.destinationId, arrMs);
@@ -1021,8 +1043,20 @@ export function RightPanel({
         return true;
       })
       .sort((a, b) => {
-        if (transportSort === 'departure') return new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime();
-        if (transportSort === 'arrival') return new Date(a.arrivalTime).getTime() - new Date(b.arrivalTime).getTime();
+        if (transportSort === 'departure') {
+          try {
+            return parseApiInstant(a.departureTime).getTime() - parseApiInstant(b.departureTime).getTime();
+          } catch {
+            return 0;
+          }
+        }
+        if (transportSort === 'arrival') {
+          try {
+            return parseApiInstant(a.arrivalTime).getTime() - parseApiInstant(b.arrivalTime).getTime();
+          } catch {
+            return 0;
+          }
+        }
         if (transportSort === 'destination') return a.destinationId.localeCompare(b.destinationId) || a.flightId.localeCompare(b.flightId);
         if (transportSort === 'route') return `${a.originId}-${a.destinationId}`.localeCompare(`${b.originId}-${b.destinationId}`);
         return b.bags - a.bags;

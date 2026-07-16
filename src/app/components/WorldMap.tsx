@@ -7,6 +7,7 @@ import {
 } from '../data/mockData';
 import type { BackendActiveFlight, BackendFlightPlanFlight } from '../types/backend';
 import { getContinentFill, getLoadPercent, getUtLoadColor } from '../utils/loadColors';
+import { parseApiInstant } from '../utils/simulationTime';
 
 const GEO_JSON_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 const EMPTY_CANCELLED_SET_WM: Set<string> = new Set();
@@ -723,10 +724,10 @@ function WorldMapComponent({
       const dest   = airportGeometryById[f.destinationId];
       if (!origin || !dest) continue;
 
-      const dep = new Date(f.departureTime).getTime();
-      const arr = new Date(f.arrivalTime).getTime();
+      const dep = parseApiInstant(f.departureTime).getTime();
+      const arr = parseApiInstant(f.arrivalTime).getTime();
       const duration = arr - dep;
-      if (duration <= 0) continue;
+      if (!Number.isFinite(duration) || duration <= 0) continue;
 
       const [ox, oy] = origin.svgPos;
       const [dx, dy] = dest.svgPos;
