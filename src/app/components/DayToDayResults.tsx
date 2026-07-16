@@ -71,7 +71,8 @@ export function DayToDayResults({ results, lastCycleUpdate, airports, shipments,
     return Array.from(byClient.values()).sort((a, b) => b.bags - a.bags).slice(0, 8);
   }, [shipments]);
 
-  const slaPct = results ? Math.round(results.slaCompliancePercent) : (lastCycleUpdate ? Math.round(lastCycleUpdate.semaphores.slaCompliance) : 0);
+  // results.slaCompliancePercent ya es porcentaje; semaphores.slaCompliance es FRACCIÓN (0-1).
+  const slaPct = results ? Math.round(results.slaCompliancePercent) : (lastCycleUpdate ? Math.round(lastCycleUpdate.semaphores.slaCompliance * 100) : 0);
   const totalRoutes = results?.routedBatches ?? lastCycleUpdate?.totalRoutes ?? shipments.length;
   const totalBags = metrics?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? shipments.reduce((a, s) => a + s.luggageCount, 0);
 

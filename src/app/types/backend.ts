@@ -17,7 +17,7 @@ export interface BackendSemaphore {
   sla:     'GREEN' | 'AMBER' | 'RED' | 'UNKNOWN';
   flightOccupancy: number;   // 0.0 – 1.0
   storageOccupancy: number;  // 0.0 – 1.0
-  slaCompliance: number;     // 0.0 – 100.0
+  slaCompliance: number;     // 0.0 – 1.0 (FRACCIÓN, igual que las ocupaciones — ×100 para mostrar)
 }
 
 export interface BackendBatchSummary {

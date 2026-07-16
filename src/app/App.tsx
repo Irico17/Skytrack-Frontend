@@ -329,7 +329,9 @@ export default function App() {
         kpis={simulation.lastCycleUpdate ? {
           inFlight: simulation.lastCycleUpdate.operationalMetrics?.inFlightBags ?? '—',
           delivered: simulation.lastCycleUpdate.operationalMetrics?.deliveredBags ?? '—',
-          slaPct: Math.round(simulation.lastCycleUpdate.semaphores?.slaCompliance ?? 0),
+          // semaphores.* llegan como FRACCIONES (0-1), igual que storageOccupancy — sin el
+          // ×100 el TopBar mostraba "SLA 1%" cuando el cumplimiento real era 100%.
+          slaPct: Math.round((simulation.lastCycleUpdate.semaphores?.slaCompliance ?? 0) * 100),
           overloaded: simulation.lastCycleUpdate.operationalMetrics?.overloadedAirports ?? 0,
         } : null}
       />
