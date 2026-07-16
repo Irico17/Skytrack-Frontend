@@ -142,9 +142,9 @@ export interface BackendActiveSimulation {
   currentCycle: number;
   daysElapsed: number;
   K: number;
-  Ta: number;
-  Sa: number;
-  Sc: number;
+  Ta: number;              // segundos reales (presupuesto del algoritmo por ciclo)
+  Sa: number;              // segundos reales (salto entre ciclos)
+  Sc: number;              // minutos simulados consumidos por ciclo
   connectedClients: number;
   startedAt: string | null;
   finishedAt: string | null;
@@ -258,9 +258,9 @@ export interface BackendStartResponse {
   message: string;
   scenario: string;
   K: number;
-  Ta: number;
-  Sa: number;
-  Sc: number;
+  Ta: number;                 // segundos reales (presupuesto del algoritmo por ciclo)
+  Sa: number;                 // segundos reales (salto entre ciclos)
+  Sc: number;                 // minutos simulados consumidos por ciclo
   simStartTime: string;       // ISO-8601
   totalRealMinutes: number;   // e.g. 60.0
 }

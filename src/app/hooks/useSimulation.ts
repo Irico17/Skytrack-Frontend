@@ -284,8 +284,8 @@ function buildInitEvents(startDate: Date): SimEvent[] {
   ];
 }
 
-/** Sc del escenario de colapso = Sa(2) × K(180) = 360 min simulados por ciclo. */
-const COLLAPSE_SC_MIN = 360;
+/** Sc del escenario de colapso = Sa(45s) × K(120) = 90 min simulados por ciclo. */
+const COLLAPSE_SC_MIN = 90;
 
 /**
  * Construye las métricas de colapso a partir de los resultados REALES del backend
@@ -1299,7 +1299,8 @@ export function useSimulation(): UseSimulationReturn {
           id: `start-${Date.now()}`,
           type: 'info',
           message: isFiveDay
-            ? `Simulación iniciada — K=${K}× — Sa=${res.Sa ?? '?'} min — Sc=${res.Sc ? `${Math.round(res.Sc / 60)} h` : '?'} — Duración: ${res.totalRealMinutes?.toFixed(0) ?? '?'} min reales`
+            // res.Sa/res.Ta llegan en SEGUNDOS desde el backend; res.Sc en minutos simulados.
+            ? `Simulación iniciada — K=${K}× — Sa=${res.Sa ?? '?'}s — Sc=${res.Sc ? `${(res.Sc / 60).toFixed(1).replace(/\.0$/, '')} h` : '?'} — Duración: ${res.totalRealMinutes?.toFixed(0) ?? '?'} min reales`
             : `Operación día a día iniciada — ${formatLocalDateTime(runDate)} — K=${K}×`,
           time: new Date(),
           severity: 'info',
