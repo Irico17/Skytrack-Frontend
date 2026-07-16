@@ -768,6 +768,74 @@ function WorldMapComponent({
     ) ?? null;
   }, [selectedEntity, flightPlanGeometry]);
 
+  /**
+   * Geometría de TODOS los tramos (legs) del ENVÍO seleccionado, para dibujar su ruta
+   * completa en el mapa (requisito de la prueba día a día: "se selecciona un envío y se
+   * debe mostrar en el mapa todas las rutas del envío de manera gráfica"). Aplica igual
+   * a los 3 escenarios — los legs vienen de la solución del backend en todos los modos.
+   *
+   * SUB-LOTES: un envío puede dividirse por capacidad en varios sub-lotes (ids con
+   * sufijo -S1/-S2...), cada uno con SU PROPIA ruta (vuelos distintos). Seleccionar
+   * cualquiera de ellos dibuja la familia COMPLETA (todas las rutas de todos los
+   * sub-lotes del mismo envío base), con un color por sub-lote para distinguirlas.
+   * Si el envío aún no tiene ruta asignada (PENDING), no hay tramos que dibujar.
+   */
+  const SUBLOT_COLORS = ['#00FF9C', '#4DA6FF', '#FFC857', '#FF7AD9', '#B78CFF', '#FF9060'];
+
+  const selectedShipmentGeometry = useMemo(() => {
+    if (selectedEntity?.type !== 'shipment') return null;
+    const stripSublot = (id: string) => id.replace(/(-S\d+)+$/, '');
+    const baseId = stripSublot(selectedEntity.id);
+    // Familia completa: el lote base y/o todos sus sub-lotes -S1/-S2...
+    const family = shipments.filter(s => stripSublot(s.id) === baseId);
+    if (family.length === 0) return null;
+    // Orden estable (base primero, luego -S1, -S2...) para que los colores no salten.
+    family.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+
+    const sublots = family
+      .map((shipment, sublotIndex) => {
+        const legs = (shipment.legs ?? [])
+          .map((leg, index) => {
+            const origin = airportGeometryById[leg.from];
+            const dest = airportGeometryById[leg.to];
+            if (!origin || !dest) return null;
+            const [ox, oy] = origin.svgPos;
+            const [dx, dy] = dest.svgPos;
+            const mx = (ox + dx) / 2;
+            const my = (oy + dy) / 2;
+            const ddx = dx - ox; const ddy = dy - oy;
+            const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+            // Curvatura levemente distinta por sub-lote: si dos sub-lotes comparten un
+            // tramo (mismo par de aeropuertos), sus arcos no se superponen exactamente
+            // y ambos quedan visibles.
+            const curve = Math.min(Math.max(dist * (0.22 + sublotIndex * 0.05), 18), 130);
+            const cpx = mx - (ddy / dist) * curve;
+            const cpy = my + (ddx / dist) * curve;
+            return {
+              key: `${shipment.id}-leg-${index}`,
+              flightId: leg.id,
+              from: leg.from,
+              to: leg.to,
+              ox, oy, dx, dy, cpx, cpy,
+              pathD: `M ${ox} ${oy} Q ${cpx} ${cpy} ${dx} ${dy}`,
+              isFirst: index === 0,
+              isLast: index === (shipment.legs?.length ?? 0) - 1,
+            };
+          })
+          .filter((leg): leg is NonNullable<typeof leg> => leg !== null);
+        return {
+          shipmentId: shipment.id,
+          quantity: shipment.luggageCount,
+          color: SUBLOT_COLORS[sublotIndex % SUBLOT_COLORS.length],
+          legs,
+        };
+      })
+      .filter(sublot => sublot.legs.length > 0);
+
+    if (sublots.length === 0) return null;
+    return { baseId, sublots };
+  }, [selectedEntity, shipments, airportGeometryById]);
+
   useEffect(() => {
     if (!selectedEntity) return;
     const key = `${selectedEntity.type}:${selectedEntity.id}`;
@@ -815,6 +883,16 @@ function WorldMapComponent({
     }
 
     if (selectedEntity.type === 'shipment') {
+      // Con ruta asignada: encuadrar TODOS los tramos de TODOS los sub-lotes (incluye
+      // escalas intermedias y curvas de control, para que nada quede fuera del encuadre).
+      if (selectedShipmentGeometry) {
+        const allLegs = selectedShipmentGeometry.sublots.flatMap(sl => sl.legs);
+        const xs = allLegs.flatMap(l => [l.ox, l.dx, l.cpx]);
+        const ys = allLegs.flatMap(l => [l.oy, l.dy, l.cpy]);
+        fitBounds(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), 45);
+        return;
+      }
+      // Sin ruta aún (PENDING): encuadrar el par origen-destino como referencia.
       const shipment = shipments.find(s => s.id === selectedEntity.id);
       if (!shipment) return;
       const origin = airportById[shipment.origin];
@@ -828,7 +906,7 @@ function WorldMapComponent({
         50,
       );
     }
-  }, [selectedEntity, airportById, selectedFlightGeometry, shipments]);
+  }, [selectedEntity, airportById, selectedFlightGeometry, selectedShipmentGeometry, shipments]);
 
   const maxFlightDuration = useMemo(() => {
     let maxDuration = 0;
@@ -1363,6 +1441,75 @@ function WorldMapComponent({
               style={{ width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
             />
           </foreignObject>
+        )}
+
+        {/* ── Ruta completa del ENVÍO seleccionado (todos sus sub-lotes y tramos) ──
+            Requisito día a día: "se selecciona un envío y se debe mostrar en el mapa todas
+            las rutas del envío de manera gráfica". Un envío dividido por capacidad tiene
+            varios sub-lotes con rutas propias — se dibujan TODAS, un color por sub-lote.
+            Aplica a los 3 escenarios. Se dibuja DESPUÉS del canvas para quedar encima. */}
+        {selectedShipmentGeometry && (
+          <g style={{ pointerEvents: 'none' }}>
+            {selectedShipmentGeometry.sublots.map(sublot => (
+              <g key={sublot.shipmentId}>
+                {sublot.legs.map(leg => (
+                  <g key={leg.key}>
+                    {/* Halo del tramo */}
+                    <path
+                      d={leg.pathD}
+                      stroke={sublot.color}
+                      strokeWidth={3.5}
+                      strokeOpacity={0.18}
+                      fill="none"
+                      filter="url(#glow)"
+                    />
+                    {/* Trazo del tramo (animado para indicar dirección de avance) */}
+                    <path
+                      d={leg.pathD}
+                      stroke={sublot.color}
+                      strokeWidth={1.2}
+                      strokeOpacity={0.95}
+                      fill="none"
+                      strokeDasharray="6 4"
+                    >
+                      <animate attributeName="stroke-dashoffset" values="20;0" dur="1.2s" repeatCount="indefinite" />
+                    </path>
+                    {/* Origen del viaje (solo primer tramo) */}
+                    {leg.isFirst && (
+                      <circle cx={leg.ox} cy={leg.oy} r={3} fill="#4DA6FF" stroke="#040814" strokeWidth={0.8} />
+                    )}
+                    {/* Escala intermedia (destino de tramo no final) */}
+                    {!leg.isLast && (
+                      <circle cx={leg.dx} cy={leg.dy} r={2.4} fill="#FFC857" stroke="#040814" strokeWidth={0.8} />
+                    )}
+                    {/* Destino final del sub-lote */}
+                    {leg.isLast && (
+                      <g transform={`translate(${leg.dx},${leg.dy})`}>
+                        <circle r={3.4} fill={sublot.color} opacity={0.25}>
+                          <animate attributeName="r" values="3.4;7;3.4" dur="1.8s" repeatCount="indefinite" />
+                          <animate attributeName="opacity" values="0.3;0;0.3" dur="1.8s" repeatCount="indefinite" />
+                        </circle>
+                        <circle r={3} fill={sublot.color} stroke="#040814" strokeWidth={0.8} />
+                      </g>
+                    )}
+                  </g>
+                ))}
+              </g>
+            ))}
+            {/* Leyenda compacta cuando hay varios sub-lotes: id y maletas por color */}
+            {selectedShipmentGeometry.sublots.length > 1 && (
+              <g transform={`translate(${viewBox.x + 10}, ${viewBox.y + 12})`}>
+                {selectedShipmentGeometry.sublots.map((sublot, i) => (
+                  <g key={`legend-${sublot.shipmentId}`} transform={`translate(0, ${i * 9})`}>
+                    <line x1={0} y1={0} x2={10} y2={0} stroke={sublot.color} strokeWidth={1.5} strokeDasharray="4 2" />
+                    <text x={13} y={2.5} fontSize={6.5} fill="#C8D8F0" style={{ userSelect: 'none' }}>
+                      {sublot.shipmentId} · {sublot.quantity} maletas
+                    </text>
+                  </g>
+                ))}
+              </g>
+            )}
+          </g>
         )}
 
         {/* ── Airport Markers (fallback estático o con datos reales del backend) ── */}

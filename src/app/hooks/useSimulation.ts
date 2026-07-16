@@ -17,6 +17,8 @@ import {
   createShipment,
   cancelFlight as cancelFlightRequest,
   uploadStaticDatasetBatched,
+  uploadStaticDatasetPartialBatched,
+  uploadShipmentsFileToSimulation,
 } from '../services/api';
 import { SimulationWebSocket } from '../services/websocket';
 import {
@@ -117,6 +119,16 @@ interface UseSimulationReturn extends SimulationState {
     shipmentFiles: File[],
     onProgress?: (progress: StaticDataUploadProgress) => void
   ) => Promise<BackendStaticDataUploadResponse>;
+  /** Carga PARCIAL: cualquier subconjunto de aeropuertos/vuelos/envíos, sin exigir los 3. */
+  uploadStaticDataPartial: (
+    airportsFile: File | null,
+    flightsFile: File | null,
+    shipmentFiles?: File[],
+    shipmentsMode?: 'append' | 'replace',
+    onProgress?: (progress: StaticDataUploadProgress) => void
+  ) => Promise<BackendStaticDataUploadResponse>;
+  /** Carga un archivo de envíos contra la operación día a día ACTIVA. */
+  uploadShipmentsFile: (file: File, originId?: string) => Promise<{ originId: string; registered: number; failed: number; errors?: string[] }>;
   setAirports: Dispatch<SetStateAction<Airport[]>>;
   setFlights: Dispatch<SetStateAction<Flight[]>>;
   setShipments: Dispatch<SetStateAction<Shipment[]>>;
@@ -280,8 +292,8 @@ function buildInitEvents(startDate: Date): SimEvent[] {
   ];
 }
 
-/** Sc del escenario de colapso = Sa(5) × K(75) = 375 min simulados por ciclo. */
-const COLLAPSE_SC_MIN = 375;
+/** Sc del escenario de colapso = Sa(2) × K(180) = 360 min simulados por ciclo. */
+const COLLAPSE_SC_MIN = 360;
 
 /**
  * Construye las métricas de colapso a partir de los resultados REALES del backend
@@ -358,6 +370,15 @@ export function useSimulation(): UseSimulationReturn {
   const wsSimulationIdRef = useRef<string | null>(null);
   const activeDiscoveryWsRef = useRef<SimulationWebSocket | null>(null);
   const activeDiscoveryInFlightRef = useRef(false);
+
+  // ===== VENTANA DE PLAN DE VUELOS PARA COLAPSO (sin fecha de fin fija) =====
+  // 5 días pide la ventana UNA vez porque la simulación dura exactamente 5 días. Colapso
+  // NO tiene fin fijo (puede durar muchos más días simulados) — sin esto, el plan de vuelos
+  // proyectado se agotaba al pasar el día 5 y el mapa se veía vacío aunque el backend
+  // siguiera funcionando bien. Se refresca la ventana cuando el reloj simulado se acerca
+  // al borde de lo ya cargado, igual que 5 días pero repitiéndolo indefinidamente.
+  const flightPlanWindowEndRef = useRef<Date | null>(null);
+  const flightPlanRefreshInFlightRef = useRef(false);
 
   // Secuencia para clientIds autogenerados en operación día a día (único por ejecución).
   const uiClientSeqRef = useRef(0);
@@ -586,6 +607,38 @@ export function useSimulation(): UseSimulationReturn {
     setEvents(buildInitEvents(startDate));
   }, [startDate]);
 
+  const FLIGHT_PLAN_REFRESH_WINDOW_DAYS = 5;
+  // Margen de seguridad: refrescar cuando quede menos de 1 día de plan de vuelos cargado,
+  // para que la ventana nueva llegue ANTES de que la actual se agote (sin parpadeo).
+  const FLIGHT_PLAN_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
+
+  /**
+   * Para COLAPSO: si el reloj simulado se acerca al borde de la ventana de plan de vuelos
+   * ya cargada, pide la siguiente ventana de 5 días desde ese punto — la misma lógica de
+   * 5 días, pero repetida indefinidamente en vez de una sola vez (porque colapso no tiene
+   * fecha de fin fija).
+   */
+  const refreshCollapseFlightPlanIfNeeded = useCallback((currentSimTime: Date) => {
+    if (mode !== 'collapse') return;
+    if (flightPlanRefreshInFlightRef.current) return;
+    const windowEnd = flightPlanWindowEndRef.current;
+    if (windowEnd && currentSimTime.getTime() < windowEnd.getTime() - FLIGHT_PLAN_REFRESH_MARGIN_MS) {
+      return; // todavía hay margen cargado, no hace falta refrescar
+    }
+
+    flightPlanRefreshInFlightRef.current = true;
+    fetchFlightPlan(formatApiDateTime(currentSimTime), FLIGHT_PLAN_REFRESH_WINDOW_DAYS)
+      .then(projectedFlights => {
+        setFlightPlanFlights(projectedFlights);
+        setFlights(mapFlightPlanFlights(projectedFlights));
+        flightPlanWindowEndRef.current = new Date(
+          currentSimTime.getTime() + FLIGHT_PLAN_REFRESH_WINDOW_DAYS * 24 * 60 * 60 * 1000
+        );
+      })
+      .catch(err => console.warn('No se pudo refrescar el plan de vuelos de colapso:', err))
+      .finally(() => { flightPlanRefreshInFlightRef.current = false; });
+  }, [mode]);
+
   // ===== MODO 5DAY — WebSocket handler =====
 
   const handle5DayWsMessage = useCallback((msg: any) => {
@@ -613,6 +666,8 @@ export function useSimulation(): UseSimulationReturn {
         type: 'info',
         message: mode === '5day'
           ? `Ciclo ${update.cycle} — Día ${update.daysElapsed.toFixed(1)}/5 — ${update.totalRoutes} rutas`
+          : mode === 'collapse'
+          ? `Ciclo ${update.cycle} — Colapso (${update.daysElapsed.toFixed(1)} días) — ${update.totalRoutes} rutas`
           : `Ciclo ${update.cycle} — Operación día a día — ${update.totalRoutes} rutas`,
         time: new Date(),
         severity: update.semaphores.sla === 'RED' ? 'critical'
@@ -620,6 +675,7 @@ export function useSimulation(): UseSimulationReturn {
       }, ...prev.slice(0, 19)]);
 
       scheduleSolutionRefresh(t ?? new Date());
+      refreshCollapseFlightPlanIfNeeded(t ?? new Date());
 
     } else if (msg.type === 'STORAGE_UPDATE') {
       const update = msg as BackendStorageUpdate;
@@ -705,7 +761,7 @@ export function useSimulation(): UseSimulationReturn {
       wsRef.current?.disconnect();
       wsSimulationIdRef.current = null;
     }
-  }, [startDate, mode, daysElapsed, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, cancelScheduledSolutionRefresh, commitClockState, applyMappedShipments]);
+  }, [startDate, mode, daysElapsed, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, refreshCollapseFlightPlanIfNeeded, cancelScheduledSolutionRefresh, commitClockState, applyMappedShipments]);
 
   const connectSimulationStream = useCallback((simulationId = simIdRef.current) => {
     if (!simulationId) return;
@@ -729,13 +785,28 @@ export function useSimulation(): UseSimulationReturn {
     if (Number.isNaN(statusTime.getTime())) return;
     simClockRef.current = statusTime;
     commitClockState(statusTime, true);
-  }, [commitClockState]);
+
+    // El endpoint /status no trae daysElapsed (solo lo llevan los mensajes WS de
+    // CYCLE_UPDATE/STORAGE_UPDATE, vía pushPlaybackFrame). Sin esto, "Tiempo Transcurrido"
+    // se quedaba en 00:00:00 al reconectar/unirse a una simulación ya iniciada (reload,
+    // segunda pestaña, resync por foco/visibilidad) hasta que llegara el próximo ciclo por WS.
+    const rawDaysElapsed = (statusTime.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000);
+    if (Number.isFinite(rawDaysElapsed)) {
+      setDaysElapsed(mode === '5day' ? Math.min(5, Math.max(0, rawDaysElapsed)) : Math.max(0, rawDaysElapsed));
+    }
+  }, [commitClockState, startDate, mode]);
 
   const loadProjectedFlightPlan = useCallback(async (startDateTimeStr: string, selectedMode: SimulationMode) => {
-    const days = selectedMode === '5day' ? 5 : 1;
+    // Colapso usa la MISMA ventana que 5 días (5 días): la diferencia es que colapso la
+    // refresca indefinidamente (refreshCollapseFlightPlanIfNeeded) porque no tiene fin fijo.
+    const days = selectedMode === 'realtime' ? 1 : 5;
     const projectedFlights = await fetchFlightPlan(startDateTimeStr, days);
     setFlightPlanFlights(projectedFlights);
     setFlights(mapFlightPlanFlights(projectedFlights));
+    if (selectedMode === 'collapse') {
+      const base = parseApiDateTimeAsUtc(startDateTimeStr);
+      flightPlanWindowEndRef.current = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+    }
     return projectedFlights;
   }, []);
 
@@ -750,6 +821,15 @@ export function useSimulation(): UseSimulationReturn {
       })
       .catch(err => console.warn('No se pudieron recuperar resultados finales:', err));
   }, []);
+
+  const refreshSolution = useCallback(async (time = simClockRef.current) => {
+    const id = simIdRef.current;
+    if (!id) return;
+
+    const solution = await getSimulationSolution(id);
+    const mapped = await mapSolutionToShipmentsCooperatively(solution, time);
+    applyMappedShipments(mapped);
+  }, [applyMappedShipments]);
 
   const restoreBackendSession = useCallback(async (session: StoredActiveSimulation, sourceLabel: string) => {
     disconnectActiveDiscoveryStream();
@@ -794,6 +874,34 @@ export function useSimulation(): UseSimulationReturn {
         }
         connectSimulationStream(session.simulationId);
         storeActiveSimulation({ ...session, savedAt: Date.now() });
+
+        // Puente hasta el próximo CYCLE_UPDATE del WebSocket: sin esto, tras recargar la
+        // página (o reconectarse desde otra pestaña) la UI queda en "INICIANDO…" y "0
+        // Envíos" hasta el SIGUIENTE ciclo del backend — hasta Sa minutos (5 en día a día)
+        // aunque ya haya toneladas de envíos ruteados esperando. Se pobla de una vez con
+        // lo que YA existe (status + solución actual), y el próximo CYCLE_UPDATE real
+        // simplemente lo reemplaza con datos más frescos.
+        if (status.currentCycle > 0) {
+          hasFirstCycleRef.current = true;
+          setLastCycleUpdate({
+            type: 'CYCLE_UPDATE',
+            simulationId: session.simulationId,
+            cycle: status.currentCycle,
+            simulatedTime: status.simulatedTime ?? session.startDateTime,
+            daysElapsed: 0,
+            simulationComplete: false,
+            fitness: status.currentFitness,
+            batchesProcessed: status.batchesProcessed,
+            batchesFailed: status.batchesFailed,
+            totalRoutes: 0,
+            totalBags: 0,
+            semaphores: status.semaphores,
+            batchSummary: { onTime: status.batchesProcessed, delayed: status.batchesFailed, unrouted: status.batchesPending },
+            activeFlights: [],
+            airportCapacities: [],
+          });
+          void refreshSolution(restoredStartDate).catch(err => console.warn('No se pudo refrescar la solución al restaurar:', err));
+        }
       } else {
         setIsRunning(false);
         setIsPaused(false);
@@ -812,7 +920,7 @@ export function useSimulation(): UseSimulationReturn {
       setSimulationId(null);
       setIsRunning(false);
     }
-  }, [applyBackendStatusClock, cancelScheduledSolutionRefresh, commitClockState, connectSimulationStream, disconnectActiveDiscoveryStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, resetPlaybackBuffer]);
+  }, [applyBackendStatusClock, cancelScheduledSolutionRefresh, commitClockState, connectSimulationStream, disconnectActiveDiscoveryStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, refreshSolution, resetPlaybackBuffer]);
 
   // Badge multi-navegador (TASK-031): poll connectedClients del backend.
   useEffect(() => {
@@ -1127,6 +1235,11 @@ export function useSimulation(): UseSimulationReturn {
           .then(projectedFlights => {
             setFlightPlanFlights(projectedFlights);
             setFlights(mapFlightPlanFlights(projectedFlights));
+            if (mode === 'collapse') {
+              flightPlanWindowEndRef.current = new Date(
+                parseApiDateTimeAsUtc(startDateTimeStr).getTime() + flightPlanDays * 24 * 60 * 60 * 1000
+              );
+            }
             console.log(`✓ Cargados ${projectedFlights.length} vuelos del plan de vuelos`);
             setEvents(prev => [{
               id: `progress-flights-${Date.now()}`,
@@ -1270,6 +1383,7 @@ export function useSimulation(): UseSimulationReturn {
     setActiveFlights([]);
     setFlightPlanFlights([]);
     setCancelledFlightIds(new Set());
+    flightPlanWindowEndRef.current = null;
     clockBaseRef.current = null;
     hasFirstCycleRef.current = false;
     cancelScheduledSolutionRefresh();
@@ -1350,14 +1464,9 @@ export function useSimulation(): UseSimulationReturn {
     setEvents(prev => [{ id:`replan-${Date.now()}`, type:'replan', message:'Replanificación de rutas completa', time:new Date(), severity:'info' }, ...prev.slice(0,19)]);
   }, [mode]);
 
-  const refreshSolution = useCallback(async (time = simClockRef.current) => {
-    const id = simIdRef.current;
-    if (!id) return;
-
-    const solution = await getSimulationSolution(id);
-    const mapped = await mapSolutionToShipmentsCooperatively(solution, time);
-    applyMappedShipments(mapped);
-  }, [applyMappedShipments]);
+  // (refreshSolution se movió arriba, antes de restoreBackendSession, que la necesita en
+  // su lista de dependencias — useCallback evalúa el array de deps de inmediato, no de forma
+  // diferida, así que debía estar ya inicializada en ese punto del cuerpo del componente.)
 
   const addShipment = useCallback(async (data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
     if (!simIdRef.current || !isRunning) {
@@ -1468,11 +1577,18 @@ export function useSimulation(): UseSimulationReturn {
     setCollapseMetrics(null);
 
     if (isBackendMode(mode)) {
-      const planDate = mode === '5day' ? startDate : new Date();
-      const days = mode === '5day' ? 5 : 1;
+      // Colapso usa la MISMA ventana que 5 días (no 1 día): se refresca sola después
+      // mientras la simulación corre (refreshCollapseFlightPlanIfNeeded).
+      const planDate = mode === 'realtime' ? new Date() : startDate;
+      const days = mode === 'realtime' ? 1 : 5;
       const projectedFlights = await fetchFlightPlan(formatApiDateTime(planDate), days);
       setFlightPlanFlights(projectedFlights);
       setFlights(mapFlightPlanFlights(projectedFlights));
+      if (mode === 'collapse') {
+        flightPlanWindowEndRef.current = new Date(
+          parseApiDateTimeAsUtc(formatApiDateTime(planDate)).getTime() + days * 24 * 60 * 60 * 1000
+        );
+      }
     }
 
     setEvents(prev => [{
@@ -1486,6 +1602,67 @@ export function useSimulation(): UseSimulationReturn {
     return response;
   }, [isRunning, mode, startDate, commitBackendAirports]);
 
+  /**
+   * Carga PARCIAL de datos estáticos: solo se reemplaza lo que se sube (solo aeropuertos,
+   * solo vuelos, o combinaciones), sin exigir los 3 archivos ni borrar los envíos existentes.
+   * Necesario para la prueba de operaciones día a día: "En preparación, se agrega los planes
+   * de vuelo ajustados a la hora" — solo el plan de vuelos, sin tocar aeropuertos/envíos.
+   */
+  const uploadStaticDataPartial = useCallback(async (
+    airportsFile: File | null,
+    flightsFile: File | null,
+    shipmentFiles: File[] = [],
+    shipmentsMode: 'append' | 'replace' = 'append',
+    onProgress?: (progress: StaticDataUploadProgress) => void
+  ): Promise<BackendStaticDataUploadResponse> => {
+    if (isRunning) {
+      throw new Error('Detén la simulación antes de actualizar datos estáticos');
+    }
+    // Por lotes (igual que el reemplazo total): mandar muchos archivos de envíos en UNA
+    // sola petición puede chocar con límites de un proxy delante del backend (413 con
+    // cuerpo vacío, visto en despliegue real) aunque nginx/Spring acepten el tamaño total.
+    const response = await uploadStaticDatasetPartialBatched(airportsFile, flightsFile, shipmentFiles, shipmentsMode, onProgress);
+
+    if (airportsFile) {
+      const backendAirports = await fetchAirports();
+      commitBackendAirports(mapAirports(backendAirports));
+    }
+    if (isBackendMode(mode) && (airportsFile || flightsFile)) {
+      const planDate = mode === 'realtime' ? new Date() : startDate;
+      const days = mode === 'realtime' ? 1 : 5;
+      const projectedFlights = await fetchFlightPlan(formatApiDateTime(planDate), days);
+      setFlightPlanFlights(projectedFlights);
+      setFlights(mapFlightPlanFlights(projectedFlights));
+      if (mode === 'collapse') {
+        flightPlanWindowEndRef.current = new Date(
+          parseApiDateTimeAsUtc(formatApiDateTime(planDate)).getTime() + days * 24 * 60 * 60 * 1000
+        );
+      }
+    }
+
+    setEvents(prev => [{
+      id: `static-data-partial-${Date.now()}`,
+      type: 'info',
+      message: response.message,
+      time: new Date(),
+      severity: 'info',
+    }, ...prev.slice(0, 19)]);
+
+    return response;
+  }, [isRunning, mode, startDate, commitBackendAirports]);
+
+  /**
+   * Carga un ARCHIVO de envíos contra la operación día a día ACTIVA (prueba del curso:
+   * "Durante la ejecución, se realiza la carga del archivo de envíos"). El backend registra
+   * cada línea como si fuera un POST manual — los envíos entran al ciclo siguiente.
+   */
+  const uploadShipmentsFile = useCallback(async (file: File, originId?: string) => {
+    if (!simIdRef.current) {
+      throw new Error('No hay una operación día a día activa');
+    }
+    return uploadShipmentsFileToSimulation(simIdRef.current, file, originId);
+  }, []);
+
   return {
     simulationId,
     startDate, setStartDate,
@@ -1495,7 +1672,7 @@ export function useSimulation(): UseSimulationReturn {
     collapseComplete, collapseMetrics, simulationResults,
     setMode, start, pause: pause as () => void, resume: resume as () => void, reset,
     closeOperations: closeOperations as () => void,
-    replan, addShipment, cancelFlight, uploadStaticData,
+    replan, addShipment, cancelFlight, uploadStaticData, uploadStaticDataPartial, uploadShipmentsFile,
     setAirports, setFlights, setShipments,
     simClock, simClockRef, activeFlights, flightPlanFlights,
     simulationK,

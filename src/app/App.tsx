@@ -8,6 +8,7 @@ import { RightPanel } from './components/RightPanel';
 import { AddShipmentModal } from './components/AddShipmentModal';
 import { CancelFlightModal } from './components/CancelFlightModal';
 import { StaticDataUploadModal } from './components/StaticDataUploadModal';
+import { UploadShipmentsFileModal } from './components/UploadShipmentsFileModal';
 import { FiveDayResults } from './components/FiveDayResults';
 import { CollapseResults } from './components/CollapseResults';
 import { DayToDayResults } from './components/DayToDayResults';
@@ -84,6 +85,7 @@ export default function App() {
   const [showAddShipment, setShowAddShipment] = useState(false);
   const [showCancelFlight, setShowCancelFlight] = useState(false);
   const [showStaticDataUpload, setShowStaticDataUpload] = useState(false);
+  const [showUploadShipmentsFile, setShowUploadShipmentsFile] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [showCollapseResults, setShowCollapseResults] = useState(false);
   const [showDayToDayResults, setShowDayToDayResults] = useState(false);
@@ -352,6 +354,7 @@ export default function App() {
             onFilterChange={handleFilterChange}
             onToggleChange={handleToggleChange}
             onAddShipment={() => setShowAddShipment(true)}
+            onUploadShipmentsFile={() => setShowUploadShipmentsFile(true)}
             onCancelFlight={() => setShowCancelFlight(true)}
             onUploadStaticData={() => setShowStaticDataUpload(true)}
             onCloseOperations={simulation.closeOperations}
@@ -415,7 +418,9 @@ export default function App() {
             )}
 
             {/* ==== RELOJ DUAL: Tiempo simulado + real ==== */}
-            {(simulation.isRunning || simulation.mode === '5day') && (
+            {/* 5 días y colapso quedan visibles aunque se detengan (para ver el estado
+                final al volver del reporte); el resto solo mientras corre. */}
+            {(simulation.isRunning || simulation.mode === '5day' || simulation.mode === 'collapse') && (
               <div style={{
                 position: 'absolute', top: 12, left: 12,
                 display: 'flex', flexDirection: 'column', gap: 6,
@@ -446,6 +451,15 @@ export default function App() {
                       <span style={{ fontSize: 9, color: '#4A6080' }}>Día {Math.min(Math.ceil(simulation.daysElapsed), 5)}/5</span>
                       <div style={{ width: 48, height: 3, background: '#1E3058', borderRadius: 2, overflow: 'hidden' }}>
                         <div style={{ width: `${(simulation.daysElapsed / 5) * 100}%`, height: '100%', background: '#4DA6FF', borderRadius: 2, transition: 'width 0.3s' }} />
+                      </div>
+                    </div>
+                  )}
+                  {/* Colapso: mismo chip que 5 días, pero SIN tope "/5" (no tiene fin fijo) */}
+                  {simulation.mode === 'collapse' && simulation.daysElapsed > 0 && (
+                    <div style={{ marginLeft: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                      <span style={{ fontSize: 9, color: '#4A6080' }}>Día {Math.floor(simulation.daysElapsed) + 1} · sin límite</span>
+                      <div style={{ width: 48, height: 3, background: '#1E3058', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ width: '100%', height: '100%', background: '#FF4D4D', borderRadius: 2, opacity: simulation.isRunning ? 0.7 : 0.3 }} className={simulation.isRunning ? 'animate-pulse' : ''} />
                       </div>
                     </div>
                   )}
@@ -652,6 +666,14 @@ export default function App() {
         <StaticDataUploadModal
           onClose={() => setShowStaticDataUpload(false)}
           onUpload={simulation.uploadStaticData}
+          onUploadPartial={simulation.uploadStaticDataPartial}
+        />
+      )}
+
+      {showUploadShipmentsFile && (
+        <UploadShipmentsFileModal
+          onClose={() => setShowUploadShipmentsFile(false)}
+          onUpload={simulation.uploadShipmentsFile}
         />
       )}
 

@@ -398,6 +398,7 @@ function ShipmentListRow({ s, onClick }: { s: Shipment; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
+      data-testid="shipment-row"
       className="w-full grid items-center gap-3 px-4 py-2.5 hover:bg-[#1A2E4A]/40 transition-colors border-b border-[#1E3058]/30 text-left"
       style={SHIPMENT_GRID_STYLE}
     >

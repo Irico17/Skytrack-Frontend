@@ -1086,7 +1086,11 @@ export function RightPanel({
         if (shipmentFilter === 'inflight') {
           // Estado en vivo (tramo a tramo) — si tiene itinerario, lo deriva del reloj;
           // si no, cae al método anterior (vuelo actual ∈ UTs en vuelo).
-          if (s.legs && s.legs.length > 0) return liveShipmentState(s, nowMs).state === 'in_flight';
+          // Guardia de volumen (escenario colapso): con >20k envíos, derivar por elemento en
+          // cada commit del reloj (~4×/s) costaría ms perceptibles; se usa el método estático.
+          if (s.legs && s.legs.length > 0 && shipments.length <= 20_000) {
+            return liveShipmentState(s, nowMs).state === 'in_flight';
+          }
           return s.progress < 1 && !!s.currentFlightId && s.currentFlightId !== 'PENDING'
             && inFlightIds.has(stripProjectedDaySuffix(s.currentFlightId));
         }
