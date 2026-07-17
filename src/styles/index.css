@@ -31,3 +31,25 @@
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* datetime-local — dark ops-center theme (native picker where supported) */
+.datetime-local-dark {
+  color-scheme: dark;
+}
+
+.datetime-local-dark::-webkit-calendar-picker-indicator {
+  filter: invert(0.85) brightness(1.15);
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.datetime-local-dark:hover:not(:disabled)::-webkit-calendar-picker-indicator {
+  filter: invert(0.9) brightness(1.25);
+  opacity: 1;
+}
+
+.datetime-local-dark:disabled::-webkit-calendar-picker-indicator {
+  filter: invert(0.85) brightness(1.15);
+  opacity: 0.35;
+  cursor: not-allowed;
+}

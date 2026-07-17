@@ -323,10 +323,10 @@ export function ShipmentDetailPanel({ shipment, flights, airports, onClose, simu
                   icon: <MapPin className="w-3 h-3 text-[#4DA6FF]" />,
                 },
                 { label: 'Registro', value: fmtIso(bag.ingressTime), icon: <Clock className="w-3 h-3 text-[#4DA6FF]" /> },
-                { label: 'Límite SLA', value: fmtIso(bag.deadline), icon: <Shield className="w-3 h-3 text-[#FFC857]" /> },
+                { label: 'Deadline', value: fmtIso(bag.deadline), icon: <Shield className="w-3 h-3 text-[#FFC857]" /> },
                 {
-                  label: 'SLA',
-                  value: bag.meetsSla ? 'Cumple' : 'No cumple',
+                  label: 'Puntualidad',
+                  value: bag.meetsSla ? 'A tiempo' : 'Retrasado',
                   icon: bag.meetsSla
                     ? <CheckCircle className="w-3 h-3 text-[#00FF9C]" />
                     : <AlertTriangle className="w-3 h-3 text-[#FF4D4D]" />,

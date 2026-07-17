@@ -417,7 +417,7 @@ function WorldMapComponent({
         <span style={{ fontWeight: 700, color: '#E2E8F8', fontSize: 12 }}>{dot.flightId}</span>
         {dot.hasBags && !dot.meetsSla && (
           <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 4, background: 'rgba(255,200,87,0.15)', color: '#FFC857' }}>
-            SLA
+            En riesgo
           </span>
         )}
       </div>
@@ -990,7 +990,8 @@ function WorldMapComponent({
       const paintVersion = paintVersionRef.current;
       const dataChanged = paintVersion !== lastPaintVersion;
       // Throttle adaptativo: con muchos aviones bajamos los FPS para evitar lag (LOD temporal).
-      const minIntervalMs = lastDotCount > 3000 ? 66 : lastDotCount > 1400 ? 50 : 33;
+      // El canvas ya usa LOD en alta densidad; 15 FPS (66 ms) hacía visible cada paso.
+      const minIntervalMs = lastDotCount > 3000 ? 50 : lastDotCount > 1400 ? 33 : 16;
       const minClockDeltaMs = lastDotCount > 1400 ? 30 : 15;
       if (!viewChanged && !canvasSizeChanged && !dataChanged && wallMs - lastPaintWallMs < minIntervalMs) return;
       if (!viewChanged && !canvasSizeChanged && !dataChanged && Number.isFinite(lastPaintClockMs) && Math.abs(nowMs - lastPaintClockMs) < minClockDeltaMs) return;

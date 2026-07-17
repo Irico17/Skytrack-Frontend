@@ -263,7 +263,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
     }
     lines.push(reportSection('MÉTRICAS'));
     lines.push(reportLine('Tiempo al colapso', m.timeToCollapse));
-    lines.push(reportLine('Puntuación resiliencia (SLA %)', m.resilienceScore));
+    lines.push(reportLine('Puntuación resiliencia (a tiempo %)', m.resilienceScore));
     lines.push(reportLine('Aeropuertos afectados', `${airportStats.affectedAirports}/${airportStats.totalAirports}`));
     lines.push(reportLine('Congestión pico (%)', airportStats.peakCongestion));
     lines.push(reportLine('Envíos retrasados', m.shipmentsDelayed));
@@ -480,7 +480,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
                   <XAxis dataKey="phase" tick={{ fill: '#4A6080', fontSize: 9 }} axisLine={false} tickLine={false} />
                   <YAxis domain={[0, 100]} tick={{ fill: '#4A6080', fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
                   <ReTooltip content={<CustomAreaTooltip />} cursor={{ stroke: '#1E3058', strokeWidth: 1 }} />
-                  <ReferenceLine y={60} stroke="#FFC857" strokeDasharray="3 3" strokeOpacity={0.5} label={{ value: 'SLA 60%', position: 'right', fill: '#FFC857', fontSize: 9 }} />
+                  <ReferenceLine y={60} stroke="#FFC857" strokeDasharray="3 3" strokeOpacity={0.5} label={{ value: 'Meta 60%', position: 'right', fill: '#FFC857', fontSize: 9 }} />
                   <ReferenceLine x="COLAPSO" stroke="#FF4D4D" strokeDasharray="4 4" strokeOpacity={0.4} label={{ value: 'COLAPSO', position: 'top', fill: '#FF4D4D', fontSize: 9 }} />
                   <ReferenceLine x="Replan" stroke="#00FF9C" strokeDasharray="4 4" strokeOpacity={0.4} label={{ value: 'REPLAN', position: 'top', fill: '#00FF9C', fontSize: 9 }} />
                   <Area isAnimationActive={false} type="monotone" dataKey="health" name="Salud de Red" stroke="#FF4D4D" strokeWidth={2.5} fill="url(#collapse-health)" dot={{ fill: '#FF4D4D', r: 3, strokeWidth: 0 }} />
@@ -672,7 +672,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
       <div className="flex-shrink-0 h-12 bg-[#0A1628] border-t border-[#1E3058] flex items-center px-6 gap-4">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-[#FF4D4D]" />
-          <span className="text-[10px] text-[#4A6080]">Colapso (backend) · {airportStats.affectedAirports}/{airportStats.totalAirports} aeropuertos críticos · Cumplimiento SLA: {collapseMetrics.resilienceScore}%</span>
+          <span className="text-[10px] text-[#4A6080]">Colapso (backend) · {airportStats.affectedAirports}/{airportStats.totalAirports} aeropuertos críticos · A tiempo: {collapseMetrics.resilienceScore}%</span>
         </div>
         <div className="flex-1" />
         <button

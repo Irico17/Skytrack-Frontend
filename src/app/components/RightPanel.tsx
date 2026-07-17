@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import {
   TrendingUp, TrendingDown, Package, AlertTriangle, Warehouse,
-  Clock, FileText, Zap, CheckCircle, Activity,
+  FileText, Zap, CheckCircle, Activity,
   Plane, Search, MapPin, Luggage, Users, ArrowLeft, X, ChevronDown
 } from 'lucide-react';
 import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercent } from '../data/mockData';
@@ -126,41 +126,6 @@ function TrafficLight({ label, value, max, thresholdWarn, thresholdCrit }: {
   );
 }
 
-function FleetLoadIndicator({ pct, semaphore, loaded, total }: {
-  pct: number;
-  semaphore?: 'GREEN' | 'AMBER' | 'RED' | 'UNKNOWN';
-  loaded?: number;
-  total?: number;
-}) {
-  const status = semaphore === 'RED' ? 'critical' : semaphore === 'AMBER' ? 'warning' : semaphore === 'GREEN' ? 'normal' : pct >= 70 ? 'warning' : 'normal';
-  const color = status === 'critical' ? '#FF4D4D' : status === 'warning' ? '#FFC857' : '#00FF9C';
-
-  return (
-    <div className="bg-[#0D1E38] rounded-xl p-3 border border-[#1E3058] flex items-center gap-3">
-      <div className="flex flex-col gap-1 flex-shrink-0">
-        <div className={`w-2.5 h-2.5 rounded-full ${status === 'normal' ? 'opacity-100' : 'opacity-20'}`} style={{ backgroundColor: '#00FF9C' }} />
-        <div className={`w-2.5 h-2.5 rounded-full ${status === 'warning' ? 'opacity-100' : 'opacity-20'}`} style={{ backgroundColor: '#FFC857' }} />
-        <div className={`w-2.5 h-2.5 rounded-full ${status === 'critical' ? 'opacity-100 animate-pulse' : 'opacity-20'}`} style={{ backgroundColor: '#FF4D4D' }} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.08em' }}>% FLOTA CON CARGA</div>
-        <div className="flex items-baseline gap-1 mt-0.5">
-          <span className="text-lg" style={{ fontWeight: 700, color }}>{pct}%</span>
-          {loaded != null && total != null && total > 0 && (
-            <span className="text-[10px] text-[#4A6080]">{loaded}/{total} UTs</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 mt-1.5">
-          <div className="flex-1 h-1.5 rounded-full bg-[#1E3058] overflow-hidden">
-            <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: color }} />
-          </div>
-        </div>
-      </div>
-      <Plane className="w-4 h-4 flex-shrink-0" style={{ color }} />
-    </div>
-  );
-}
-
 const CUSTOM_TOOLTIP_STYLE = {
   backgroundColor: '#0D1E38',
   border: '1px solid #1E3058',
@@ -211,7 +176,7 @@ const SHIPMENT_FILTER_OPTIONS = [
   { id: 'delayed', label: 'Retrasado', color: '#FFC857' },
   { id: 'critical', label: 'Crítico', color: '#FF4D4D' },
   { id: 'inflight', label: 'En vuelo', color: '#4DA6FF' },
-  { id: 'delivered', label: 'Entregados', color: '#00FF9C' },
+  { id: 'delivered', label: 'Últimas 4 h', color: '#00FF9C' },
 ];
 // En modo backend la solución solo distingue a-tiempo/retrasado (sin "crítico"): se omite ese chip.
 const SHIPMENT_FILTER_OPTIONS_BACKEND = [
@@ -219,7 +184,7 @@ const SHIPMENT_FILTER_OPTIONS_BACKEND = [
   { id: 'on-time', label: 'A tiempo', color: '#00FF9C' },
   { id: 'delayed', label: 'Retrasado', color: '#FFC857' },
   { id: 'inflight', label: 'En vuelo', color: '#4DA6FF' },
-  { id: 'delivered', label: 'Entregados', color: '#00FF9C' },
+  { id: 'delivered', label: 'Últimas 4 h', color: '#00FF9C' },
 ];
 
 const BAG_STATE_LABELS: Record<string, string> = {
@@ -414,7 +379,7 @@ function UtCard({ unit, mapActive, onOpen, onMapFilter }: {
             {unit.cancelled && <span className="text-[9px] text-[#FF4D4D] border border-[#FF4D4D]/40 rounded px-1" style={{ fontWeight: 700 }}>CANCELADO</span>}
             {!unit.cancelled && unit.inFlight && <span className="text-[9px] text-[#4DA6FF] border border-[#4DA6FF]/30 rounded px-1">EN VUELO</span>}
             {!unit.cancelled && unit.empty && <span className="text-[9px] text-[#4A6080] border border-[#1E3058] rounded px-1">VACÍO</span>}
-            {!unit.cancelled && !unit.meetsSla && <span className="text-[9px] text-[#FFC857] border border-[#FFC857]/30 rounded px-1">SLA</span>}
+            {!unit.cancelled && !unit.meetsSla && <span className="text-[9px] text-[#FFC857] border border-[#FFC857]/30 rounded px-1">En riesgo</span>}
           </div>
           <div className="text-[10px] text-[#4A6080] mt-0.5">
             {unit.originId} → {unit.destinationId} · {formatHourUtc(unit.departureTime)}-{formatHourUtc(unit.arrivalTime)}
@@ -672,7 +637,7 @@ function BagListSection({ simulationId, query, clientId, batchId, title, refresh
                         <ReportRow label="Lote" value={bag.batchId} color="#A8C0E0" />
                         <ReportRow label="Cliente" value={bag.clientId} color="#A8C0E0" />
                         <ReportRow label="Ingreso" value={formatTraceTime(bag.ingressTime)} color="#A8C0E0" />
-                        <ReportRow label="SLA" value={formatTraceTime(bag.deadline)} color={bag.meetsSla ? '#00FF9C' : '#FFC857'} />
+                        <ReportRow label="Deadline" value={formatTraceTime(bag.deadline)} color={bag.meetsSla ? '#00FF9C' : '#FFC857'} />
                       </div>
                       <div className="flex flex-col gap-1 mt-2">
                         {bag.events.map((event, index) => (
@@ -765,7 +730,11 @@ export function RightPanel({
   const cancelledSet = cancelledFlightIds ?? EMPTY_CANCELLED_SET;
   const [activeTab, setActiveTab] = useState<'kpi' | 'transport' | 'warehouse' | 'shipments' | 'clients' | 'bags' | 'reports'>('kpi');
   const [opsSearch, setOpsSearch] = useState('');
-  const [transportSort, setTransportSort] = useState<'load' | 'departure' | 'arrival' | 'destination' | 'route'>('load');
+  const [transportOriginFilter, setTransportOriginFilter] = useState('');
+  const [transportDestFilter, setTransportDestFilter] = useState('');
+  const [shipmentOriginFilter, setShipmentOriginFilter] = useState('');
+  const [shipmentDestFilter, setShipmentDestFilter] = useState('');
+  const [transportSort, setTransportSort] = useState<'load' | 'loadAsc' | 'departure' | 'arrival' | 'destination' | 'route'>('load');
   const [utFilterLocal, setUtFilterLocal] = useState('all');
   const [warehouseFilterLocal, setWarehouseFilterLocal] = useState('all');
   const utFilter = utFilterProp ?? utFilterLocal;
@@ -779,7 +748,7 @@ export function RightPanel({
   // Reloj simulado en ms — RightPanel ya re-renderiza ~4×/seg cuando avanza el reloj, así que
   // las barras de progreso interpoladas se actualizan casi en vivo sin timers extra.
   const nowMs = simulationTime.getTime();
-  const [shipmentSort, setShipmentSort] = useState<'progress' | 'progressAsc' | 'bags' | 'route'>('progress');
+  const [shipmentSort, setShipmentSort] = useState<'progress' | 'progressAsc' | 'bags' | 'bagsAsc' | 'route'>('progress');
   const [clientSort, setClientSort] = useState<'bags' | 'shipments' | 'delivered' | 'name'>('bags');
   const [shipmentFilter, setShipmentFilter] = useState('all');
   const [bagStateFilter, setBagStateFilter] = useState('ALL');
@@ -844,17 +813,30 @@ export function RightPanel({
 
   // F9: indicador de filtros activos + limpiar por vista (la búsqueda es compartida).
   const viewFiltersActive =
-    (activeTab === 'transport' && (opsSearch !== '' || utFilter !== 'all' || transportSort !== 'load')) ||
+    (activeTab === 'transport' && (opsSearch !== '' || transportOriginFilter !== '' || transportDestFilter !== '' || utFilter !== 'all' || transportSort !== 'load')) ||
     (activeTab === 'warehouse' && (opsSearch !== '' || warehouseFilter !== 'all' || warehouseContinent !== 'all' || warehouseSort !== 'city')) ||
-    (activeTab === 'shipments' && (opsSearch !== '' || shipmentFilter !== 'all' || shipmentSort !== 'progress')) ||
+    (activeTab === 'shipments' && (opsSearch !== '' || shipmentOriginFilter !== '' || shipmentDestFilter !== '' || shipmentFilter !== 'all' || shipmentSort !== 'progress')) ||
     (activeTab === 'clients' && opsSearch !== '') ||
     (activeTab === 'bags' && (opsSearch !== '' || bagStateFilter !== 'ALL'));
   const clearViewFilters = () => {
     setOpsSearch('');
-    if (activeTab === 'transport') { setUtFilter('all'); setTransportSort('load'); }
-    else if (activeTab === 'warehouse') { setWarehouseFilter('all'); setWarehouseContinent('all'); setWarehouseSort('city'); }
-    else if (activeTab === 'shipments') { setShipmentFilter('all'); setShipmentSort('progress'); }
-    else if (activeTab === 'bags') { setBagStateFilter('ALL'); }
+    if (activeTab === 'transport') {
+      setTransportOriginFilter('');
+      setTransportDestFilter('');
+      setUtFilter('all');
+      setTransportSort('load');
+    } else if (activeTab === 'warehouse') {
+      setWarehouseFilter('all');
+      setWarehouseContinent('all');
+      setWarehouseSort('city');
+    } else if (activeTab === 'shipments') {
+      setShipmentOriginFilter('');
+      setShipmentDestFilter('');
+      setShipmentFilter('all');
+      setShipmentSort('progress');
+    } else if (activeTab === 'bags') {
+      setBagStateFilter('ALL');
+    }
   };
 
   // KPI calculations
@@ -868,15 +850,6 @@ export function RightPanel({
   const storedBags = isBackendStatsMode ? backendMetrics?.storedBags ?? DASH : airports.reduce((acc, a) => acc + a.occupancy, 0);
   const replanCount: number | string = isBackendStatsMode ? DASH : shipments.filter(s => s.isReplanned).length;
 
-  const backendSlaTotal = lastCycleUpdate
-    ? lastCycleUpdate.batchSummary.onTime + lastCycleUpdate.batchSummary.delayed
-    : 0;
-  const backendVisibleTotal = lastCycleUpdate
-    ? lastCycleUpdate.batchSummary.onTime + lastCycleUpdate.batchSummary.delayed + lastCycleUpdate.batchSummary.unrouted
-    : 0;
-  const punctualityPct = hasBackendStats
-    ? Math.round((onTimeCount / Math.max(backendSlaTotal, 1)) * 100)
-    : Math.round((onTimeCount / Math.max(shipments.length, 1)) * 100);
   // Ocupación promedio: preferimos el semáforo de almacén del backend (misma fórmula que
   // el reporte) y caemos al promedio local de aeropuertos si no hay datos del ciclo.
   const avgOccupancy = hasBackendStats && lastCycleUpdate?.semaphores?.storageOccupancy != null
@@ -885,10 +858,6 @@ export function RightPanel({
       ? Math.round(airports.reduce((acc, a) => acc + getOccupancyPercent(a.occupancy, a.capacity), 0) / airports.length)
       : 0;
   const criticalAirports = useMemo(() => airports.filter(a => a.status === 'critical'), [airports]);
-  const criticalFlights = useMemo(
-    () => hasBackendStats ? activeFlights.filter(f => !f.meetsSla) : flights.filter(f => f.status === 'critical'),
-    [hasBackendStats, activeFlights, flights]
-  );
 
   // Warehouse data for chart
   const warehouseData = useMemo(() => airports
@@ -979,25 +948,6 @@ export function RightPanel({
     }));
   }, [flightPlanFlights, activeFlights, activeBagsByFlight, simulationTime, cancelledSet]);
 
-  const fleetLoadKpi = useMemo(() => {
-    const total = baseTransportUnits.length;
-    const loaded = baseTransportUnits.filter(u => u.bags > 0).length;
-    if (hasBackendStats && lastCycleUpdate?.semaphores?.flightOccupancy != null) {
-      return {
-        pct: Math.round(lastCycleUpdate.semaphores.flightOccupancy * 100),
-        semaphore: lastCycleUpdate.semaphores.flights,
-        loaded: lastCycleUpdate.operationalMetrics?.activeLoadedFlights ?? loaded,
-        total: total || flightPlanFlights.length,
-      };
-    }
-    return {
-      pct: total > 0 ? Math.round((loaded / total) * 100) : 0,
-      semaphore: undefined as 'GREEN' | 'AMBER' | 'RED' | 'UNKNOWN' | undefined,
-      loaded,
-      total,
-    };
-  }, [hasBackendStats, lastCycleUpdate, baseTransportUnits, flightPlanFlights.length]);
-
   const warehouseNextUtTimes = useMemo(() => {
     const simMs = simulationTime.getTime();
     const nextDeparture = new Map<string, number>();
@@ -1027,8 +977,12 @@ export function RightPanel({
     if (activeTab !== 'transport') return [];
 
     const query = opsSearch.trim().toLowerCase();
+    const originQ = transportOriginFilter.trim().toLowerCase();
+    const destQ = transportDestFilter.trim().toLowerCase();
     return baseTransportUnits
       .filter(f => !query || `${f.flightId} ${f.originId} ${f.destinationId}`.toLowerCase().includes(query))
+      .filter(f => !originQ || f.originId.toLowerCase().includes(originQ))
+      .filter(f => !destQ || f.destinationId.toLowerCase().includes(destQ))
       .filter(f => {
         if (utFilter === 'cancelled') return f.cancelled;
         // Las demás vistas ocultan las canceladas (ya no operan).
@@ -1059,9 +1013,10 @@ export function RightPanel({
         }
         if (transportSort === 'destination') return a.destinationId.localeCompare(b.destinationId) || a.flightId.localeCompare(b.flightId);
         if (transportSort === 'route') return `${a.originId}-${a.destinationId}`.localeCompare(`${b.originId}-${b.destinationId}`);
+        if (transportSort === 'loadAsc') return a.bags - b.bags;
         return b.bags - a.bags;
       });
-  }, [activeTab, baseTransportUnits, opsSearch, transportSort, utFilter]);
+  }, [activeTab, baseTransportUnits, opsSearch, transportOriginFilter, transportDestFilter, transportSort, utFilter]);
 
   // Continentes disponibles según los aeropuertos reales del backend.
   const continentOptions = useMemo(() => {
@@ -1113,8 +1068,12 @@ export function RightPanel({
     const inFlightIds = new Set(activeFlights.map(f => stripProjectedDaySuffix(f.flightId)));
 
     const query = opsSearch.trim().toLowerCase();
+    const originQ = shipmentOriginFilter.trim().toLowerCase();
+    const destQ = shipmentDestFilter.trim().toLowerCase();
     const filtered = shipments
       .filter(s => !query || `${s.id} ${s.origin} ${s.destination} ${s.airlineId} ${s.airline} ${s.currentFlightId}`.toLowerCase().includes(query))
+      .filter(s => !originQ || s.origin.toLowerCase().includes(originQ))
+      .filter(s => !destQ || s.destination.toLowerCase().includes(destQ))
       .filter(s => {
         if (shipmentFilter === 'all') return true;
         if (shipmentFilter === 'inflight') {
@@ -1148,10 +1107,11 @@ export function RightPanel({
     }
     return filtered.sort((a, b) => {
       if (shipmentSort === 'bags') return b.luggageCount - a.luggageCount;
+      if (shipmentSort === 'bagsAsc') return a.luggageCount - b.luggageCount;
       if (shipmentSort === 'route') return `${a.origin}-${a.destination}`.localeCompare(`${b.origin}-${b.destination}`);
       return a.id.localeCompare(b.id);
     });
-  }, [activeTab, shipments, opsSearch, shipmentSort, shipmentFilter, activeFlights, simulationTime, nowMs]);
+  }, [activeTab, shipments, opsSearch, shipmentOriginFilter, shipmentDestFilter, shipmentSort, shipmentFilter, activeFlights, simulationTime, nowMs]);
 
   const luggageByClient = useMemo(() => {
     if (activeTab !== 'clients') return [];
@@ -1323,7 +1283,7 @@ export function RightPanel({
                 <ReportRow label="Llegada" value={formatHourUtc(unit.arrivalTime)} color="#A8C0E0" />
                 <ReportRow label="Carga" value={unit.capacity > 0 ? `${unit.bags}/${unit.capacity}` : `${unit.bags}`} color={utColor} />
                 <ReportRow label="Estado" value={unit.inFlight ? 'En vuelo' : unit.empty ? 'Vacío' : 'Programado'} color={unit.inFlight ? '#4DA6FF' : '#A8C0E0'} />
-                <ReportRow label="SLA" value={unit.meetsSla ? 'OK' : 'En riesgo'} color={unit.meetsSla ? '#00FF9C' : '#FFC857'} />
+                <ReportRow label="Puntualidad" value={unit.meetsSla ? 'A tiempo' : 'En riesgo'} color={unit.meetsSla ? '#00FF9C' : '#FFC857'} />
                 <ReportRow label="Ocupación" value={unit.capacity > 0 ? `${unit.pct}%` : DASH} color={utColor} />
               </div>
             </>
@@ -1690,12 +1650,6 @@ export function RightPanel({
                 {viewerCount} visualizador{viewerCount === 1 ? '' : 'es'} conectado{viewerCount === 1 ? '' : 's'}
               </div>
             )}
-            <FleetLoadIndicator
-              pct={fleetLoadKpi.pct}
-              semaphore={fleetLoadKpi.semaphore}
-              loaded={fleetLoadKpi.loaded}
-              total={fleetLoadKpi.total}
-            />
 
             <div className="grid grid-cols-2 gap-2">
               <KPICard
@@ -1703,49 +1657,30 @@ export function RightPanel({
                 value={totalInTransit}
                 color="#4DA6FF"
                 icon={<Package className="w-3.5 h-3.5" />}
-                trend={typeof totalBags === 'number' ? `${totalBags.toLocaleString()} maletas asignadas` : undefined}
-                trendDir="neutral"
               />
               <KPICard
                 label="ENTREGADAS"
                 value={deliveredBags}
                 color="#00FF9C"
                 icon={<CheckCircle className="w-3.5 h-3.5" />}
-                trend={hasBackendStats ? 'Llegada a destino confirmada' : undefined}
-                trendDir="up"
               />
               <KPICard
                 label="POR ENTREGAR"
                 value={pendingBags}
-                color={delayedCount > 0 ? '#FFC857' : '#00FF9C'}
+                color={Number(pendingBags) > 0 ? '#FFC857' : '#00FF9C'}
                 icon={<AlertTriangle className="w-3.5 h-3.5" />}
-                trend={hasBackendStats ? `${delayedCount} rutas fuera de SLA` : undefined}
-                trendDir={delayedCount > 0 ? 'down' : 'neutral'}
               />
               <KPICard
                 label="EN ALMACÉN"
                 value={storedBags}
                 color={criticalCount > 0 ? '#FF4D4D' : '#00FF9C'}
                 icon={<Warehouse className="w-3.5 h-3.5" />}
-                trend={hasBackendStats ? `${criticalCount} aeropuertos sobre capacidad` : undefined}
-                trendDir={criticalCount > 0 ? 'down' : 'up'}
-              />
-              <KPICard
-                label="PUNTUALIDAD"
-                value={punctualityPct}
-                unit="%"
-                color={punctualityPct >= 85 ? '#00FF9C' : punctualityPct >= 70 ? '#FFC857' : '#FF4D4D'}
-                icon={<Clock className="w-3.5 h-3.5" />}
-                trend={`${onTimeCount}/${Math.max(hasBackendStats ? backendSlaTotal : shipments.length, 1)} rutas SLA ok`}
-                trendDir={punctualityPct >= 85 ? 'up' : 'down'}
               />
               <KPICard
                 label="TOTAL MALETAS"
                 value={typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags}
                 color="#A8C0E0"
                 icon={<Zap className="w-3.5 h-3.5" />}
-                trend={hasBackendStats ? `${lastCycleUpdate!.totalRoutes} rutas asignadas` : undefined}
-                trendDir="neutral"
               />
             </div>
 
@@ -1760,27 +1695,6 @@ export function RightPanel({
                 max={100}
                 thresholdWarn={70}
                 thresholdCrit={90}
-              />
-              <TrafficLight
-                label="Puntualidad de Entrega"
-                value={100 - punctualityPct}
-                max={100}
-                thresholdWarn={15}
-                thresholdCrit={30}
-              />
-              <TrafficLight
-                label="Envíos Críticos"
-                value={criticalCount}
-                max={Math.max(hasBackendStats ? backendVisibleTotal : shipments.length, 1)}
-                thresholdWarn={5}
-                thresholdCrit={15}
-              />
-              <TrafficLight
-                label={hasBackendStats ? 'Vuelos con Riesgo SLA' : 'Sobrecapacidad de Vuelos'}
-                value={criticalFlights.length}
-                max={Math.max(hasBackendStats ? activeFlights.length : flights.length, 1)}
-                thresholdWarn={10}
-                thresholdCrit={25}
               />
             </div>
 
@@ -1857,12 +1771,17 @@ export function RightPanel({
                 onChange={v => setTransportSort(v as typeof transportSort)}
                 options={[
                   { value: 'load', label: 'Más carga' },
+                  { value: 'loadAsc', label: 'Menos carga' },
                   { value: 'departure', label: 'Salida' },
                   { value: 'arrival', label: 'Llegada' },
                   { value: 'destination', label: 'Destino' },
                   { value: 'route', label: 'Ruta' },
                 ]}
               />
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <SearchBox value={transportOriginFilter} onChange={setTransportOriginFilter} placeholder="Origen" />
+              <SearchBox value={transportDestFilter} onChange={setTransportDestFilter} placeholder="Destino" />
             </div>
             <FilterChips options={UT_FILTER_OPTIONS} value={utFilter} onChange={setUtFilter} />
             <div className="mt-2">
@@ -1901,10 +1820,15 @@ export function RightPanel({
                 options={[
                   { value: 'progress', label: 'Progreso ↓' },
                   { value: 'progressAsc', label: 'Progreso ↑' },
-                  { value: 'bags', label: 'Maletas' },
+                  { value: 'bags', label: 'Maletas ↓' },
+                  { value: 'bagsAsc', label: 'Maletas ↑' },
                   { value: 'route', label: 'Ruta' },
                 ]}
               />
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <SearchBox value={shipmentOriginFilter} onChange={setShipmentOriginFilter} placeholder="Origen" />
+              <SearchBox value={shipmentDestFilter} onChange={setShipmentDestFilter} placeholder="Destino" />
             </div>
             <FilterChips options={isBackendStatsMode ? SHIPMENT_FILTER_OPTIONS_BACKEND : SHIPMENT_FILTER_OPTIONS} value={shipmentFilter} onChange={setShipmentFilter} />
             <div className="grid grid-cols-3 gap-2 my-2">
@@ -2097,7 +2021,7 @@ export function RightPanel({
                   <ReportRow label="Lote" value={selectedBag.batchId} color="#A8C0E0" />
                   <ReportRow label="Cliente" value={selectedBag.clientId} color="#A8C0E0" />
                   <ReportRow label="Ingreso" value={formatTraceTime(selectedBag.ingressTime)} color="#A8C0E0" />
-                  <ReportRow label="SLA" value={formatTraceTime(selectedBag.deadline)} color={selectedBag.meetsSla ? '#00FF9C' : '#FFC857'} />
+                  <ReportRow label="Deadline" value={formatTraceTime(selectedBag.deadline)} color={selectedBag.meetsSla ? '#00FF9C' : '#FFC857'} />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   {selectedBag.events.map((event, index) => (

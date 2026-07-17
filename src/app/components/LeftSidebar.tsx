@@ -3,7 +3,7 @@ import {
   Filter, Route, Warehouse,
   PlusCircle, Search, X, ChevronDown, ChevronUp,
   Plane, BarChart2, Calendar, Database,
-  Clock, Zap,
+  Zap, Activity,
 } from 'lucide-react';
 import { SimulationMode, Airport } from '../data/mockData';
 
@@ -27,6 +27,10 @@ interface LeftSidebarProps {
   filters: Filters;
   toggles: Toggles;
   isRunning: boolean;
+  isStarting?: boolean;
+  isPaused?: boolean;
+  currentCycle?: number | null;
+  storageOccupancyPct?: number | null;
   daysElapsed: number;
   simulationComplete: boolean;
   collapseComplete: boolean;
@@ -110,16 +114,9 @@ function SelectField({ label, value, onChange, options, disabled = false }: {
   );
 }
 
-function formatDurationHms(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
-
 export function LeftSidebar({
-  mode, startDate, simulationTime, simulationK = 240, filters, toggles, isRunning,
+  mode, startDate, simulationTime, simulationK = 120, filters, toggles, isRunning,
+  isStarting = false, isPaused = false, currentCycle = null, storageOccupancyPct = null,
   daysElapsed, simulationComplete, collapseComplete, airports = [],
   onStartDateChange, onFilterChange, onToggleChange,
   onAddShipment, onUploadShipmentsFile, onCancelFlight, onUploadStaticData, onCloseOperations,
@@ -137,14 +134,28 @@ export function LeftSidebar({
   const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
   const dayLabels = Array.from({ length: 5 }, (_, i) => {
     const d = new Date(startDate);
-    d.setDate(d.getDate() + i + 1);
+    d.setDate(d.getDate() + i);
     return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]}`;
   });
-  const currentDay = Math.min(Math.ceil(daysElapsed), 5);
-  // Colapso ahora corre en backend con los mismos parámetros que 5 días (daysElapsed real).
-  const elapsedMs = Math.max(0, daysElapsed * 24 * 60 * 60 * 1000);
-  const elapsedHms = formatDurationHms(elapsedMs);
+  const currentDay = Math.min(Math.max(1, Math.floor(daysElapsed) + 1), 5);
   const displayedK = mode === 'realtime' ? 1 : simulationK;
+  const airportStatusCounts = airports.reduce(
+    (counts, airport) => {
+      counts[airport.status] += 1;
+      return counts;
+    },
+    { normal: 0, warning: 0, critical: 0 },
+  );
+  const isComplete = simulationComplete || collapseComplete || dayToDayComplete;
+  const liveStatus = isStarting ? 'PREPARANDO'
+    : isRunning ? 'EN CURSO'
+    : isPaused ? 'PAUSADA'
+    : isComplete ? 'FINALIZADA'
+    : 'DETENIDA';
+  const liveStatusColor = isStarting || isRunning ? '#4DA6FF'
+    : isPaused ? '#FFC857'
+    : isComplete ? '#00FF9C'
+    : '#4A6080';
 
   const formatInputDateTime = (date: Date): string => {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
@@ -184,7 +195,7 @@ export function LeftSidebar({
           onClick={onCancelFlight}
           disabled={!isRunning}
           title={!isRunning ? 'Inicia una simulación activa para cancelar vuelos' : undefined}
-          className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#FF4D4D]/15 border border-[#FF4D4D]/40 text-[#FF4D4D] text-xs hover:bg-[#FF4D4D]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+          className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#F97316]/15 border border-[#F97316]/45 text-[#F97316] text-xs hover:bg-[#F97316]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           style={{ fontWeight: 600 }}
         >
           <Plane className="w-4 h-4" />
@@ -193,7 +204,7 @@ export function LeftSidebar({
         <button
           onClick={onUploadStaticData}
           disabled={isRunning}
-          className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+          className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           style={{ fontWeight: 600 }}
         >
           <Database className="w-4 h-4" />
@@ -224,9 +235,9 @@ export function LeftSidebar({
 
       {/* Date/time selector */}
       <Section title="FECHA Y HORA DE INICIO (LOCAL)" icon={<Calendar className="w-3 h-3" />}>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2" style={{ colorScheme: 'dark' }}>
           <div className="relative">
-            <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[#4A6080] pointer-events-none" />
+            <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[#4A6080] pointer-events-none z-10" />
             <input
               type="datetime-local"
               value={formatInputDateTime(startDate)}
@@ -234,12 +245,14 @@ export function LeftSidebar({
                 if (e.target.value) onStartDateChange(new Date(e.target.value));
               }}
               disabled={isRunning}
-              className="w-full bg-[#0D1E38] border border-[#1E3058] rounded-lg pl-7 pr-2 py-2 text-[10px] text-[#C8D8F0] focus:outline-none focus:border-[#4DA6FF]/60 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
+              className="datetime-local-dark w-full bg-[#0D1E38] border border-[#1E3058] rounded-lg pl-7 pr-2 py-2 text-[11px] text-[#C8D8F0] focus:outline-none focus:border-[#4DA6FF]/60 focus:ring-1 focus:ring-[#4DA6FF]/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-[#0A1628] disabled:border-[#1A2848] disabled:text-[#6A80A0]"
+              style={{ fontFamily: 'system-ui, -apple-system, sans-serif', colorScheme: 'dark' }}
             />
           </div>
           <div className="text-[9px] text-[#4A6080]">
-            {formatDateDisplay(startDate)} → {formatDateDisplay(new Date(startDate.getTime() + 5 * 24 * 60 * 60 * 1000))}
+            {formatDateDisplay(startDate)} → {mode === 'collapse'
+              ? 'Sin límite'
+              : formatDateDisplay(new Date(startDate.getTime() + (mode === 'realtime' ? 1 : 5) * 24 * 60 * 60 * 1000))}
           </div>
           <div className="text-[9px] text-[#3A5070]">
             Zona del navegador: {Intl.DateTimeFormat().resolvedOptions().timeZone}
@@ -247,11 +260,50 @@ export function LeftSidebar({
         </div>
       </Section>
 
-      <Section title="TIEMPO TRANSCURRIDO" icon={<Clock className="w-3 h-3" />}>
-        <div className="rounded-lg border border-[#1E3058] bg-[#0D1E38] px-3 py-2.5">
-          <div className="text-[10px] text-[#4A6080] mb-1" style={{ letterSpacing: '0.1em' }}>SIMULADO</div>
-          <div className="text-xl font-mono text-[#E2E8F8]" style={{ fontWeight: 700 }}>{elapsedHms}</div>
-          <div className="mt-1 text-[10px] text-[#4A6080]">Velocidad K={displayedK}×</div>
+      <Section title="ESTADO EN TIEMPO REAL" icon={<Activity className="w-3 h-3" />}>
+        <div className="flex flex-col gap-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-[#4A6080]">Motor</span>
+            <span className="text-[10px]" style={{ color: liveStatusColor, fontWeight: 700 }}>
+              {liveStatus}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-[#4A6080]">Tiempo simulado</span>
+            <span className="text-[10px] font-mono text-[#C8D8F0]">
+              {formatDateDisplay(simulationTime)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-[#4A6080]">Aceleración</span>
+            <span className="text-[10px] font-mono text-[#4DA6FF]">K={displayedK}×</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-[#4A6080]">Último estado</span>
+            <span className="text-[10px] font-mono text-[#C8D8F0]">
+              {currentCycle == null ? 'Esperando ciclo' : `Ciclo ${currentCycle}`}
+            </span>
+          </div>
+          {storageOccupancyPct != null && (
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-[#4A6080]">Ocupación global</span>
+              <span className="text-[10px] font-mono text-[#C8D8F0]">{storageOccupancyPct}%</span>
+            </div>
+          )}
+          <div className="grid grid-cols-3 gap-1.5 pt-1">
+            {[
+              { label: 'Normal', value: currentCycle == null ? '—' : airportStatusCounts.normal, color: '#00FF9C' },
+              { label: 'Alerta', value: currentCycle == null ? '—' : airportStatusCounts.warning, color: '#FFC857' },
+              { label: 'Crítico', value: currentCycle == null ? '—' : airportStatusCounts.critical, color: '#FF4D4D' },
+            ].map(item => (
+              <div key={item.label} className="rounded-lg border border-[#1E3058] bg-[#0D1E38] px-1.5 py-2 text-center">
+                <div className="text-sm font-mono" style={{ color: item.color, fontWeight: 700 }}>
+                  {item.value}
+                </div>
+                <div className="text-[8px] text-[#4A6080]">{item.label}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </Section>
 
@@ -264,14 +316,14 @@ export function LeftSidebar({
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[10px] text-[#4A6080]">Progreso de Simulación</span>
                 <span className="text-[10px] text-[#4DA6FF]" style={{ fontWeight: 600 }}>
-                  {simulationComplete ? 'Completo' : `Día ${currentDay}/5`}
+                  {simulationComplete ? 'Completo' : isStarting ? 'Preparando' : !isRunning && daysElapsed === 0 ? 'Sin iniciar' : `Día ${currentDay}/5`}
                 </span>
               </div>
               <div className="h-2 bg-[#1E3058] rounded-full overflow-hidden">
                 <div
                   className="h-full rounded-full transition-all duration-500"
                   style={{
-                    width: `${simulationComplete ? 100 : (daysElapsed / 5) * 100}%`,
+                    width: `${simulationComplete ? 100 : Math.min(100, Math.max(0, (daysElapsed / 5) * 100))}%`,
                     backgroundColor: simulationComplete ? '#00FF9C' : '#4DA6FF',
                   }}
                 />
@@ -283,7 +335,7 @@ export function LeftSidebar({
               {dayLabels.map((label, i) => {
                 const dayNum = i + 1;
                 const isComplete = simulationComplete || daysElapsed >= dayNum;
-                const isCurrent = !simulationComplete && currentDay === dayNum && daysElapsed > 0;
+                const isCurrent = !simulationComplete && !isStarting && isRunning && currentDay === dayNum;
                 return (
                   <div key={label} className="flex flex-col items-center gap-1">
                     <div
@@ -332,7 +384,7 @@ export function LeftSidebar({
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[10px] text-[#4A6080]">Progreso de Simulación</span>
                     <span className="text-[10px] text-[#FF4D4D]" style={{ fontWeight: 600 }}>
-                      {daysElapsed > 0 ? `Día ${Math.floor(daysElapsed) + 1} (sin límite)` : 'Sin iniciar'}
+                      {isStarting ? 'Preparando' : daysElapsed > 0 ? `Día ${Math.floor(daysElapsed) + 1} (sin límite)` : 'Sin iniciar'}
                     </span>
                   </div>
                   {/* Barra "viva": sin tope fijo, se anima mientras corre para reflejar que
@@ -347,7 +399,7 @@ export function LeftSidebar({
                 <div className="rounded-lg border border-[#FF4D4D]/30 bg-[#FF4D4D]/8 px-3 py-2.5 text-[11px] text-[#FF9090] leading-relaxed">
                   {isRunning
                     ? `Acelerando la operación (K=${displayedK}×) hasta que el backend detecte saturación logística. El colapso se declara con datos reales.`
-                    : 'Inicia la simulación para acelerar la red hasta el colapso. Usa Reiniciar para detenerla o cambiar la fecha de inicio.'}
+                    : 'Inicia la simulación para acelerar la red hasta el colapso. Usa Cancelar simulación para detenerla o cambiar la fecha de inicio.'}
                 </div>
               </>
             ) : (
@@ -406,10 +458,17 @@ export function LeftSidebar({
             </div>
             <ToggleSwitch checked={toggles.showWarehouseCapacity} onChange={() => onToggleChange('showWarehouseCapacity')} />
           </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5 text-[#FF4D4D]" />
+              <span className="text-xs text-[#A8C0E0]">Alertas de Congestión</span>
+            </div>
+            <ToggleSwitch checked={toggles.showCongestion} onChange={() => onToggleChange('showCongestion')} />
+          </div>
         </div>
       </Section>
 
-      {/* Legend — refleja lo que dibuja el mapa: almacenes por estado y UTs por SLA/carga */}
+      {/* Legend — refleja lo que dibuja el mapa: almacenes por estado y UTs por carga */}
       <Section title="LEYENDA DEL MAPA" icon={<Search className="w-3 h-3" />} defaultOpen={false}>
         <div className="flex flex-col gap-2">
           <div className="text-[9px] text-[#4A6080]" style={{ letterSpacing: '0.1em' }}>ALMACENES (PUNTOS)</div>
@@ -437,8 +496,11 @@ export function LeftSidebar({
               </div>
             ))}
             <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#FFC857]/40 text-[#FFC857]">SLA</span>
-              <span className="text-[11px] text-[#7090B0]">Badge en tooltip si riesgo SLA</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#FFC857]/40 text-[#FFC857]">En riesgo</span>
+              <span className="text-[11px] text-[#7090B0]">Badge en tooltip si entrega en riesgo</span>
+            </div>
+            <div className="text-[9px] text-[#4A6080] leading-relaxed">
+              “Alertas de Congestión” controla los pulsos animados en almacenes con advertencia o estado crítico.
             </div>
           </div>
         </div>

@@ -34,8 +34,8 @@ import { computeCancellationTargetDay, findFlightById } from '../utils/cancellat
 import { formatLocalDateTime, parseApiInstant, toApiInstant } from '../utils/simulationTime';
 
 /** Factor de aceleración del tiempo simulado: 1 min real = K min simulados.
- *  Fallback; el valor real llega del backend (PERIOD_SIMULATION K=180). */
-export const SIMULATION_K = 180;
+ *  Fallback; el valor real llega del backend (PERIOD/COLLAPSE K=120). */
+export const SIMULATION_K = 120;
 
 export interface DaySnapshot {
   day: number;
@@ -149,17 +149,22 @@ interface UseSimulationReturn extends SimulationState {
   viewerCount: number;
   /** IDs de vuelos cancelados (con sufijo -D{n}) para marcar/ocultar en UI y mapa. */
   cancelledFlightIds: Set<string>;
+  /** Timestamp real (wall-clock) al iniciar la simulación; null si no ha arrancado. */
+  realStartedAt: Date | null;
 }
 
 // ==================== CONSTANTES DE REPRODUCCIÓN / RELOJ ====================
 
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
-const PLAYBACK_DELAY_MS = 500;
-const PLAYBACK_TICK_MS = 50;
+const PLAYBACK_DELAY_MS = 100;
+// El backend envía reloj cada 1 s (2 s durante planning). Entre frames el navegador
+// extrapola con K para que el canvas conserve movimiento continuo.
+const PLAYBACK_MAX_EXTRAPOLATION_REAL_MS = 3_000;
+const PLAYBACK_BACKWARD_JITTER_TOLERANCE_MS = 5_000;
 const PLAYBACK_MAX_FRAMES = 240;
 const CLOCK_STATE_COMMIT_MS = 250;
-const SOLUTION_REFRESH_DELAY_MS = 1_200;
-const SOLUTION_MAPPING_CHUNK_SIZE = 250;
+const SOLUTION_REFRESH_DELAY_MS = 2_500;
+const SOLUTION_MAPPING_CHUNK_SIZE = 100;
 const ACTIVE_SIM_STORAGE_KEY = 'skytrack.activeSimulation.v1';
 
 type BackendPlaybackMessage = BackendCycleUpdate | BackendStorageUpdate;
@@ -234,7 +239,9 @@ function parseBackendSimMs(value?: string | null): number | null {
 }
 
 function yieldToBrowser(): Promise<void> {
-  return new Promise(resolve => window.setTimeout(resolve, 0));
+  // Ceder explícitamente un frame de pintura. setTimeout(0) puede encadenar varios
+  // chunks antes de que el navegador pinte y producía una pausa al cerrar cada ciclo.
+  return new Promise(resolve => window.requestAnimationFrame(() => resolve()));
 }
 
 async function mapSolutionToShipmentsCooperatively(solution: BackendSolution, simulatedTime: Date): Promise<Shipment[]> {
@@ -355,6 +362,7 @@ export function useSimulation(): UseSimulationReturn {
   const [simulationResults, setSimulationResults] = useState<BackendSimulationResults | null>(null);
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
+  const [realStartedAt, setRealStartedAt] = useState<Date | null>(null);
 
   // Refs para el modo 5day (backend)
   const simIdRef  = useRef<string | null>(null);
@@ -412,7 +420,7 @@ export function useSimulation(): UseSimulationReturn {
 
   const applyAirportCapacities = useCallback((capacities: BackendAirportCapacity[], daysElapsedVal?: number) => {
     if (!capacities || capacities.length === 0) return;
-    const currentDay = daysElapsedVal !== undefined ? Math.ceil(daysElapsedVal) : 1;
+    const currentDay = daysElapsedVal !== undefined ? Math.max(1, Math.floor(daysElapsedVal) + 1) : 1;
     setAirports(prev => {
       const capacityMap = new Map(capacities.map(c => [c.airportId, c]));
       return prev.map(a => {
@@ -480,8 +488,19 @@ export function useSimulation(): UseSimulationReturn {
   }, []);
 
   const pushPlaybackFrame = useCallback((update: BackendPlaybackMessage) => {
-    const simulatedMs = parseBackendSimMs(update.simulatedTime);
-    if (simulatedMs === null) return null;
+    const parsedSimulatedMs = parseBackendSimMs(update.simulatedTime);
+    if (parsedSimulatedMs === null) return null;
+
+    const buffer = playbackBufferRef.current;
+    const last = buffer[buffer.length - 1];
+    // CYCLE_UPDATE y el STORAGE inmediato pueden diferir unos milisegundos por cómo se
+    // capturan ambos relojes. No reiniciar el buffer por ese jitter; sí hacerlo ante un
+    // salto real hacia atrás (reset/resync de la simulación).
+    const simulatedMs = last
+      && parsedSimulatedMs < last.simulatedMs
+      && last.simulatedMs - parsedSimulatedMs <= PLAYBACK_BACKWARD_JITTER_TOLERANCE_MS
+        ? last.simulatedMs
+        : parsedSimulatedMs;
 
     const frame: PlaybackFrame = {
       receivedAtMs: Date.now(),
@@ -494,8 +513,6 @@ export function useSimulation(): UseSimulationReturn {
       cycleUpdate: update.type === 'CYCLE_UPDATE' ? update : undefined,
     };
 
-    const buffer = playbackBufferRef.current;
-    const last = buffer[buffer.length - 1];
     if (last && simulatedMs < last.simulatedMs) {
       buffer.length = 0;
       lastAppliedPlaybackKeyRef.current = null;
@@ -562,7 +579,10 @@ export function useSimulation(): UseSimulationReturn {
             startTransition(() => setShipments(prev => prev.length > 0 ? prev : []));
             return;
           }
-          const mapped = await mapSolutionToShipmentsCooperatively(solution, simulatedTime);
+          const mapped = await mapSolutionToShipmentsCooperatively(
+            solution,
+            new Date(simClockRef.current.getTime() || simulatedTime.getTime()),
+          );
           if (seq !== solutionRefreshSeqRef.current) return;
           applyMappedShipments(mapped);
         })
@@ -637,34 +657,39 @@ export function useSimulation(): UseSimulationReturn {
     if (msg.type === 'CYCLE_UPDATE') {
       const update = msg as BackendCycleUpdate;
       setIsRunning(true);
+      // El tiempo de ejecución comienza con la solución inicial lista, no mientras
+      // el backend todavía está preparando el primer ciclo.
+      setRealStartedAt(previous => previous ?? new Date());
       hasFirstCycleRef.current = true; // primer ciclo recibido → el visualizador puede arrancar
       const t = pushPlaybackFrame(update);
 
       // Actualizar snapshot del día para la simulación de 5 días
       const snap = mode === '5day' ? buildCycleDaySnapshot(update, startDate) : null;
-      if (snap) {
-        setDaySnapshots(prev => {
-          const exists = prev.find(s => s.day === snap.day);
-          if (exists) {
-            return prev.map(s => s.day === snap.day ? snap : s);
-          }
-          return [...prev, snap];
-        });
-      }
+      // Snapshots y eventos no deben competir con el frame del mapa que aplica el ciclo.
+      startTransition(() => {
+        if (snap) {
+          setDaySnapshots(prev => {
+            const exists = prev.find(s => s.day === snap.day);
+            if (exists) {
+              return prev.map(s => s.day === snap.day ? snap : s);
+            }
+            return [...prev, snap];
+          });
+        }
 
-      // Agregar evento al panel de eventos
-      setEvents(prev => [{
-        id: `cycle-${update.cycle}`,
-        type: 'info',
-        message: mode === '5day'
-          ? `Ciclo ${update.cycle} — Día ${update.daysElapsed.toFixed(1)}/5 — ${update.totalRoutes} rutas`
-          : mode === 'collapse'
-          ? `Ciclo ${update.cycle} — Colapso (${update.daysElapsed.toFixed(1)} días) — ${update.totalRoutes} rutas`
-          : `Ciclo ${update.cycle} — Operación día a día — ${update.totalRoutes} rutas`,
-        time: new Date(),
-        severity: update.semaphores.sla === 'RED' ? 'critical'
-                : update.semaphores.sla === 'AMBER' ? 'warning' : 'info',
-      }, ...prev.slice(0, 19)]);
+        setEvents(prev => [{
+          id: `cycle-${update.cycle}`,
+          type: 'info',
+          message: mode === '5day'
+            ? `Ciclo ${update.cycle} — Día ${update.daysElapsed.toFixed(1)}/5 — ${update.totalRoutes} rutas`
+            : mode === 'collapse'
+            ? `Ciclo ${update.cycle} — Colapso (${update.daysElapsed.toFixed(1)} días) — ${update.totalRoutes} rutas`
+            : `Ciclo ${update.cycle} — Operación día a día — ${update.totalRoutes} rutas`,
+          time: new Date(),
+          severity: update.semaphores.sla === 'RED' ? 'critical'
+                  : update.semaphores.sla === 'AMBER' ? 'warning' : 'info',
+        }, ...prev.slice(0, 19)]);
+      });
 
       scheduleSolutionRefresh(t ?? new Date());
       refreshCollapseFlightPlanIfNeeded(t ?? new Date());
@@ -700,7 +725,9 @@ export function useSimulation(): UseSimulationReturn {
       setIsPaused(false);
       setSimulationComplete(mode === '5day');
       setCollapseComplete(mode === 'collapse');
-      setDaysElapsed(mode === '5day' ? 5 : daysElapsed);
+      setDaysElapsed(mode === '5day'
+        ? 5
+        : Math.max(0, (simClockRef.current.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)));
       clockBaseRef.current = null; // parar el reloj
       clearStoredActiveSimulation();
       cancelScheduledSolutionRefresh();
@@ -753,7 +780,7 @@ export function useSimulation(): UseSimulationReturn {
       wsRef.current?.disconnect();
       wsSimulationIdRef.current = null;
     }
-  }, [startDate, mode, daysElapsed, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, refreshCollapseFlightPlanIfNeeded, cancelScheduledSolutionRefresh, commitClockState, applyMappedShipments]);
+  }, [startDate, mode, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, refreshCollapseFlightPlanIfNeeded, cancelScheduledSolutionRefresh, commitClockState, applyMappedShipments]);
 
   const connectSimulationStream = useCallback((simulationId = simIdRef.current) => {
     if (!simulationId) return;
@@ -879,6 +906,7 @@ export function useSimulation(): UseSimulationReturn {
         // simplemente lo reemplaza con datos más frescos.
         if (status.currentCycle > 0) {
           hasFirstCycleRef.current = true;
+          setRealStartedAt(previous => previous ?? new Date());
           setLastCycleUpdate({
             type: 'CYCLE_UPDATE',
             simulationId: session.simulationId,
@@ -1039,10 +1067,12 @@ export function useSimulation(): UseSimulationReturn {
         // ya está reproduciendo frames WS: eso hacía saltar el tiempo atrás (aviones
         // que "llegan y retroceden") o congelarlo hasta el próximo STORAGE/CYCLE.
         // Solo re-anclar si aún no hubo primer ciclo o el buffer está vacío.
-        if (!hasFirstCycleRef.current || playbackBufferRef.current.length === 0) {
+        if (status.currentCycle > 0
+            && (!hasFirstCycleRef.current || playbackBufferRef.current.length === 0)) {
           applyBackendStatusClock(status);
           if (status.simulatedTime) {
             hasFirstCycleRef.current = true;
+            setRealStartedAt(previous => previous ?? new Date());
             pushPlaybackFrame({
               type: 'STORAGE_UPDATE',
               simulationId: id,
@@ -1104,7 +1134,9 @@ export function useSimulation(): UseSimulationReturn {
   useEffect(() => {
     if (!isBackendMode(mode) || !isRunning) return;
 
-    const tick = setInterval(() => {
+    let animationFrameId = 0;
+    const tick = () => {
+      animationFrameId = window.requestAnimationFrame(tick);
       // No avanzar el reloj ni el mapa hasta recibir el primer CYCLE_UPDATE (no con STORAGE).
       if (!hasFirstCycleRef.current) return;
       const buffer = playbackBufferRef.current;
@@ -1127,7 +1159,14 @@ export function useSimulation(): UseSimulationReturn {
         renderSimMs = frame.simulatedMs;
       } else {
         frame = buffer[buffer.length - 1];
-        renderSimMs = frame.simulatedMs;
+        // Sin un frame futuro, no congelar en el último dato. El reloj backend avanza
+        // linealmente a K×; extrapolar unos segundos mantiene el avión fluido durante
+        // el intervalo normal de WebSocket y durante el planning liviano.
+        const realSinceFrameMs = Math.min(
+          Math.max(renderAtMs - frame.receivedAtMs, 0),
+          PLAYBACK_MAX_EXTRAPOLATION_REAL_MS,
+        );
+        renderSimMs = frame.simulatedMs + realSinceFrameMs * simKRef.current;
       }
 
       let skippedCycleUpdate: BackendCycleUpdate | undefined;
@@ -1141,7 +1180,11 @@ export function useSimulation(): UseSimulationReturn {
       const nextDate = new Date(renderSimMs);
       simClockRef.current = nextDate;
       if (commitClockState(nextDate)) {
-        setDaysElapsed(frame.daysElapsed);
+        const elapsedDays = Math.max(
+          0,
+          (renderSimMs - startDate.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        setDaysElapsed(mode === '5day' ? Math.min(5, elapsedDays) : elapsedDays);
       }
 
       const frameKey = `${frame.cycle}:${frame.simulatedMs}:${frame.cycleUpdate ? 'cycle' : 'storage'}:${frame.operationalMetrics?.deliveredBags ?? ''}:${frame.airportCapacities.length}`;
@@ -1149,14 +1192,14 @@ export function useSimulation(): UseSimulationReturn {
       lastAppliedPlaybackKeyRef.current = frameKey;
 
       if (frame.cycleUpdate) {
-        setLastCycleUpdate(frame.cycleUpdate);
         startTransition(() => {
+          setLastCycleUpdate(frame.cycleUpdate!);
           setActiveFlights(frame.cycleUpdate?.activeFlights ?? []);
         });
       } else if (skippedCycleUpdate) {
-        setLastCycleUpdate(skippedCycleUpdate);
         startTransition(() => {
-          setActiveFlights(skippedCycleUpdate?.activeFlights ?? []);
+          setLastCycleUpdate(skippedCycleUpdate);
+          setActiveFlights(skippedCycleUpdate.activeFlights ?? []);
         });
       } else if (frame.operationalMetrics) {
         setLastCycleUpdate(prev => prev
@@ -1172,10 +1215,11 @@ export function useSimulation(): UseSimulationReturn {
       }
 
       applyAirportCapacities(frame.airportCapacities, frame.daysElapsed);
-    }, PLAYBACK_TICK_MS);
+    };
+    animationFrameId = window.requestAnimationFrame(tick);
 
-    return () => clearInterval(tick);
-  }, [mode, isRunning, applyAirportCapacities, commitClockState]);
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [mode, isRunning, startDate, applyAirportCapacities, commitClockState]);
 
 
   // ===== ACCIONES PRINCIPALES =====
@@ -1190,6 +1234,7 @@ export function useSimulation(): UseSimulationReturn {
 
       setIsRunning(true);
       setIsPaused(false);
+      setRealStartedAt(null);
       setSimulationComplete(false);
       setDayToDayComplete(false);
       setCollapseComplete(false);
@@ -1289,7 +1334,9 @@ export function useSimulation(): UseSimulationReturn {
         setSimulationK(K);
         const simStartMs = parseApiInstant(res.simStartTime).getTime();
         const simStartDate = new Date(simStartMs);
-        clockBaseRef.current = { simMs: simStartMs, realMs: Date.now(), K };
+        // Se ancla al recibir CYCLE_UPDATE 1; antes de eso la pantalla sigue en
+        // "Preparando simulación…" con el tiempo estático de inicio.
+        clockBaseRef.current = null;
         simClockRef.current = simStartDate;
         commitClockState(simStartDate, true);
         storeActiveSimulation({
@@ -1335,6 +1382,7 @@ export function useSimulation(): UseSimulationReturn {
       } catch (err) {
         console.error('Error iniciando simulación:', err);
         setIsRunning(false);
+        setRealStartedAt(null);
         clearStoredActiveSimulation();
         clockBaseRef.current = null;
         cancelScheduledSolutionRefresh();
@@ -1390,6 +1438,7 @@ export function useSimulation(): UseSimulationReturn {
     now.setHours(8, 0, 0, 0);
     setIsRunning(false);
     setIsPaused(false);
+    setRealStartedAt(null);
     setSimulationId(null);
     setShipments([]);
     setFlights([]);
@@ -1692,5 +1741,6 @@ export function useSimulation(): UseSimulationReturn {
     lastCycleUpdate,
     viewerCount,
     cancelledFlightIds,
+    realStartedAt,
   };
 }

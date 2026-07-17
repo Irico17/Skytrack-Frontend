@@ -1,7 +1,7 @@
 import React from 'react';
 import {
-  Activity, AlertTriangle, Bell, Layers, Play, Pause,
-  RotateCcw, Globe, Wifi, Clock, Zap, ChevronDown
+  Activity, AlertTriangle, Bell, Layers, Play, XCircle,
+  Globe, Wifi, Zap, ChevronDown, Warehouse, Plane
 } from 'lucide-react';
 import { SimulationMode, SimEvent } from '../data/mockData';
 
@@ -13,16 +13,14 @@ interface TopBarProps {
   simulationTime: Date;
   events: SimEvent[];
   onStart: () => void;
-  onPause: () => void;
-  onResume: () => void;
   onReset: () => void;
   onModeChange: (mode: SimulationMode) => void;
   totalShipments: number;
   criticalCount: number;
   viewerCount?: number;
   startDisabled?: boolean;
-  /** KPIs reales del último ciclo, siempre visibles arriba (null antes del primer ciclo). */
-  kpis?: { inFlight: number | string; delivered: number | string; slaPct: number | string; overloaded: number | string } | null;
+  /** Ocupación promedio almacén / aviones del último ciclo (null antes del primer ciclo). */
+  kpis?: { warehouseOccupancyPct: number; flightOccupancyPct: number } | null;
 }
 
 const MODE_LABELS: Record<SimulationMode, string> = {
@@ -37,21 +35,20 @@ const MODE_ICONS: Record<SimulationMode, React.ReactNode> = {
   collapse: <Zap className="w-3 h-3" />,
 };
 
+function occupancyColor(pct: number): string {
+  if (pct >= 90) return '#FF4D4D';
+  if (pct >= 70) return '#FFC857';
+  return '#00FF9C';
+}
+
 export function TopBar({
-  isRunning, isPaused, isStarting = false, mode, simulationTime, events, onStart, onPause, onResume, onReset,
+  isRunning, isPaused, isStarting = false, mode, events, onStart, onReset,
   onModeChange, totalShipments, criticalCount, viewerCount = 0,
   startDisabled = false, kpis = null,
 }: TopBarProps) {
   const [showModeDropdown, setShowModeDropdown] = React.useState(false);
   const [showAlerts, setShowAlerts] = React.useState(false);
   const criticalEvents = events.filter(e => e.severity === 'critical').length;
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('es-ES', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  };
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: '2-digit' });
-  };
 
   return (
     <div className="h-14 bg-[#0A1628] border-b border-[#1E3058] flex items-center px-4 gap-4 z-50 relative">
@@ -72,13 +69,14 @@ export function TopBar({
       <div className="relative">
         <button
           onClick={() => setShowModeDropdown(!showModeDropdown)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0D1E38] border border-[#1E3058] hover:border-[#4DA6FF]/50 transition-colors text-xs text-[#A8C0E0]"
+          disabled={isRunning}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0D1E38] border border-[#1E3058] hover:border-[#4DA6FF]/50 transition-colors text-xs text-[#A8C0E0] disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {MODE_ICONS[mode]}
           <span>{MODE_LABELS[mode]}</span>
           <ChevronDown className="w-3 h-3" />
         </button>
-        {showModeDropdown && (
+        {showModeDropdown && !isRunning && (
           <div className="absolute top-full mt-1 left-0 bg-[#0D1E38] border border-[#1E3058] rounded-lg overflow-hidden z-50 min-w-[180px]">
             {(Object.keys(MODE_LABELS) as SimulationMode[]).map(m => (
               <button
@@ -95,42 +93,26 @@ export function TopBar({
         )}
       </div>
 
-      {/* Simulation Controls */}
+      {/* Simulation Controls — Iniciar / Cancelar simulación (también cuando pausado) */}
       <div className="flex items-center gap-2">
-        {isRunning ? (
+        {isRunning || isPaused ? (
           <button
-            onClick={onPause}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FFC857]/15 border border-[#FFC857]/40 text-[#FFC857] text-xs hover:bg-[#FFC857]/25 transition-colors"
+            onClick={onReset}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F97316]/15 border border-[#F97316]/45 text-[#F97316] text-xs hover:bg-[#F97316]/25 transition-colors"
           >
-            <Pause className="w-3 h-3 fill-current" />
-            <span>Pausar</span>
-          </button>
-        ) : isPaused ? (
-          <button
-            onClick={onResume}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors"
-          >
-            <Play className="w-3 h-3 fill-current" />
-            <span>Reanudar</span>
+            <XCircle className="w-3 h-3" />
+            <span>Cancelar simulación</span>
           </button>
         ) : (
           <button
             onClick={onStart}
             disabled={startDisabled}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00FF9C]/15 border border-[#00FF9C]/40 text-[#00FF9C] text-xs hover:bg-[#00FF9C]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Play className="w-3 h-3 fill-current" />
             <span>Iniciar</span>
           </button>
         )}
-
-        <button
-          onClick={onReset}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1A2E4A] border border-[#1E3058] text-[#A8C0E0] text-xs hover:border-[#4DA6FF]/40 transition-colors"
-        >
-          <RotateCcw className="w-3 h-3" />
-          <span>Reiniciar</span>
-        </button>
       </div>
 
       <div className="w-px h-8 bg-[#1E3058]" />
@@ -138,24 +120,35 @@ export function TopBar({
       {/* Status indicators */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full ${isStarting ? 'bg-[#4DA6FF] animate-pulse' : isRunning ? 'bg-[#00FF9C] animate-pulse' : isPaused ? 'bg-[#FFC857]' : 'bg-[#4A5568]'}`} />
-          <span className={`text-xs ${isStarting ? 'text-[#4DA6FF]' : isRunning ? 'text-[#00FF9C]' : isPaused ? 'text-[#FFC857]' : 'text-[#4A5568]'}`}>
-            {isStarting ? 'INICIANDO…' : isRunning ? 'EN VIVO' : isPaused ? 'PAUSADO' : 'DETENIDO'}
+          <div className={`w-2 h-2 rounded-full ${isStarting ? 'bg-[#4DA6FF] animate-pulse' : isRunning ? 'bg-[#4DA6FF] animate-pulse' : isPaused ? 'bg-[#FFC857]' : 'bg-[#4A5568]'}`} />
+          <span className={`text-xs ${isStarting ? 'text-[#4DA6FF]' : isRunning ? 'text-[#A8C0E0]' : isPaused ? 'text-[#FFC857]' : 'text-[#4A5568]'}`}>
+            {isStarting ? 'INICIANDO…' : isRunning ? 'EN CURSO' : isPaused ? 'PAUSADO' : 'DETENIDO'}
           </span>
         </div>
 
         <div className="flex items-center gap-1.5 text-xs">
-          <Wifi className="w-3 h-3 text-[#00FF9C]" />
+          <Wifi className="w-3 h-3 text-[#4DA6FF]" />
           <span className="text-[#A8C0E0]">{totalShipments} Envíos</span>
         </div>
 
-        {/* KPIs principales siempre visibles (del último ciclo del backend). */}
         {kpis && (
           <div className="flex items-center gap-3 px-2.5 py-1 rounded-lg bg-[#0D1E38] border border-[#1E3058]">
-            <span className="text-[11px] text-[#4DA6FF]" title="Maletas en vuelo">✈ {kpis.inFlight}</span>
-            <span className="text-[11px] text-[#00FF9C]" title="Maletas entregadas">✓ {kpis.delivered}</span>
-            <span className={`text-[11px] ${Number(kpis.slaPct) >= 85 ? 'text-[#00FF9C]' : Number(kpis.slaPct) >= 70 ? 'text-[#FFC857]' : 'text-[#FF4D4D]'}`} title="Cumplimiento SLA">SLA {kpis.slaPct}%</span>
-            <span className={`text-[11px] ${Number(kpis.overloaded) > 0 ? 'text-[#FF4D4D]' : 'text-[#4A6080]'}`} title="Aeropuertos sobre capacidad">⚠ {kpis.overloaded}</span>
+            <span
+              className="text-[11px] flex items-center gap-1"
+              style={{ color: occupancyColor(kpis.warehouseOccupancyPct) }}
+              title="Ocupación promedio de almacenes"
+            >
+              <Warehouse className="w-3 h-3" />
+              Alm. {kpis.warehouseOccupancyPct}%
+            </span>
+            <span
+              className="text-[11px] flex items-center gap-1"
+              style={{ color: occupancyColor(kpis.flightOccupancyPct) }}
+              title="Ocupación promedio de aviones"
+            >
+              <Plane className="w-3 h-3" />
+              Av. {kpis.flightOccupancyPct}%
+            </span>
           </div>
         )}
 

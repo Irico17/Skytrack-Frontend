@@ -89,7 +89,7 @@ export function mapDaySnapshots(results: BackendSimulationResults): DaySnapshot[
     newEvents: 0,
     avgOccupancy: s.avgOccupancy ?? 0,
     replanned: s.replanned ?? 0,
-    keyEvent: `SLA: ${results.slaCompliancePercent.toFixed(1)}% — Fitness: ${results.fitness.toFixed(2)}`,
+    keyEvent: `A tiempo: ${results.slaCompliancePercent.toFixed(1)}% — Fitness: ${results.fitness.toFixed(2)}`,
     severity: s.collapseLevel === 'CRITICAL' ? 'critical'
             : s.collapseLevel === 'WARNING'  ? 'warning'
             : 'normal',
@@ -104,11 +104,10 @@ export function buildCycleDaySnapshot(
   update: BackendCycleUpdate,
   startDate: Date
 ): DaySnapshot | null {
-  const day = Math.ceil(update.daysElapsed);
-  if (day < 1 || day > 5) return null;
+  const day = Math.min(5, Math.max(1, Math.floor(update.daysElapsed) + 1));
 
   const d = new Date(startDate);
-  d.setDate(d.getDate() + day);
+  d.setDate(d.getDate() + day - 1);
 
   const total = update.batchSummary.onTime + update.batchSummary.delayed;
   const onTimePct = total > 0

@@ -72,7 +72,7 @@ export function DayToDayResults({ results, lastCycleUpdate, airports, shipments,
   }, [shipments]);
 
   // results.slaCompliancePercent ya es porcentaje; semaphores.slaCompliance es FRACCIÓN (0-1).
-  const slaPct = results ? Math.round(results.slaCompliancePercent) : (lastCycleUpdate ? Math.round(lastCycleUpdate.semaphores.slaCompliance * 100) : 0);
+  const onTimePct = results ? Math.round(results.slaCompliancePercent) : (lastCycleUpdate ? Math.round(lastCycleUpdate.semaphores.slaCompliance * 100) : 0);
   const totalRoutes = results?.routedBatches ?? lastCycleUpdate?.totalRoutes ?? shipments.length;
   const totalBags = metrics?.totalAssignedBags ?? lastCycleUpdate?.totalBags ?? shipments.reduce((a, s) => a + s.luggageCount, 0);
 
@@ -84,7 +84,7 @@ export function DayToDayResults({ results, lastCycleUpdate, airports, shipments,
     lines.push(`Hora simulada al cierre: ${simulationTime.toLocaleString('es-PE', { hour12: false })}`);
     lines.push(reportSection('RESUMEN'));
     lines.push(reportLine('Rutas planificadas', totalRoutes));
-    lines.push(reportLine('Cumplimiento SLA (%)', slaPct));
+    lines.push(reportLine('A tiempo (%)', onTimePct));
     lines.push(reportLine('Maletas asignadas', typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags));
     lines.push(reportLine('Lotes totales', results?.totalBatches ?? shipments.length));
     lines.push(reportLine('Lotes con ruta', results?.routedBatches ?? '—'));
@@ -156,7 +156,7 @@ export function DayToDayResults({ results, lastCycleUpdate, airports, shipments,
         {/* KPI strip (acumulado de toda la operación) */}
         <div className="grid grid-cols-6 gap-3 mb-5">
           <KpiCard label="RUTAS PLANIFICADAS" value={totalRoutes} color="#4DA6FF" icon={<Activity className="w-3.5 h-3.5" />} subtext="Lotes con ruta asignada" />
-          <KpiCard label="CUMPLIMIENTO SLA" value={slaPct} unit="%" color={slaPct >= 85 ? '#00FF9C' : slaPct >= 70 ? '#FFC857' : '#FF4D4D'} icon={<CheckCircle className="w-3.5 h-3.5" />} subtext="Rutas a tiempo" />
+          <KpiCard label="A TIEMPO" value={onTimePct} unit="%" color={onTimePct >= 85 ? '#00FF9C' : onTimePct >= 70 ? '#FFC857' : '#FF4D4D'} icon={<CheckCircle className="w-3.5 h-3.5" />} subtext="Rutas a tiempo" />
           <KpiCard label="MALETAS ASIGNADAS" value={typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags} color="#A8C0E0" icon={<Package className="w-3.5 h-3.5" />} />
           <KpiCard label="ENTREGADAS" value={metrics?.deliveredBags?.toLocaleString() ?? DASH} color="#00FF9C" icon={<CheckCircle className="w-3.5 h-3.5" />} />
           <KpiCard label="EN VUELO" value={metrics?.inFlightBags?.toLocaleString() ?? DASH} color="#4DA6FF" icon={<Plane className="w-3.5 h-3.5" />} />

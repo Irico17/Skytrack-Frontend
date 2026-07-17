@@ -318,7 +318,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
   const networkAvgOnTime = airlinePerformance.length > 0
     ? Math.round(airlinePerformance.reduce((acc, a) => acc + a.onTime, 0) / airlinePerformance.length)
     : 0;
-  const slaCompliantAirlines = airlinePerformance.filter(a => a.onTime >= 70).length;
+  const onTimeCompliantAirlines = airlinePerformance.filter(a => a.onTime >= 70).length;
 
   const handleExportTxt = () => {
     const num = (n: number | undefined) => (n === undefined || n === null ? '—' : n.toLocaleString());
@@ -333,7 +333,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
       lines.push(reportLine('Lotes totales', results.totalBatches));
       lines.push(reportLine('Lotes con ruta', results.routedBatches));
       lines.push(reportLine('Sin ruta', results.unroutableBatches));
-      lines.push(reportLine('Cumplimiento SLA (%)', Math.round(results.slaCompliancePercent)));
+      lines.push(reportLine('A tiempo (%)', Math.round(results.slaCompliancePercent)));
       lines.push(reportLine('Ciclos', results.totalCycles));
       lines.push(reportLine('Fitness final', results.fitness.toFixed(2)));
     }
@@ -347,7 +347,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
     }
     if (daySnapshots.length > 0) {
       lines.push(reportSection('POR DÍA'));
-      daySnapshots.forEach(d => lines.push(reportLine(`${d.date}`, `entregas ${d.completed} · a tiempo ${d.onTimePct}% · fuera de SLA ${d.delayed}`)));
+      daySnapshots.forEach(d => lines.push(reportLine(`${d.date}`, `entregas ${d.completed} · a tiempo ${d.onTimePct}% · retrasados ${d.delayed}`)));
     }
     if (airlinePerformance.length > 0) {
       lines.push(reportSection(`RANKING DE AEROLÍNEAS (${airlinePerformance.length})`));
@@ -483,7 +483,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                 label="TASA DE PUNTUALIDAD FINAL"
                 value={finalOnTimeRate}
                 unit="%"
-                subtext={results?.slaCompliancePercent != null ? 'SLA del período' : 'Último día'}
+                subtext={results?.slaCompliancePercent != null ? 'Del período' : 'Último día'}
                 color="#00FF9C"
                 icon={<CheckCircle className="w-3.5 h-3.5" />}
                 trend={punctualityDelta > 0 ? 'up' : punctualityDelta < 0 ? 'down' : 'neutral'}
@@ -534,7 +534,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                 color="#FFC857"
                 icon={<TrendingUp className="w-3.5 h-3.5" />}
                 trend={efficiencyScore >= 70 ? 'up' : 'down'}
-                trendValue={finalOnTimeRate >= 70 ? 'SLA cumplido' : 'Bajo SLA'}
+                trendValue={finalOnTimeRate >= 70 ? 'Meta cumplida' : 'Bajo meta'}
               />
             </div>
 
@@ -698,7 +698,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
 
                       <div className="grid grid-cols-2 gap-1.5 mt-1">
                         {[
-                          { label: 'Fuera de SLA', value: snap.delayed, color: '#FFC857' },
+                          { label: 'Retrasados', value: snap.delayed, color: '#FFC857' },
                           { label: 'Críticos (retraso severo)', value: snap.critical, color: '#FF4D4D' },
                           { label: 'Completados', value: snap.completed, color: '#00FF9C' },
                           { label: 'Replanificados', value: snap.replanned, color: '#A855F7' },
@@ -771,7 +771,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                     <XAxis dataKey="day" tick={{ fill: '#4A6080', fontSize: 10 }} axisLine={false} tickLine={false} />
                     <YAxis domain={[0, 100]} tick={{ fill: '#4A6080', fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
                     <ReTooltip content={<CustomAreaTooltip />} />
-                    <ReferenceLine y={70} stroke="#FFC857" strokeDasharray="3 3" strokeOpacity={0.5} label={{ value: 'SLA 70%', position: 'right', fill: '#FFC857', fontSize: 9 }} />
+                    <ReferenceLine y={70} stroke="#FFC857" strokeDasharray="3 3" strokeOpacity={0.5} label={{ value: 'Meta 70%', position: 'right', fill: '#FFC857', fontSize: 9 }} />
                     <Area key="area-onTime-days" isAnimationActive={false} type="monotone" dataKey="onTime" name="A Tiempo" stroke="#00FF9C" strokeWidth={2.5} fill="url(#fdr-gradG2)" dot={{ fill: '#00FF9C', r: 4, strokeWidth: 0 }} activeDot={{ r: 6 }} />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -857,7 +857,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                       { label: 'Más Maletas', value: mostBagsAirline ? `${mostBagsAirline.code} (${mostBagsAirline.bags.toLocaleString()})` : '—', color: '#4DA6FF' },
                       { label: 'Más Incidentes', value: mostIncidentsAirline ? `${mostIncidentsAirline.code} (${mostIncidentsAirline.incidents})` : '—', color: '#FF4D4D' },
                       { label: 'Promedio de Red', value: `${networkAvgOnTime}%`, color: '#FFC857' },
-                      { label: 'Cumplimiento SLA', value: `${slaCompliantAirlines}/${airlinePerformance.length} aerolíneas`, color: '#00FF9C' },
+                      { label: 'A tiempo (≥70%)', value: `${onTimeCompliantAirlines}/${airlinePerformance.length} aerolíneas`, color: '#00FF9C' },
                     ].map(r => (
                       <div key={r.label} className="flex items-center justify-between py-1.5 border-b border-[#1E3058]/40">
                         <span className="text-[11px] text-[#4A6080]">{r.label}</span>

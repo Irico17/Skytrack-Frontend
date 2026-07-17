@@ -13,8 +13,9 @@ import { FiveDayResults } from './components/FiveDayResults';
 import { CollapseResults } from './components/CollapseResults';
 import { DayToDayResults } from './components/DayToDayResults';
 import { ShipmentDetailPanel } from './components/ShipmentDetailPanel';
+import { SimulationClocksPanel } from './components/SimulationClocksPanel';
 import { useSimulation } from './hooks/useSimulation';
-import { SimulationMode, Shipment } from './data/mockData';
+import { Shipment } from './data/mockData';
 
 interface SelectedEntity {
   type: 'airport' | 'flight' | 'shipment';
@@ -33,15 +34,6 @@ interface Toggles {
   showRoutes: boolean;
   showWarehouseCapacity: boolean;
   showCongestion: boolean;
-}
-
-const MONTHS_ES_SHORT = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-
-function formatSimulationClock(date: Date): { date: string; time: string } {
-  return {
-    date: `${String(date.getDate()).padStart(2, '0')} ${MONTHS_ES_SHORT[date.getMonth()]}`,
-    time: `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`,
-  };
 }
 
 function sameEntity(a: SelectedEntity | null, b: SelectedEntity | null): boolean {
@@ -93,6 +85,7 @@ export default function App() {
   const [rightCollapsed, setRightCollapsed] = useState(true);
   const [bottomCollapsed, setBottomCollapsed] = useState(true);
   const [mapExpanded, setMapExpanded] = useState(false);
+  const [clocksCollapsed, setClocksCollapsed] = useState(false);
   // Default 'all' (decisión PO): el mapa muestra TODOS los vuelos; la fluidez se controla
   // con el selector de densidad del mapa (100/50/25%) y el LOD adaptativo del canvas.
   const [utFilter, setUtFilter] = useState('all');
@@ -103,8 +96,16 @@ export default function App() {
   // Todos los modos usan el reloj simulado interpolado del backend (simClock).
   const displayedSimulationTime = simulation.simClock;
 
-  // El reloj de la barra superior usa la versión fluida (topSimClock) cuando corre.
-  const simClockDisplay = formatSimulationClock(simulation.isRunning ? topSimClock : displayedSimulationTime);
+  // Al iniciar: colapsar left y abrir right (salvo mapa expandido). handleReset reabre left al cancelar.
+  const wasRunningRef = React.useRef(false);
+  React.useEffect(() => {
+    if (simulation.isRunning && !wasRunningRef.current && !mapExpanded) {
+      setLeftCollapsed(true);
+      setRightCollapsed(false);
+    }
+    wasRunningRef.current = simulation.isRunning;
+  }, [simulation.isRunning, mapExpanded]);
+
   const hidePanels = mapExpanded;
 
   // Auto-show results when 5day simulation completes
@@ -292,6 +293,16 @@ export default function App() {
     simulation.shipments.filter(s => s.status === 'critical').length,
     [simulation.shipments]
   );
+  const liveStorageOccupancyPct = useMemo(() => {
+    const totals = simulation.airports.reduce(
+      (sum, airport) => ({
+        occupied: sum.occupied + airport.occupancy,
+        capacity: sum.capacity + airport.capacity,
+      }),
+      { occupied: 0, capacity: 0 },
+    );
+    return totals.capacity > 0 ? Math.round((totals.occupied / totals.capacity) * 100) : null;
+  }, [simulation.airports]);
 
   const handleAddShipment = useCallback(async (data: Omit<Shipment, 'id' | 'progress' | 'isReplanned' | 'currentFlightId' | 'estimatedDelivery'>) => {
     await simulation.addShipment(data);
@@ -305,6 +316,7 @@ export default function App() {
     setShowResults(false);
     setShowCollapseResults(false);
     setShowDayToDayResults(false);
+    setLeftCollapsed(false);
   }, [simulation]);
 
   return (
@@ -318,8 +330,6 @@ export default function App() {
         simulationTime={displayedSimulationTime}
         events={simulation.events}
         onStart={simulation.start}
-        onPause={simulation.pause}
-        onResume={simulation.resume}
         onReset={handleReset}
         onModeChange={simulation.setMode}
         totalShipments={simulation.shipments.length}
@@ -327,12 +337,8 @@ export default function App() {
         viewerCount={simulation.viewerCount}
         startDisabled={simulation.simulationComplete || simulation.collapseComplete || simulation.dayToDayComplete}
         kpis={simulation.lastCycleUpdate ? {
-          inFlight: simulation.lastCycleUpdate.operationalMetrics?.inFlightBags ?? '—',
-          delivered: simulation.lastCycleUpdate.operationalMetrics?.deliveredBags ?? '—',
-          // semaphores.* llegan como FRACCIONES (0-1), igual que storageOccupancy — sin el
-          // ×100 el TopBar mostraba "SLA 1%" cuando el cumplimiento real era 100%.
-          slaPct: Math.round((simulation.lastCycleUpdate.semaphores?.slaCompliance ?? 0) * 100),
-          overloaded: simulation.lastCycleUpdate.operationalMetrics?.overloadedAirports ?? 0,
+          warehouseOccupancyPct: Math.round((simulation.lastCycleUpdate.semaphores?.storageOccupancy ?? 0) * 100),
+          flightOccupancyPct: Math.round((simulation.lastCycleUpdate.semaphores?.flightOccupancy ?? 0) * 100),
         } : null}
       />
 
@@ -346,6 +352,10 @@ export default function App() {
             filters={filters}
             toggles={toggles}
             isRunning={simulation.isRunning}
+            isStarting={simulation.isRunning && !simulation.lastCycleUpdate}
+            isPaused={simulation.isPaused}
+            currentCycle={simulation.lastCycleUpdate?.cycle ?? null}
+            storageOccupancyPct={simulation.lastCycleUpdate ? liveStorageOccupancyPct : null}
             daysElapsed={simulation.daysElapsed}
             simulationComplete={simulation.simulationComplete}
             collapseComplete={simulation.collapseComplete}
@@ -419,70 +429,19 @@ export default function App() {
               </div>
             )}
 
-            {/* ==== RELOJ DUAL: Tiempo simulado + real ==== */}
-            {/* 5 días y colapso quedan visibles aunque se detengan (para ver el estado
-                final al volver del reporte); el resto solo mientras corre. */}
-            {(simulation.isRunning || simulation.mode === '5day' || simulation.mode === 'collapse') && (
-              <div style={{
-                position: 'absolute', top: 12, left: 12,
-                display: 'flex', flexDirection: 'column', gap: 6,
-                zIndex: 10,
-              }}>
-                {/* Reloj simulado */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '7px 12px', borderRadius: 10,
-                  background: 'rgba(13,30,56,0.95)',
-                  border: '1px solid rgba(77,166,255,0.35)',
-                  backdropFilter: 'blur(8px)',
-                  boxShadow: '0 2px 16px rgba(0,0,0,0.4)',
-                }}>
-                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#4DA6FF', boxShadow: '0 0 6px #4DA6FF', animation: simulation.isRunning ? 'pulse 2s infinite' : 'none' }} />
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontSize: 9, color: '#4A6080', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Tiempo simulado · K={simulation.simulationK}×</span>
-                    <span style={{ fontSize: 15, fontFamily: 'monospace', fontWeight: 700, color: '#E2E8F8', letterSpacing: '0.05em' }}>
-                      {simClockDisplay.date}
-                      {' '}
-                      <span style={{ color: '#4DA6FF' }}>
-                        {simClockDisplay.time}
-                      </span>
-                    </span>
-                  </div>
-                  {simulation.mode === '5day' && simulation.daysElapsed > 0 && (
-                    <div style={{ marginLeft: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                      <span style={{ fontSize: 9, color: '#4A6080' }}>Día {Math.min(Math.ceil(simulation.daysElapsed), 5)}/5</span>
-                      <div style={{ width: 48, height: 3, background: '#1E3058', borderRadius: 2, overflow: 'hidden' }}>
-                        <div style={{ width: `${(simulation.daysElapsed / 5) * 100}%`, height: '100%', background: '#4DA6FF', borderRadius: 2, transition: 'width 0.3s' }} />
-                      </div>
-                    </div>
-                  )}
-                  {/* Colapso: mismo chip que 5 días, pero SIN tope "/5" (no tiene fin fijo) */}
-                  {simulation.mode === 'collapse' && simulation.daysElapsed > 0 && (
-                    <div style={{ marginLeft: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                      <span style={{ fontSize: 9, color: '#4A6080' }}>Día {Math.floor(simulation.daysElapsed) + 1} · sin límite</span>
-                      <div style={{ width: 48, height: 3, background: '#1E3058', borderRadius: 2, overflow: 'hidden' }}>
-                        <div style={{ width: '100%', height: '100%', background: '#FF4D4D', borderRadius: 2, opacity: simulation.isRunning ? 0.7 : 0.3 }} className={simulation.isRunning ? 'animate-pulse' : ''} />
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {/* Reloj real */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '5px 12px', borderRadius: 8,
-                  background: 'rgba(13,30,56,0.80)',
-                  border: '1px solid rgba(30,48,88,0.8)',
-                  backdropFilter: 'blur(4px)',
-                }}>
-                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#4A6080' }} />
-                  <div>
-                    <span style={{ fontSize: 9, color: '#4A6080', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Hora real · </span>
-                    <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#6080A0' }}>
-                      {realClock.toLocaleTimeString('en-US', { hour12: false })}
-                    </span>
-                  </div>
-                </div>
-              </div>
+            {/* Relojes flotantes — solo UI; no empuja ticks del mapa */}
+            {(simulation.isRunning || simulation.mode === '5day' || simulation.mode === 'collapse' || simulation.realStartedAt) && (
+              <SimulationClocksPanel
+                simClock={simulation.isRunning ? topSimClock : displayedSimulationTime}
+                realClock={realClock}
+                realStartedAt={simulation.realStartedAt}
+                startDate={simulation.startDate}
+                daysElapsed={simulation.daysElapsed}
+                simulationK={simulation.simulationK}
+                isRunning={simulation.isRunning}
+                mode={simulation.mode}
+                onCollapsedChange={setClocksCollapsed}
+              />
             )}
 
             {/* Preparando simulación — antes del primer ciclo del backend */}
@@ -498,9 +457,12 @@ export default function App() {
               </div>
             )}
 
-            {/* Collapse progress overlay on map */}
+            {/* Collapse progress overlay on map — desplazado para no solapar relojes */}
             {simulation.mode === 'collapse' && simulation.isRunning && (
-              <div className="absolute top-3 left-3 flex items-center gap-3 px-3 py-1.5 rounded-lg bg-[#0D1E38]/90 border border-[#FF4D4D]/30 backdrop-blur-sm">
+              <div
+                className="absolute top-3 z-20 flex items-center gap-3 px-3 py-1.5 rounded-lg bg-[#0D1E38]/90 border border-[#FF4D4D]/30 backdrop-blur-sm"
+                style={{ left: clocksCollapsed ? 120 : 300 }}
+              >
                 <div className="w-1.5 h-1.5 rounded-full bg-[#FF4D4D] animate-pulse" />
                 <span className="text-[11px] text-[#FF4D4D]">ESCENARIO COLAPSADO</span>
                 <span className="text-[11px] font-mono text-[#4A6080]">Degradando red…</span>
@@ -509,7 +471,7 @@ export default function App() {
 
             {/* Collapse complete banner */}
             {simulation.collapseComplete && simulation.mode === 'collapse' && !showCollapseResults && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 rounded-xl bg-[#FF4D4D]/15 border border-[#FF4D4D]/50 backdrop-blur-sm">
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 rounded-xl bg-[#FF4D4D]/15 border border-[#FF4D4D]/50 backdrop-blur-sm">
                 <div className="w-2 h-2 rounded-full bg-[#FF4D4D]" />
                 <span className="text-xs text-[#FF4D4D]" style={{ fontWeight: 600 }}>Colapso completado — red comprometida</span>
                 <button
@@ -524,7 +486,7 @@ export default function App() {
 
             {/* Simulation complete banner */}
             {simulation.simulationComplete && simulation.mode === '5day' && !showResults && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 rounded-xl bg-[#00FF9C]/15 border border-[#00FF9C]/50 backdrop-blur-sm">
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 rounded-xl bg-[#00FF9C]/15 border border-[#00FF9C]/50 backdrop-blur-sm">
                 <div className="w-2 h-2 rounded-full bg-[#00FF9C]" />
                 <span className="text-xs text-[#00FF9C]" style={{ fontWeight: 600 }}>Simulación de 5 días completada</span>
                 <button
@@ -539,7 +501,7 @@ export default function App() {
 
             {/* Traza de maleta/envío activa — ruta completa resaltada */}
             {mapTrace && (
-              <div className="absolute top-12 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#A855F7]/15 border border-[#A855F7]/40 backdrop-blur-sm">
+              <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#A855F7]/15 border border-[#A855F7]/40 backdrop-blur-sm">
                 <span className="text-[11px] text-[#A855F7]">
                   Ruta en mapa: {mapTrace.label} · {mapTrace.flightIds.size} tramo(s)
                 </span>
@@ -555,7 +517,7 @@ export default function App() {
 
             {/* Map entity filter indicator — permite quitar el filtro del mapa */}
             {mapFilter && !mapTrace && (
-              <div className="absolute top-12 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 backdrop-blur-sm">
+              <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 backdrop-blur-sm">
                 <span className="text-[11px] text-[#4DA6FF]">
                   Mapa filtrado: {mapFilter.type === 'airport' ? 'Almacén' : mapFilter.type === 'flight' ? 'UT' : 'Envío'} {mapFilter.id}
                 </span>
@@ -571,7 +533,7 @@ export default function App() {
 
             {/* Active filters indicator */}
             {(filters.airline || filters.origin || filters.destination) && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/30 backdrop-blur-sm">
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/30 backdrop-blur-sm">
                 <span className="text-[11px] text-[#4DA6FF]">
                   Filtros activos: {[
                     filters.airline,

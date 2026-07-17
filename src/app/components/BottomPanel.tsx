@@ -628,7 +628,7 @@ export function BottomPanel({
                     {f.originId} <ArrowRight className="w-2.5 h-2.5" /> {f.destinationId}
                   </span>
                   <span className="text-[11px] text-[#4DA6FF] truncate">{f.bagsCount} maletas</span>
-                  <span className="text-[11px] font-mono truncate" style={{ color: f.meetsSla ? '#00FF9C' : '#FFC857' }}>{f.meetsSla ? 'SLA OK' : 'SLA Riesgo'}</span>
+                  <span className="text-[11px] font-mono truncate" style={{ color: f.meetsSla ? '#00FF9C' : '#FFC857' }}>{f.meetsSla ? 'A tiempo' : 'En riesgo'}</span>
                 </button>
               )) : visibleShipments.map(s => (
                 <ShipmentListRow key={s.id} s={s} onClick={() => onSelectShipment?.(s.id)} />
@@ -666,7 +666,7 @@ export function BottomPanel({
                     <div key={f.flightId} className="flex items-center gap-3 px-4 py-2.5 border-b border-[#1E3058]/30">
                       <AlertTriangle className="w-4 h-4 text-[#FFC857] flex-shrink-0" />
                       <div>
-                        <div className="text-[11px] text-[#FFC857]" style={{ fontWeight: 600 }}>RIESGO SLA — {f.flightId}</div>
+                        <div className="text-[11px] text-[#FFC857]" style={{ fontWeight: 600 }}>EN RIESGO — {f.flightId}</div>
                         <div className="text-[11px] text-[#A8C0E0]">{f.originId}→{f.destinationId} · {f.bagsCount} maletas</div>
                       </div>
                     </div>
