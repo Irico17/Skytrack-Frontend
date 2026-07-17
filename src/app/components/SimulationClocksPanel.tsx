@@ -11,7 +11,7 @@ import {
 
 export interface SimulationClocksPanelProps {
   simClock: Date;
-  realClock: Date;
+  simClockRef?: { current: Date };
   realStartedAt: Date | null;
   startDate: Date;
   daysElapsed: number;
@@ -22,12 +22,12 @@ export interface SimulationClocksPanelProps {
 }
 
 /**
- * Overlay flotante de relojes (solo presentación). No empuja el motor del mapa.
- * Comparte el tick de 1 s de `realClock` para el cronómetro real.
+ * Overlay flotante de relojes. Sus ticks viven dentro del componente para no volver a
+ * renderizar App, mapa y paneles únicamente por actualizar texto de reloj.
  */
 export function SimulationClocksPanel({
   simClock,
-  realClock,
+  simClockRef,
   realStartedAt,
   startDate,
   daysElapsed,
@@ -37,8 +37,39 @@ export function SimulationClocksPanel({
   onCollapsedChange,
 }: SimulationClocksPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const simDate = formatSimClockDate(simClock);
-  const simTime = formatSimClockTime(simClock);
+  const [renderedSimClock, setRenderedSimClock] = useState(simClock);
+  const [realClock, setRealClock] = useState(() => new Date());
+  const fallbackSimClockRef = React.useRef(simClock);
+  fallbackSimClockRef.current = simClock;
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setRealClock(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  React.useEffect(() => {
+    if (!isRunning) {
+      setRenderedSimClock(simClock);
+    }
+  }, [isRunning, simClock]);
+
+  React.useEffect(() => {
+    if (!isRunning) return;
+    let frameId = 0;
+    let lastCommit = 0;
+    const tick = (timestamp: number) => {
+      if (timestamp - lastCommit >= 140) {
+        setRenderedSimClock(new Date((simClockRef?.current ?? fallbackSimClockRef.current).getTime()));
+        lastCommit = timestamp;
+      }
+      frameId = window.requestAnimationFrame(tick);
+    };
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isRunning, simClockRef]);
+
+  const simDate = formatSimClockDate(renderedSimClock);
+  const simTime = formatSimClockTime(renderedSimClock);
   const simEndDate = getSimulationEndDate(mode, startDate);
   const simElapsedMs = Math.max(0, daysElapsed * 24 * 60 * 60 * 1000);
   const realElapsedMs = realStartedAt

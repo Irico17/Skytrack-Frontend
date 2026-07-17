@@ -25,7 +25,6 @@ interface SelectedEntity {
 type MapEntityFilter = SelectedEntity;
 
 interface Filters {
-  airline: string;
   origin: string;
   destination: string;
 }
@@ -35,6 +34,13 @@ interface Toggles {
   showWarehouseCapacity: boolean;
   showCongestion: boolean;
 }
+
+const DEFAULT_FILTERS: Filters = { origin: '', destination: '' };
+const DEFAULT_TOGGLES: Toggles = {
+  showRoutes: true,
+  showWarehouseCapacity: true,
+  showCongestion: true,
+};
 
 function sameEntity(a: SelectedEntity | null, b: SelectedEntity | null): boolean {
   return Boolean(a && b && a.type === b.type && a.id === b.id);
@@ -50,30 +56,14 @@ function sameFlightId(candidate: string, selected: string): boolean {
 
 export default function App() {
   const simulation = useSimulation();
-  const [realClock, setRealClock] = React.useState(new Date());
-  React.useEffect(() => {
-    const t = setInterval(() => setRealClock(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  // Reloj simulado fluido para la barra superior: lee simClockRef (interpolado a 50ms)
-  // ~7 veces/seg, evitando los saltos del estado commit (250ms) sin re-render de paneles.
-  const [topSimClock, setTopSimClock] = React.useState(new Date());
-  React.useEffect(() => {
-    const t = setInterval(() => setTopSimClock(new Date(simulation.simClockRef.current.getTime())), 140);
-    return () => clearInterval(t);
-  }, [simulation.simClockRef]);
 
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
   const [mapFilter, setMapFilter] = useState<MapEntityFilter | null>(null);
   // Traza de maleta/envío: resalta en el mapa la ruta completa (UTs + almacenes de escala).
   const [mapTrace, setMapTrace] = useState<{ label: string; flightIds: Set<string>; airportIds: Set<string> } | null>(null);
-  const [filters, setFilters] = useState<Filters>({ airline: '', origin: '', destination: '' });
-  const [toggles, setToggles] = useState<Toggles>({
-    showRoutes: true,
-    showWarehouseCapacity: true,
-    showCongestion: true,
-  });
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [toggles, setToggles] = useState<Toggles>(DEFAULT_TOGGLES);
+  const [mapViewRevision, setMapViewRevision] = useState(0);
   const [showAddShipment, setShowAddShipment] = useState(false);
   const [showCancelFlight, setShowCancelFlight] = useState(false);
   const [showStaticDataUpload, setShowStaticDataUpload] = useState(false);
@@ -139,6 +129,7 @@ export default function App() {
   const handleToggleChange = useCallback((key: keyof Toggles) => {
     setToggles(prev => ({ ...prev, [key]: !prev[key] }));
   }, []);
+  const handleToggleMapExpanded = useCallback(() => setMapExpanded(value => !value), []);
 
   const handleSelectAirport = useCallback((id: string) => {
     setSelectedEntity(prev =>
@@ -158,16 +149,17 @@ export default function App() {
     );
   }, []);
 
-  // Solo filtra el mapa: no abre el panel de detalles (eso se hace al hacer clic en la entidad)
+  // Filtra y enfoca el mapa sin abrir el inspector del panel derecho.
   const handleToggleMapFilter = useCallback((filter: MapEntityFilter) => {
     setMapFilter(prev => (sameEntity(prev, filter) ? null : filter));
+    setMapTrace(null);
+    setSelectedEntity(null);
   }, []);
 
   const filteredShipments = useMemo(() => {
-    if (!filters.airline && !filters.origin && !filters.destination) return simulation.shipments;
+    if (!filters.origin && !filters.destination) return simulation.shipments;
 
     return simulation.shipments.filter(s => {
-      if (filters.airline && s.airlineId !== filters.airline) return false;
       if (filters.origin && s.origin !== filters.origin) return false;
       if (filters.destination && s.destination !== filters.destination) return false;
       return true;
@@ -175,10 +167,9 @@ export default function App() {
   }, [simulation.shipments, filters]);
 
   const filteredFlights = useMemo(() => {
-    if (!filters.airline && !filters.origin && !filters.destination) return simulation.flights;
+    if (!filters.origin && !filters.destination) return simulation.flights;
 
     return simulation.flights.filter(f => {
-      if (filters.airline && f.airlineId !== filters.airline) return false;
       if (filters.origin && f.from !== filters.origin) return false;
       if (filters.destination && f.to !== filters.destination) return false;
       return true;
@@ -213,10 +204,21 @@ export default function App() {
 
   const mapAirports = useMemo(() => {
     if (mapTrace) return simulation.airports.filter(a => mapTrace.airportIds.has(a.id));
-    if (!mapFilter) return simulation.airports;
+    if (!mapFilter && !filters.origin && !filters.destination) return simulation.airports;
 
     const airportIds = new Set<string>();
-    if (mapFilter.type === 'airport') {
+    if (!mapFilter) {
+      if (filters.origin) airportIds.add(filters.origin);
+      if (filters.destination) airportIds.add(filters.destination);
+      for (const flight of filteredFlightPlanFlights) {
+        airportIds.add(flight.originId);
+        airportIds.add(flight.destinationId);
+      }
+      for (const shipment of filteredShipments) {
+        airportIds.add(shipment.origin);
+        airportIds.add(shipment.destination);
+      }
+    } else if (mapFilter.type === 'airport') {
       airportIds.add(mapFilter.id);
     } else if (mapFilter.type === 'flight') {
       const planned = simulation.flightPlanFlights.find(f => sameFlightId(f.flightId, mapFilter.id));
@@ -232,11 +234,14 @@ export default function App() {
     }
 
     return simulation.airports.filter(a => airportIds.has(a.id));
-  }, [mapFilter, mapTrace, mapFilterShipment, simulation.activeFlights, simulation.airports, simulation.flightPlanFlights, simulation.flights]);
+  }, [filters, filteredFlightPlanFlights, filteredShipments, mapFilter, mapTrace, mapFilterShipment, simulation.activeFlights, simulation.airports, simulation.flightPlanFlights, simulation.flights]);
 
   const mapFlights = useMemo(() => {
     if (mapTrace) return [];
     if (!mapFilter) return filteredFlights;
+    if (mapFilter.type === 'airport') {
+      return simulation.flights.filter(f => f.from === mapFilter.id || f.to === mapFilter.id);
+    }
     if (mapFilter.type === 'flight') {
       return simulation.flights.filter(f => sameFlightId(f.id, mapFilter.id));
     }
@@ -249,6 +254,9 @@ export default function App() {
   const mapShipments = useMemo(() => {
     if (mapTrace) return [];
     if (!mapFilter) return filteredShipments;
+    if (mapFilter.type === 'airport') {
+      return simulation.shipments.filter(s => s.origin === mapFilter.id || s.destination === mapFilter.id);
+    }
     if (mapFilter.type === 'shipment') {
       return simulation.shipments.filter(s => s.id === mapFilter.id);
     }
@@ -261,6 +269,9 @@ export default function App() {
   const mapFlightPlanFlights = useMemo(() => {
     if (mapTrace) return simulation.flightPlanFlights.filter(f => mapTrace.flightIds.has(f.flightId));
     if (!mapFilter) return filteredFlightPlanFlights;
+    if (mapFilter.type === 'airport') {
+      return simulation.flightPlanFlights.filter(f => f.originId === mapFilter.id || f.destinationId === mapFilter.id);
+    }
     if (mapFilter.type === 'flight') {
       return simulation.flightPlanFlights.filter(f => sameFlightId(f.flightId, mapFilter.id));
     }
@@ -273,6 +284,9 @@ export default function App() {
   const mapActiveFlights = useMemo(() => {
     if (mapTrace) return simulation.activeFlights.filter(f => mapTrace.flightIds.has(f.flightId));
     if (!mapFilter) return filteredActiveFlights;
+    if (mapFilter.type === 'airport') {
+      return simulation.activeFlights.filter(f => f.originId === mapFilter.id || f.destinationId === mapFilter.id);
+    }
     if (mapFilter.type === 'flight') {
       return simulation.activeFlights.filter(f => sameFlightId(f.flightId, mapFilter.id));
     }
@@ -308,16 +322,31 @@ export default function App() {
     await simulation.addShipment(data);
   }, [simulation]);
 
-  const handleReset = useCallback(() => {
-    simulation.reset();
+  const resetViewState = useCallback(() => {
+    setFilters(DEFAULT_FILTERS);
+    setToggles(DEFAULT_TOGGLES);
+    setUtFilter('all');
+    setWarehouseFilter('all');
+    setWarehouseContinent('all');
     setMapFilter(null);
     setMapTrace(null);
     setSelectedEntity(null);
+    setMapViewRevision(value => value + 1);
+  }, []);
+
+  const handleReset = useCallback(() => {
+    simulation.reset();
+    resetViewState();
     setShowResults(false);
     setShowCollapseResults(false);
     setShowDayToDayResults(false);
     setLeftCollapsed(false);
-  }, [simulation]);
+  }, [resetViewState, simulation]);
+
+  const handleModeChange = useCallback((nextMode: Parameters<typeof simulation.setMode>[0]) => {
+    resetViewState();
+    simulation.setMode(nextMode);
+  }, [resetViewState, simulation]);
 
   return (
     <div className="h-screen w-screen bg-[#060D1F] flex flex-col overflow-hidden" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -331,7 +360,7 @@ export default function App() {
         events={simulation.events}
         onStart={simulation.start}
         onReset={handleReset}
-        onModeChange={simulation.setMode}
+        onModeChange={handleModeChange}
         totalShipments={simulation.shipments.length}
         criticalCount={criticalCount}
         viewerCount={simulation.viewerCount}
@@ -364,7 +393,9 @@ export default function App() {
             simulationK={simulation.simulationK}
             onStartDateChange={simulation.setStartDate}
             onFilterChange={handleFilterChange}
+            onClearFilters={() => setFilters(DEFAULT_FILTERS)}
             onToggleChange={handleToggleChange}
+            onResetView={resetViewState}
             onAddShipment={() => setShowAddShipment(true)}
             onUploadShipmentsFile={() => setShowUploadShipmentsFile(true)}
             onCancelFlight={() => setShowCancelFlight(true)}
@@ -382,10 +413,12 @@ export default function App() {
           {/* World Map */}
           <div className="flex-1 overflow-hidden relative">
             <WorldMap
+              key={`${simulation.mode}:${mapViewRevision}`}
               airports={mapAirports}
+              allAirports={simulation.airports}
               flights={mapFlights}
               shipments={mapShipments}
-              selectedEntity={selectedEntity}
+              selectedEntity={selectedEntity ?? mapFilter}
               onSelectAirport={handleSelectAirport}
               onSelectFlight={handleSelectFlight}
               onSelectShipment={handleSelectShipment}
@@ -400,7 +433,7 @@ export default function App() {
               onWarehouseFilterChange={setWarehouseFilter}
               cancelledFlightIds={simulation.cancelledFlightIds}
               isExpanded={mapExpanded}
-              onToggleExpanded={() => setMapExpanded(v => !v)}
+              onToggleExpanded={handleToggleMapExpanded}
             />
 
             {!hidePanels && (
@@ -432,8 +465,8 @@ export default function App() {
             {/* Relojes flotantes — solo UI; no empuja ticks del mapa */}
             {(simulation.isRunning || simulation.mode === '5day' || simulation.mode === 'collapse' || simulation.realStartedAt) && (
               <SimulationClocksPanel
-                simClock={simulation.isRunning ? topSimClock : displayedSimulationTime}
-                realClock={realClock}
+                simClock={displayedSimulationTime}
+                simClockRef={simulation.simClockRef}
                 realStartedAt={simulation.realStartedAt}
                 startDate={simulation.startDate}
                 daysElapsed={simulation.daysElapsed}
@@ -532,11 +565,10 @@ export default function App() {
             )}
 
             {/* Active filters indicator */}
-            {(filters.airline || filters.origin || filters.destination) && (
+            {(filters.origin || filters.destination) && (
               <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#4DA6FF]/15 border border-[#4DA6FF]/30 backdrop-blur-sm">
                 <span className="text-[11px] text-[#4DA6FF]">
                   Filtros activos: {[
-                    filters.airline,
                     filters.origin && `desde ${filters.origin}`,
                     filters.destination && `hacia ${filters.destination}`
                   ].filter(Boolean).join(' · ')}
@@ -556,6 +588,7 @@ export default function App() {
           {/* Bottom Panel */}
           {!hidePanels && !bottomCollapsed && (
             <BottomPanel
+              key={`${simulation.mode}:${mapViewRevision}`}
               selectedEntity={selectedEntity}
               airports={simulation.airports}
               flights={simulation.flights}
@@ -567,8 +600,8 @@ export default function App() {
               isRunning={simulation.isRunning}
               simulationTime={displayedSimulationTime}
               mode={simulation.mode}
-              activeFlights={filteredActiveFlights}
-              flightPlanFlights={filteredFlightPlanFlights}
+              activeFlights={simulation.activeFlights}
+              flightPlanFlights={simulation.flightPlanFlights}
               lastCycleUpdate={simulation.lastCycleUpdate}
             />
           )}
@@ -577,6 +610,7 @@ export default function App() {
         {/* Right Panel */}
         {!hidePanels && !rightCollapsed && (
           <RightPanel
+            key={`${simulation.mode}:${mapViewRevision}`}
             simulationId={simulation.simulationId}
             airports={simulation.airports}
             flights={simulation.flights}
@@ -585,8 +619,8 @@ export default function App() {
             isRunning={simulation.isRunning}
             simulationTime={displayedSimulationTime}
             mode={simulation.mode}
-            activeFlights={filteredActiveFlights}
-            flightPlanFlights={filteredFlightPlanFlights}
+            activeFlights={simulation.activeFlights}
+            flightPlanFlights={simulation.flightPlanFlights}
             lastCycleUpdate={simulation.lastCycleUpdate}
             activeMapFilter={mapFilter}
             selectedEntity={selectedEntity}
@@ -620,8 +654,8 @@ export default function App() {
         <CancelFlightModal
           onClose={() => setShowCancelFlight(false)}
           onCancel={simulation.cancelFlight}
-          flightPlanFlights={filteredFlightPlanFlights.length > 0 ? filteredFlightPlanFlights : simulation.flightPlanFlights}
-          activeFlights={filteredActiveFlights.length > 0 ? filteredActiveFlights : simulation.activeFlights}
+          flightPlanFlights={simulation.flightPlanFlights}
+          activeFlights={simulation.activeFlights}
           simulationTime={displayedSimulationTime}
         />
       )}

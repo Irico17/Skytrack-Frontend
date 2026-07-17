@@ -84,7 +84,10 @@ interface PlannedFlightGeometry {
 }
 
 interface WorldMapProps {
+  /** Aeropuertos visibles después de aplicar los filtros de vista. */
   airports: Airport[];
+  /** Catálogo completo, usado para resolver geometría sin dibujar marcadores extra. */
+  allAirports?: Airport[];
   flights: Flight[];
   shipments: Shipment[];
   selectedEntity: SelectedEntity | null;
@@ -227,9 +230,9 @@ function buildActiveFlightDots(
     const loadPct = f.capacity > 0 ? (hasBags ? bags!.bagsCount : 0) / f.capacity * 100 : (hasBags ? 100 : 0);
     if (!passesUtMapFilter(loadPct, !hasBags, meetsSla, utFilter, isSelectedFlight)) continue;
 
-    // Densidad: reduce la cantidad total de aviones dibujados (muestreo determinista,
-    // estable por frame). La UT seleccionada siempre se ve. Permite "ver 50%/25%".
-    if (density < 1 && !isSelectedFlight && stableHash(f.flightId) >= sampleThreshold) {
+    // Densidad: reduce solo aviones vacíos mediante muestreo determinista. Las UT con
+    // carga y la selección permanecen visibles para que lista y mapa no se contradigan.
+    if (density < 1 && !hasBags && !isSelectedFlight && stableHash(f.flightId) >= sampleThreshold) {
       continue;
     }
 
@@ -324,7 +327,7 @@ function drawPlaneMarker(
     ctx.closePath();
     ctx.fill();
   } else {
-    ctx.globalAlpha = 0.42;
+    ctx.globalAlpha = 0.62;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.moveTo(0, -3.4);
@@ -381,7 +384,7 @@ const GraticuleLines = React.memo(function GraticuleLines() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 function WorldMapComponent({
-  airports, flights, shipments, selectedEntity,
+  airports, allAirports = airports, flights, shipments, selectedEntity,
   onSelectAirport, onSelectFlight, onSelectShipment, toggles,
   simClock, simClockRef, activeFlights = [], flightPlanFlights = [],
   utFilter = 'all', warehouseFilter = 'all', warehouseContinent = 'all', onUtFilterChange, onWarehouseFilterChange,
@@ -635,18 +638,18 @@ function WorldMapComponent({
   // Airport SVG positions (lookup map)
   const airportById = useMemo(() => {
     const m: Record<string, Airport & { svgPos: [number, number] }> = {};
-    airports.forEach(a => { m[a.id] = { ...a, svgPos: project(a.coords[0], a.coords[1]) }; });
+    allAirports.forEach(a => { m[a.id] = { ...a, svgPos: project(a.coords[0], a.coords[1]) }; });
     return m;
-  }, [airports]);
+  }, [allAirports]);
 
   const airportGeometryKey = useMemo(() =>
-    airports.map(a => `${a.id}:${a.coords[0]}:${a.coords[1]}`).join('|'),
-    [airports]
+    allAirports.map(a => `${a.id}:${a.coords[0]}:${a.coords[1]}`).join('|'),
+    [allAirports]
   );
 
   const airportGeometryById = useMemo(() => {
     const m: Record<string, { svgPos: [number, number] }> = {};
-    airports.forEach(a => { m[a.id] = { svgPos: project(a.coords[0], a.coords[1]) }; });
+    allAirports.forEach(a => { m[a.id] = { svgPos: project(a.coords[0], a.coords[1]) }; });
     return m;
   }, [airportGeometryKey]);
 
@@ -838,10 +841,12 @@ function WorldMapComponent({
   }, [selectedEntity, shipments, airportGeometryById]);
 
   useEffect(() => {
-    if (!selectedEntity) return;
+    if (!selectedEntity) {
+      lastFocusedSelectionRef.current = null;
+      return;
+    }
     const key = `${selectedEntity.type}:${selectedEntity.id}`;
     if (lastFocusedSelectionRef.current === key) return;
-    lastFocusedSelectionRef.current = key;
 
     const fitBounds = (minX: number, minY: number, maxX: number, maxY: number, padding: number) => {
       const targetRatio = BASE_W / BASE_H;
@@ -868,11 +873,13 @@ function WorldMapComponent({
       const airport = airportById[selectedEntity.id];
       if (!airport) return;
       const [x, y] = airport.svgPos;
+      lastFocusedSelectionRef.current = key;
       fitBounds(x, y, x, y, 55);
       return;
     }
 
     if (selectedFlightGeometry) {
+      lastFocusedSelectionRef.current = key;
       fitBounds(
         Math.min(selectedFlightGeometry.ox, selectedFlightGeometry.dx, selectedFlightGeometry.cpx),
         Math.min(selectedFlightGeometry.oy, selectedFlightGeometry.dy, selectedFlightGeometry.cpy),
@@ -890,6 +897,7 @@ function WorldMapComponent({
         const allLegs = selectedShipmentGeometry.sublots.flatMap(sl => sl.legs);
         const xs = allLegs.flatMap(l => [l.ox, l.dx, l.cpx]);
         const ys = allLegs.flatMap(l => [l.oy, l.dy, l.cpy]);
+        lastFocusedSelectionRef.current = key;
         fitBounds(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), 45);
         return;
       }
@@ -899,6 +907,7 @@ function WorldMapComponent({
       const origin = airportById[shipment.origin];
       const dest = airportById[shipment.destination];
       if (!origin || !dest) return;
+      lastFocusedSelectionRef.current = key;
       fitBounds(
         Math.min(origin.svgPos[0], dest.svgPos[0]),
         Math.min(origin.svgPos[1], dest.svgPos[1]),
@@ -1094,8 +1103,8 @@ function WorldMapComponent({
           for (const dot of ds) {
             const x = toCanvasX(dot.cx);
             const y = toCanvasY(dot.cy);
-            const s = dot.hasBags ? 3.2 : 2;
-            ctx.globalAlpha = dot.hasBags ? 0.95 : 0.4;
+            const s = dot.hasBags ? 3.2 : 2.4;
+            ctx.globalAlpha = dot.hasBags ? 0.95 : 0.58;
             ctx.fillRect(x - s / 2, y - s / 2, s, s);
             if (dot.hasBags || isSelectedDot(dot)) hitTargets.push({ x, y, dot });
           }
@@ -1450,7 +1459,7 @@ function WorldMapComponent({
             las rutas del envío de manera gráfica". Un envío dividido por capacidad tiene
             varios sub-lotes con rutas propias — se dibujan TODAS, un color por sub-lote.
             Aplica a los 3 escenarios. Se dibuja DESPUÉS del canvas para quedar encima. */}
-        {selectedShipmentGeometry && (
+        {toggles.showRoutes && selectedShipmentGeometry && (
           <g style={{ pointerEvents: 'none' }}>
             {selectedShipmentGeometry.sublots.map(sublot => (
               <g key={sublot.shipmentId}>
@@ -1594,7 +1603,7 @@ function WorldMapComponent({
                 </text>
               )}
               {/* Warehouse capacity bar */}
-              {(showWarehouseBars || showWarehouseBars === false) && toggles.showWarehouseCapacity && showLabels && (
+              {showWarehouseBars && toggles.showWarehouseCapacity && showLabels && (
                 <g transform="translate(-8,5)">
                   <rect width={16} height={2.5} rx={1} fill="#081225" />
                   <rect width={16 * Math.min(pct / 100, 1)} height={2.5} rx={1}

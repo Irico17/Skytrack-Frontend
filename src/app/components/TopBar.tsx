@@ -69,14 +69,14 @@ export function TopBar({
       <div className="relative">
         <button
           onClick={() => setShowModeDropdown(!showModeDropdown)}
-          disabled={isRunning}
+          disabled={isRunning || isPaused}
           className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0D1E38] border border-[#1E3058] hover:border-[#4DA6FF]/50 transition-colors text-xs text-[#A8C0E0] disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {MODE_ICONS[mode]}
           <span>{MODE_LABELS[mode]}</span>
           <ChevronDown className="w-3 h-3" />
         </button>
-        {showModeDropdown && !isRunning && (
+        {showModeDropdown && !isRunning && !isPaused && (
           <div className="absolute top-full mt-1 left-0 bg-[#0D1E38] border border-[#1E3058] rounded-lg overflow-hidden z-50 min-w-[180px]">
             {(Object.keys(MODE_LABELS) as SimulationMode[]).map(m => (
               <button

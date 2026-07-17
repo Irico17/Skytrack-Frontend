@@ -56,12 +56,13 @@ interface TransportUnit {
   destinationId: string;
   departureTime: string;
   arrivalTime: string;
+  departureMs: number;
+  arrivalMs: number;
   capacity: number;
   bags: number;
   pct: number;
   meetsSla: boolean;
   empty: boolean;
-  inFlight: boolean;
   cancelled: boolean;
 }
 
@@ -359,12 +360,29 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function UtCard({ unit, mapActive, onOpen, onMapFilter }: {
+function isTransportUnitInFlight(unit: TransportUnit, nowMs: number): boolean {
+  return Number.isFinite(unit.departureMs)
+    && Number.isFinite(unit.arrivalMs)
+    && nowMs >= unit.departureMs
+    && nowMs < unit.arrivalMs;
+}
+
+function parseInstantMs(value: string): number {
+  try {
+    return parseApiInstant(value).getTime();
+  } catch {
+    return Number.NaN;
+  }
+}
+
+function UtCard({ unit, nowMs, mapActive, onOpen, onMapFilter }: {
   unit: TransportUnit;
+  nowMs: number;
   mapActive: boolean;
   onOpen?: () => void;
   onMapFilter?: () => void;
 }) {
+  const inFlight = isTransportUnitInFlight(unit, nowMs);
   const color = unit.cancelled ? '#FF4D4D' : !unit.meetsSla ? '#FFC857' : unit.pct >= 90 ? '#FF4D4D' : unit.pct >= 70 ? '#FFC857' : unit.empty ? '#4A6080' : '#00FF9C';
   return (
     <div
@@ -377,7 +395,7 @@ function UtCard({ unit, mapActive, onOpen, onMapFilter }: {
           <div className="flex items-center gap-2">
             <span className={`text-[11px] text-white truncate ${unit.cancelled ? 'line-through' : ''}`} style={{ fontWeight: 700 }}>{unit.flightId}</span>
             {unit.cancelled && <span className="text-[9px] text-[#FF4D4D] border border-[#FF4D4D]/40 rounded px-1" style={{ fontWeight: 700 }}>CANCELADO</span>}
-            {!unit.cancelled && unit.inFlight && <span className="text-[9px] text-[#4DA6FF] border border-[#4DA6FF]/30 rounded px-1">EN VUELO</span>}
+            {!unit.cancelled && inFlight && <span className="text-[9px] text-[#4DA6FF] border border-[#4DA6FF]/30 rounded px-1">EN VUELO</span>}
             {!unit.cancelled && unit.empty && <span className="text-[9px] text-[#4A6080] border border-[#1E3058] rounded px-1">VACÍO</span>}
             {!unit.cancelled && !unit.meetsSla && <span className="text-[9px] text-[#FFC857] border border-[#FFC857]/30 rounded px-1">En riesgo</span>}
           </div>
@@ -398,7 +416,7 @@ function UtCard({ unit, mapActive, onOpen, onMapFilter }: {
               ? 'bg-[#4DA6FF]/20 border-[#4DA6FF] text-[#4DA6FF]'
               : 'bg-[#0D1E38] border-[#1E3058] text-[#A8C0E0] hover:text-[#4DA6FF] hover:border-[#4DA6FF]/50'
             }`}
-            title={mapActive ? 'Quitar filtro del mapa' : 'Filtrar UT en mapa'}
+            title={mapActive ? 'Quitar filtro del mapa' : 'Centrar y filtrar UT en mapa'}
           >
             <MapPin className="w-3.5 h-3.5" />
           </button>
@@ -416,11 +434,13 @@ function UtCard({ unit, mapActive, onOpen, onMapFilter }: {
  */
 function liveJourneyProgress(s: Shipment, nowMs: number): number {
   if (s.progress >= 1 || s.deliveredAt) return 1;
-  let start = NaN;
-  let end = NaN;
+  const firstLeg = s.legs?.[0];
+  const lastLeg = s.legs?.[s.legs.length - 1];
+  let start = firstLeg?.dep ?? NaN;
+  let end = lastLeg?.arr ?? NaN;
   try {
-    if (s.journeyStartTime) start = parseApiInstant(s.journeyStartTime).getTime();
-    if (s.finalArrivalTime) end = parseApiInstant(s.finalArrivalTime).getTime();
+    if (!Number.isFinite(start) && s.journeyStartTime) start = parseApiInstant(s.journeyStartTime).getTime();
+    if (!Number.isFinite(end) && s.finalArrivalTime) end = parseApiInstant(s.finalArrivalTime).getTime();
   } catch {
     return s.progress;
   }
@@ -430,7 +450,7 @@ function liveJourneyProgress(s: Shipment, nowMs: number): number {
   return s.progress;
 }
 
-type LiveState = 'pending' | 'at_origin' | 'in_flight' | 'at_transfer' | 'delivered';
+type LiveState = 'pending' | 'scheduled' | 'at_origin' | 'in_flight' | 'at_transfer' | 'delivered';
 
 /**
  * Deriva EN VIVO (desde el reloj simulado) el estado y la posición tramo a tramo de un envío,
@@ -438,7 +458,7 @@ type LiveState = 'pending' | 'at_origin' | 'in_flight' | 'at_transfer' | 'delive
  * "transferencia en BBB", "en origen" o "entregado" sin esperar al refresco de la solución.
  * Solo se evalúa para las filas que se renderizan, así que es barato.
  */
-function liveShipmentState(s: Shipment, nowMs: number): {
+function liveShipmentState(s: Shipment, nowMs: number, currentFlightAirborne = false): {
   state: LiveState; flightId: string | null; airportId: string | null; progress: number;
 } {
   const progress = liveJourneyProgress(s, nowMs);
@@ -446,7 +466,8 @@ function liveShipmentState(s: Shipment, nowMs: number): {
   if (!legs || legs.length === 0) {
     const hasUt = s.currentFlightId && s.currentFlightId !== 'PENDING';
     if (s.progress >= 1 || s.deliveredAt) return { state: 'delivered', flightId: null, airportId: s.destination, progress: 1 };
-    return { state: hasUt ? 'in_flight' : 'pending', flightId: hasUt ? s.currentFlightId : null, airportId: hasUt ? null : s.origin, progress };
+    if (hasUt && currentFlightAirborne) return { state: 'in_flight', flightId: s.currentFlightId, airportId: null, progress };
+    return { state: hasUt ? 'scheduled' : 'pending', flightId: hasUt ? s.currentFlightId : null, airportId: hasUt ? null : s.origin, progress };
   }
   const first = legs[0];
   const last = legs[legs.length - 1];
@@ -468,21 +489,23 @@ function liveShipmentState(s: Shipment, nowMs: number): {
 
 const LIVE_STATE_META: Record<LiveState, { label: string; color: string }> = {
   pending: { label: 'Sin ruta', color: '#FF4D4D' },
+  scheduled: { label: 'Programado', color: '#7090B0' },
   at_origin: { label: 'En origen', color: '#7090B0' },
   in_flight: { label: 'En vuelo', color: '#4DA6FF' },
   at_transfer: { label: 'Transferencia', color: '#FFC857' },
   delivered: { label: 'Entregado', color: '#00FF9C' },
 };
 
-function ShipmentCard({ shipment, mapActive, onOpen, onMapFilter, nowMs }: {
+function ShipmentCard({ shipment, mapActive, onOpen, onMapFilter, nowMs, currentFlightAirborne = false }: {
   shipment: Shipment;
   mapActive: boolean;
   onOpen?: () => void;
   onMapFilter?: () => void;
   nowMs?: number;
+  currentFlightAirborne?: boolean;
 }) {
   const color = getStatusColor(shipment.status);
-  const live = liveShipmentState(shipment, nowMs ?? Date.now());
+  const live = liveShipmentState(shipment, nowMs ?? Date.now(), currentFlightAirborne);
   const pct = Math.round(live.progress * 100);
   const liveMeta = LIVE_STATE_META[live.state];
   const liveWhere = live.flightId ? `Vuelo ${live.flightId}` : live.airportId ? `Almacén ${live.airportId}` : '';
@@ -524,7 +547,7 @@ function ShipmentCard({ shipment, mapActive, onOpen, onMapFilter, nowMs }: {
               ? 'bg-[#4DA6FF]/20 border-[#4DA6FF] text-[#4DA6FF]'
               : 'bg-[#0D1E38] border-[#1E3058] text-[#A8C0E0] hover:text-[#4DA6FF] hover:border-[#4DA6FF]/50'
             }`}
-            title={mapActive ? 'Quitar filtro del mapa' : 'Filtrar envío en mapa'}
+            title={mapActive ? 'Quitar filtro del mapa' : 'Centrar y filtrar envío en mapa'}
           >
             <MapPin className="w-3.5 h-3.5" />
           </button>
@@ -897,22 +920,17 @@ export function RightPanel({
     return map;
   }, [activeFlights]);
 
+  const parsedFlightPlan = useMemo(() => flightPlanFlights.map(f => ({
+    ...f,
+    departureMs: parseInstantMs(f.departureTime),
+    arrivalMs: parseInstantMs(f.arrivalTime),
+  })), [flightPlanFlights]);
+
   // Base de UTs (sin filtros): se usa tanto en la pestaña UT como en los drill-downs.
-  // inFlight = "en vuelo AHORA" (airborne respecto al reloj simulado) — coherente con el
-  // mapa, que solo dibuja UTs en vuelo. La carga (bags/empty) es un eje independiente.
+  // Las fechas se parsean solo cuando cambia el plan, no en cada avance del reloj.
   const baseTransportUnits = useMemo<TransportUnit[]>(() => {
-    const simMs = simulationTime.getTime();
-    const isAirborne = (dep: string, arr: string) => {
-      try {
-        const d = parseApiInstant(dep).getTime();
-        const a = parseApiInstant(arr).getTime();
-        return Number.isFinite(d) && Number.isFinite(a) && simMs >= d && simMs < a;
-      } catch {
-        return false;
-      }
-    };
-    if (flightPlanFlights.length > 0) {
-      return flightPlanFlights.map(f => {
+    if (parsedFlightPlan.length > 0) {
+      return parsedFlightPlan.map(f => {
         const active = activeBagsByFlight.get(f.flightId);
         const bags = active?.bagsCount ?? 0;
         const pct = f.capacity > 0 ? Math.round((bags / f.capacity) * 100) : 0;
@@ -922,12 +940,13 @@ export function RightPanel({
           destinationId: f.destinationId,
           departureTime: f.departureTime,
           arrivalTime: f.arrivalTime,
+          departureMs: f.departureMs,
+          arrivalMs: f.arrivalMs,
           capacity: f.capacity,
           bags,
           pct,
           meetsSla: active?.meetsSla ?? true,
           empty: bags === 0,
-          inFlight: isAirborne(f.departureTime, f.arrivalTime),
           cancelled: cancelledSet.has(f.flightId),
         };
       });
@@ -938,41 +957,60 @@ export function RightPanel({
       destinationId: f.destinationId,
       departureTime: f.departureTime,
       arrivalTime: f.arrivalTime,
+      departureMs: parseInstantMs(f.departureTime),
+      arrivalMs: parseInstantMs(f.arrivalTime),
       capacity: 0,
       bags: f.bagsCount,
       pct: 0,
       meetsSla: f.meetsSla,
       empty: f.bagsCount === 0,
-      inFlight: isAirborne(f.departureTime, f.arrivalTime),
       cancelled: cancelledSet.has(f.flightId),
     }));
-  }, [flightPlanFlights, activeFlights, activeBagsByFlight, simulationTime, cancelledSet]);
+  }, [parsedFlightPlan, activeFlights, activeBagsByFlight, cancelledSet]);
+
+  const transportUnitById = useMemo(() => {
+    const units = new Map<string, TransportUnit>();
+    const unitsByBaseId = new Map<string, TransportUnit[]>();
+    for (const unit of baseTransportUnits) {
+      units.set(unit.flightId, unit);
+      const baseId = stripProjectedDaySuffix(unit.flightId);
+      const projected = unitsByBaseId.get(baseId);
+      if (projected) projected.push(unit);
+      else unitsByBaseId.set(baseId, [unit]);
+    }
+    return { units, unitsByBaseId };
+  }, [baseTransportUnits]);
+
+  const isShipmentCurrentFlightAirborne = (shipment: Shipment): boolean => {
+    if (!shipment.currentFlightId || shipment.currentFlightId === 'PENDING') return false;
+    const exact = transportUnitById.units.get(shipment.currentFlightId);
+    if (exact) return !exact.cancelled && isTransportUnitInFlight(exact, nowMs);
+    const projected = transportUnitById.unitsByBaseId.get(stripProjectedDaySuffix(shipment.currentFlightId)) ?? [];
+    return projected.some(unit => !unit.cancelled && isTransportUnitInFlight(unit, nowMs));
+  };
 
   const warehouseNextUtTimes = useMemo(() => {
-    const simMs = simulationTime.getTime();
+    if (activeTab !== 'warehouse') {
+      return { nextDeparture: new Map<string, number>(), nextArrival: new Map<string, number>() };
+    }
     const nextDeparture = new Map<string, number>();
     const nextArrival = new Map<string, number>();
-    for (const f of flightPlanFlights) {
-      let depMs = NaN;
-      let arrMs = NaN;
-      try {
-        depMs = parseApiInstant(f.departureTime).getTime();
-        arrMs = parseApiInstant(f.arrivalTime).getTime();
-      } catch {
-        continue;
-      }
-      if (Number.isFinite(depMs) && depMs >= simMs) {
+    for (const f of parsedFlightPlan) {
+      const depMs = f.departureMs;
+      const arrMs = f.arrivalMs;
+      if (Number.isFinite(depMs) && depMs >= nowMs) {
         const prev = nextDeparture.get(f.originId);
         if (prev == null || depMs < prev) nextDeparture.set(f.originId, depMs);
       }
-      if (Number.isFinite(arrMs) && arrMs >= simMs) {
+      if (Number.isFinite(arrMs) && arrMs >= nowMs) {
         const prev = nextArrival.get(f.destinationId);
         if (prev == null || arrMs < prev) nextArrival.set(f.destinationId, arrMs);
       }
     }
     return { nextDeparture, nextArrival };
-  }, [flightPlanFlights, simulationTime]);
+  }, [activeTab, parsedFlightPlan, nowMs]);
 
+  const transportClockMs = utFilter === 'inflight' ? nowMs : 0;
   const transportUnits = useMemo(() => {
     if (activeTab !== 'transport') return [];
 
@@ -987,7 +1025,7 @@ export function RightPanel({
         if (utFilter === 'cancelled') return f.cancelled;
         // Las demás vistas ocultan las canceladas (ya no operan).
         if (f.cancelled) return false;
-        if (utFilter === 'inflight') return f.inFlight;
+        if (utFilter === 'inflight') return isTransportUnitInFlight(f, transportClockMs);
         if (utFilter === 'empty') return f.empty;
         if (utFilter === 'normal') return !f.empty && f.pct < 70;     // semáforo verde
         if (utFilter === 'warning') return !f.empty && f.pct >= 70 && f.pct < 90; // ámbar
@@ -998,25 +1036,17 @@ export function RightPanel({
       })
       .sort((a, b) => {
         if (transportSort === 'departure') {
-          try {
-            return parseApiInstant(a.departureTime).getTime() - parseApiInstant(b.departureTime).getTime();
-          } catch {
-            return 0;
-          }
+          return a.departureMs - b.departureMs;
         }
         if (transportSort === 'arrival') {
-          try {
-            return parseApiInstant(a.arrivalTime).getTime() - parseApiInstant(b.arrivalTime).getTime();
-          } catch {
-            return 0;
-          }
+          return a.arrivalMs - b.arrivalMs;
         }
         if (transportSort === 'destination') return a.destinationId.localeCompare(b.destinationId) || a.flightId.localeCompare(b.flightId);
         if (transportSort === 'route') return `${a.originId}-${a.destinationId}`.localeCompare(`${b.originId}-${b.destinationId}`);
         if (transportSort === 'loadAsc') return a.bags - b.bags;
         return b.bags - a.bags;
       });
-  }, [activeTab, baseTransportUnits, opsSearch, transportOriginFilter, transportDestFilter, transportSort, utFilter]);
+  }, [activeTab, baseTransportUnits, transportClockMs, opsSearch, transportOriginFilter, transportDestFilter, transportSort, utFilter]);
 
   // Continentes disponibles según los aeropuertos reales del backend.
   const continentOptions = useMemo(() => {
@@ -1064,8 +1094,13 @@ export function RightPanel({
   const operationalShipments = useMemo(() => {
     if (activeTab !== 'shipments') return [];
 
-    // UTs actualmente en vuelo (ids normalizados sin sufijo -D#)
-    const inFlightIds = new Set(activeFlights.map(f => stripProjectedDaySuffix(f.flightId)));
+    // Solo UTs físicamente en vuelo según salida/llegada; activeFlights también contiene
+    // tramos futuros de la ventana del backend y no sirve por sí solo para este estado.
+    const inFlightIds = new Set(
+      baseTransportUnits
+        .filter(unit => !unit.cancelled && isTransportUnitInFlight(unit, nowMs))
+        .map(unit => stripProjectedDaySuffix(unit.flightId)),
+    );
 
     const query = opsSearch.trim().toLowerCase();
     const originQ = shipmentOriginFilter.trim().toLowerCase();
@@ -1111,7 +1146,7 @@ export function RightPanel({
       if (shipmentSort === 'route') return `${a.origin}-${a.destination}`.localeCompare(`${b.origin}-${b.destination}`);
       return a.id.localeCompare(b.id);
     });
-  }, [activeTab, shipments, opsSearch, shipmentOriginFilter, shipmentDestFilter, shipmentSort, shipmentFilter, activeFlights, simulationTime, nowMs]);
+  }, [activeTab, shipments, opsSearch, shipmentOriginFilter, shipmentDestFilter, shipmentSort, shipmentFilter, baseTransportUnits, simulationTime, nowMs]);
 
   const luggageByClient = useMemo(() => {
     if (activeTab !== 'clients') return [];
@@ -1249,6 +1284,7 @@ export function RightPanel({
     const unit = baseTransportUnits.find(u => u.flightId === id)
       ?? baseTransportUnits.find(u => sameFlightId(u.flightId, id))
       ?? null;
+    const unitInFlight = unit ? isTransportUnitInFlight(unit, nowMs) : false;
     const utShipments = shipments.filter(s => sameFlightId(s.currentFlightId, id));
     const utColor = unit ? (!unit.meetsSla ? '#FFC857' : unit.pct >= 90 ? '#FF4D4D' : unit.empty ? '#4A6080' : '#00FF9C') : '#4A6080';
     const originAirport = unit ? airports.find(a => a.id === unit.originId) : null;
@@ -1273,7 +1309,7 @@ export function RightPanel({
                 <button
                   onClick={() => handleMapFilterClick({ type: 'flight', id }, () => onSelectFlight?.(id))}
                   className={mapFilterButtonClass(isFilterActive('flight', id))}
-                  title="Filtrar UT en mapa"
+                  title="Centrar y filtrar UT en mapa"
                 >
                   <MapPin className="w-3.5 h-3.5" />
                 </button>
@@ -1282,7 +1318,7 @@ export function RightPanel({
                 <ReportRow label="Salida" value={formatHourUtc(unit.departureTime)} color="#A8C0E0" />
                 <ReportRow label="Llegada" value={formatHourUtc(unit.arrivalTime)} color="#A8C0E0" />
                 <ReportRow label="Carga" value={unit.capacity > 0 ? `${unit.bags}/${unit.capacity}` : `${unit.bags}`} color={utColor} />
-                <ReportRow label="Estado" value={unit.inFlight ? 'En vuelo' : unit.empty ? 'Vacío' : 'Programado'} color={unit.inFlight ? '#4DA6FF' : '#A8C0E0'} />
+                <ReportRow label="Estado" value={unitInFlight ? 'En vuelo' : unit.empty ? 'Vacío' : 'Programado'} color={unitInFlight ? '#4DA6FF' : '#A8C0E0'} />
                 <ReportRow label="Puntualidad" value={unit.meetsSla ? 'A tiempo' : 'En riesgo'} color={unit.meetsSla ? '#00FF9C' : '#FFC857'} />
                 <ReportRow label="Ocupación" value={unit.capacity > 0 ? `${unit.pct}%` : DASH} color={utColor} />
               </div>
@@ -1303,6 +1339,7 @@ export function RightPanel({
                 onOpen={() => openInspector({ kind: 'shipment', id: s.id })}
                 onMapFilter={() => handleMapFilterClick({ type: 'shipment', id: s.id }, () => onSelectShipment?.(s.id))}
                 nowMs={nowMs}
+                currentFlightAirborne={isShipmentCurrentFlightAirborne(s)}
               />
             ))}
             {utShipments.length === 0 && (
@@ -1357,7 +1394,7 @@ export function RightPanel({
                 <button
                   onClick={() => handleMapFilterClick({ type: 'airport', id }, () => onSelectAirport?.(id))}
                   className={mapFilterButtonClass(isFilterActive('airport', id))}
-                  title="Filtrar almacén en mapa"
+                  title="Centrar y filtrar almacén en mapa"
                 >
                   <MapPin className="w-3.5 h-3.5" />
                 </button>
@@ -1399,6 +1436,7 @@ export function RightPanel({
               <UtCard
                 key={u.flightId}
                 unit={u}
+                nowMs={nowMs}
                 mapActive={isFilterActive('flight', u.flightId)}
                 onOpen={() => openInspector({ kind: 'ut', id: u.flightId })}
                 onMapFilter={() => handleMapFilterClick({ type: 'flight', id: u.flightId }, () => onSelectFlight?.(u.flightId))}
@@ -1421,6 +1459,7 @@ export function RightPanel({
                 onOpen={() => openInspector({ kind: 'shipment', id: s.id })}
                 onMapFilter={() => handleMapFilterClick({ type: 'shipment', id: s.id }, () => onSelectShipment?.(s.id))}
                 nowMs={nowMs}
+                currentFlightAirborne={isShipmentCurrentFlightAirborne(s)}
               />
             ))}
             {relatedShipments.length === 0 && (
@@ -1461,7 +1500,7 @@ export function RightPanel({
                   </div>
                   <div className="text-[10px] text-[#4A6080] truncate">Entrega estimada: {shipment.estimatedDelivery}</div>
                   {(() => {
-                    const live = liveShipmentState(shipment, nowMs);
+                    const live = liveShipmentState(shipment, nowMs, isShipmentCurrentFlightAirborne(shipment));
                     const m = LIVE_STATE_META[live.state];
                     const where = live.flightId ? `Vuelo ${live.flightId}` : live.airportId ? `Almacén ${live.airportId}` : '';
                     return (
@@ -1478,7 +1517,7 @@ export function RightPanel({
                 <button
                   onClick={() => handleMapFilterClick({ type: 'shipment', id }, () => onSelectShipment?.(id))}
                   className={mapFilterButtonClass(isFilterActive('shipment', id))}
-                  title="Filtrar envío en mapa"
+                  title="Centrar y filtrar envío en mapa"
                 >
                   <MapPin className="w-3.5 h-3.5" />
                 </button>
@@ -1578,6 +1617,7 @@ export function RightPanel({
                 onOpen={() => openInspector({ kind: 'shipment', id: s.id })}
                 onMapFilter={() => handleMapFilterClick({ type: 'shipment', id: s.id }, () => onSelectShipment?.(s.id))}
                 nowMs={nowMs}
+                currentFlightAirborne={isShipmentCurrentFlightAirborne(s)}
               />
             ))}
             {visibleShipments.length === 0 && (
@@ -1792,6 +1832,7 @@ export function RightPanel({
                 <UtCard
                   key={unit.flightId}
                   unit={unit}
+                  nowMs={nowMs}
                   mapActive={isFilterActive('flight', unit.flightId)}
                   onOpen={() => openInspector({ kind: 'ut', id: unit.flightId })}
                   onMapFilter={() => handleMapFilterClick({ type: 'flight', id: unit.flightId }, () => onSelectFlight?.(unit.flightId))}
@@ -1846,6 +1887,7 @@ export function RightPanel({
                   onOpen={() => openInspector({ kind: 'shipment', id: shipment.id })}
                   onMapFilter={() => handleMapFilterClick({ type: 'shipment', id: shipment.id }, () => onSelectShipment?.(shipment.id))}
                   nowMs={nowMs}
+                  currentFlightAirborne={isShipmentCurrentFlightAirborne(shipment)}
                 />
               ))}
               {operationalShipments.length === 0 && (
@@ -2193,7 +2235,7 @@ export function RightPanel({
                       <button
                         onClick={e => { e.stopPropagation(); handleMapFilterClick({ type: 'airport', id: a.id }, () => onSelectAirport?.(a.id)); }}
                         className={mapFilterButtonClass(active, 'w-6 h-6')}
-                        title={active ? 'Quitar filtro del mapa' : 'Filtrar almacén en mapa'}
+                        title={active ? 'Quitar filtro del mapa' : 'Centrar y filtrar almacén en mapa'}
                       >
                         <MapPin className="w-3 h-3" />
                       </button>

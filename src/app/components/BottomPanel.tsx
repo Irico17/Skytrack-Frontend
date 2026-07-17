@@ -450,13 +450,24 @@ export function BottomPanel({
     { id: 'active' as const, label: 'Alertas Activas', icon: <AlertTriangle className="w-3 h-3" /> },
   ];
 
-  const criticalShipments = shipments.filter(s => s.status === 'critical');
-  const delayedShipments = shipments.filter(s => s.status === 'delayed');
-  const delayedBackendFlights = activeFlights.filter(f => !f.meetsSla);
-  const criticalAirports = airports.filter(a => a.status === 'critical');
+  const criticalShipments = useMemo(() => shipments.filter(s => s.status === 'critical'), [shipments]);
+  const delayedShipments = useMemo(() => shipments.filter(s => s.status === 'delayed'), [shipments]);
+  const delayedBackendFlights = useMemo(() => activeFlights.filter(f => !f.meetsSla), [activeFlights]);
+  const criticalAirports = useMemo(() => airports.filter(a => a.status === 'critical'), [airports]);
+  const activeFlightSchedule = useMemo(() => activeFlights.map(f => ({
+    id: f.flightId.replace(/-D\d+$/, ''),
+    dep: (() => { try { return parseApiInstant(f.departureTime).getTime(); } catch { return Number.NaN; } })(),
+    arr: (() => { try { return parseApiInstant(f.arrivalTime).getTime(); } catch { return Number.NaN; } })(),
+  })), [activeFlights]);
 
   const visibleShipments = useMemo(() => {
-    const inFlightIds = new Set(activeFlights.map(f => f.flightId.replace(/-D\d+$/, '')));
+    if (activeTab !== 'shipments') return [];
+    const nowMs = simulationTime.getTime();
+    const inFlightIds = shipmentStatusFilter === 'inflight'
+      ? new Set(activeFlightSchedule
+          .filter(f => Number.isFinite(f.dep) && Number.isFinite(f.arr) && nowMs >= f.dep && nowMs < f.arr)
+          .map(f => f.id))
+      : null;
     const query = shipmentSearch.trim().toLowerCase();
     return shipments
       .filter(s => !query || `${s.id} ${s.airline} ${s.airlineId} ${s.origin} ${s.destination} ${s.currentFlightId}`.toLowerCase().includes(query))
@@ -464,17 +475,18 @@ export function BottomPanel({
         if (shipmentStatusFilter === 'all') return true;
         if (shipmentStatusFilter === 'inflight') {
           return s.progress < 1 && !!s.currentFlightId && s.currentFlightId !== 'PENDING'
-            && inFlightIds.has(s.currentFlightId.replace(/-D\d+$/, ''));
+            && inFlightIds?.has(s.currentFlightId.replace(/-D\d+$/, ''));
         }
         if (shipmentStatusFilter === 'delivered') return isDeliveredInSimWindow(s, simulationTime);
         return s.status === shipmentStatusFilter;
       });
-  }, [shipments, shipmentSearch, shipmentStatusFilter, activeFlights, simulationTime]);
+  }, [activeTab, shipments, shipmentSearch, shipmentStatusFilter, activeFlightSchedule, simulationTime]);
 
   const visibleActiveFlights = useMemo(() => {
+    if (activeTab !== 'active') return [];
     const query = shipmentSearch.trim().toLowerCase();
     return activeFlights.filter(f => !query || `${f.flightId} ${f.originId} ${f.destinationId}`.toLowerCase().includes(query));
-  }, [activeFlights, shipmentSearch]);
+  }, [activeTab, activeFlights, shipmentSearch]);
 
   return (
     <div className="h-56 bg-[#080F1E] border-t border-[#1E3058] flex flex-col">

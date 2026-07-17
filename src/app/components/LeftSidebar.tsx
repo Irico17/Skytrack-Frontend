@@ -7,8 +7,9 @@ import {
 } from 'lucide-react';
 import { SimulationMode, Airport } from '../data/mockData';
 
+const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
 interface Filters {
-  airline: string;
   origin: string;
   destination: string;
 }
@@ -37,7 +38,9 @@ interface LeftSidebarProps {
   airports?: Airport[];
   onStartDateChange: (date: Date) => void;
   onFilterChange: (key: keyof Filters, value: string) => void;
+  onClearFilters: () => void;
   onToggleChange: (key: keyof Toggles) => void;
+  onResetView: () => void;
   onAddShipment: () => void;
   onUploadShipmentsFile?: () => void;
   onCancelFlight: () => void;
@@ -61,7 +64,9 @@ function Section({ title, icon, children, defaultOpen = true }: SectionProps) {
   return (
     <div className="border-b border-[#1E3058]">
       <button
+        type="button"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
         className="w-full flex items-center justify-between px-4 py-3 hover:bg-[#1A2E4A]/30 transition-colors"
       >
         <div className="flex items-center gap-2 text-[#A8C0E0] text-xs" style={{ fontWeight: 600, letterSpacing: '0.08em' }}>
@@ -75,9 +80,13 @@ function Section({ title, icon, children, defaultOpen = true }: SectionProps) {
   );
 }
 
-function ToggleSwitch({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+function ToggleSwitch({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
       onClick={onChange}
       className={`relative w-9 h-5 rounded-full transition-colors duration-200 ${checked ? 'bg-[#4DA6FF]' : 'bg-[#1E3058]'}`}
     >
@@ -93,11 +102,13 @@ function SelectField({ label, value, onChange, options, disabled = false }: {
   options: { value: string; label: string }[];
   disabled?: boolean;
 }) {
+  const fieldId = React.useId();
   return (
     <div className="mb-3">
-      <label className="block text-[10px] text-[#4A6080] mb-1.5" style={{ letterSpacing: '0.1em' }}>{label}</label>
+      <label htmlFor={fieldId} className="block text-[10px] text-[#4A6080] mb-1.5" style={{ letterSpacing: '0.1em' }}>{label}</label>
       <div className="relative">
         <select
+          id={fieldId}
           value={value}
           onChange={e => onChange(e.target.value)}
           disabled={disabled}
@@ -118,34 +129,40 @@ export function LeftSidebar({
   mode, startDate, simulationTime, simulationK = 120, filters, toggles, isRunning,
   isStarting = false, isPaused = false, currentCycle = null, storageOccupancyPct = null,
   daysElapsed, simulationComplete, collapseComplete, airports = [],
-  onStartDateChange, onFilterChange, onToggleChange,
+  onStartDateChange, onFilterChange, onClearFilters, onToggleChange, onResetView,
   onAddShipment, onUploadShipmentsFile, onCancelFlight, onUploadStaticData, onCloseOperations,
   onViewResults, onViewCollapseResults, onViewDayToDayResults, dayToDayComplete,
 }: LeftSidebarProps) {
 
-  const cityOptions = [
-    { value: '', label: 'Todas las Ciudades' },
-    // Ordenado alfabéticamente por nombre de ciudad para encontrarlas rápido.
-    ...airports
-      .map(a => ({ value: a.id, label: `${a.city} (${a.id})` }))
-      .sort((a, b) => a.label.localeCompare(b.label)),
-  ];
+  const cityOptions = React.useMemo(() => [
+      { value: '', label: 'Todas las Ciudades' },
+      ...airports
+        .map(a => ({ value: a.id, label: `${a.city} (${a.id})` }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    ],
+    [airports],
+  );
 
-  const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-  const dayLabels = Array.from({ length: 5 }, (_, i) => {
-    const d = new Date(startDate);
-    d.setDate(d.getDate() + i);
-    return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]}`;
-  });
+  const dayLabels = React.useMemo(() => Array.from({ length: 5 }, (_, i) => {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + i);
+      return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_ES[d.getMonth()]}`;
+    }),
+    [startDate],
+  );
   const currentDay = Math.min(Math.max(1, Math.floor(daysElapsed) + 1), 5);
   const displayedK = mode === 'realtime' ? 1 : simulationK;
-  const airportStatusCounts = airports.reduce(
-    (counts, airport) => {
-      counts[airport.status] += 1;
-      return counts;
-    },
-    { normal: 0, warning: 0, critical: 0 },
+  const airportStatusCounts = React.useMemo(
+    () => airports.reduce(
+      (counts, airport) => {
+        counts[airport.status] += 1;
+        return counts;
+      },
+      { normal: 0, warning: 0, critical: 0 },
+    ),
+    [airports],
   );
+  const simulationActive = isRunning || isPaused;
   const isComplete = simulationComplete || collapseComplete || dayToDayComplete;
   const liveStatus = isStarting ? 'PREPARANDO'
     : isRunning ? 'EN CURSO'
@@ -172,7 +189,7 @@ export function LeftSidebar({
         <button
           onClick={onAddShipment}
           disabled={mode !== 'realtime' || !isRunning}
-          title={mode !== 'realtime' ? 'El registro manual de maletas solo aplica a la operación día a día' : !isRunning ? 'Inicia la operación para registrar maletas' : undefined}
+          title={mode !== 'realtime' ? 'El registro manual de maletas solo aplica a la operación día a día' : isPaused ? 'La operación está pausada' : !isRunning ? 'Inicia la operación para registrar maletas' : undefined}
           className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           style={{ fontWeight: 600 }}
         >
@@ -183,7 +200,7 @@ export function LeftSidebar({
           <button
             onClick={onUploadShipmentsFile}
             disabled={mode !== 'realtime' || !isRunning}
-            title={mode !== 'realtime' ? 'Solo aplica a la operación día a día' : !isRunning ? 'Inicia la operación para cargar el archivo' : undefined}
+            title={mode !== 'realtime' ? 'Solo aplica a la operación día a día' : isPaused ? 'La operación está pausada' : !isRunning ? 'Inicia la operación para cargar el archivo' : undefined}
             className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
             style={{ fontWeight: 600 }}
           >
@@ -194,7 +211,7 @@ export function LeftSidebar({
         <button
           onClick={onCancelFlight}
           disabled={!isRunning}
-          title={!isRunning ? 'Inicia una simulación activa para cancelar vuelos' : undefined}
+          title={isPaused ? 'La simulación está pausada' : !isRunning ? 'Inicia una simulación activa para cancelar vuelos' : undefined}
           className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#F97316]/15 border border-[#F97316]/45 text-[#F97316] text-xs hover:bg-[#F97316]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           style={{ fontWeight: 600 }}
         >
@@ -203,7 +220,8 @@ export function LeftSidebar({
         </button>
         <button
           onClick={onUploadStaticData}
-          disabled={isRunning}
+          disabled={simulationActive}
+          title={simulationActive ? 'Detén la simulación antes de reemplazar los datos base' : undefined}
           className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4DA6FF]/15 border border-[#4DA6FF]/40 text-[#4DA6FF] text-xs hover:bg-[#4DA6FF]/25 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           style={{ fontWeight: 600 }}
         >
@@ -244,7 +262,7 @@ export function LeftSidebar({
               onChange={e => {
                 if (e.target.value) onStartDateChange(new Date(e.target.value));
               }}
-              disabled={isRunning}
+              disabled={simulationActive}
               className="datetime-local-dark w-full bg-[#0D1E38] border border-[#1E3058] rounded-lg pl-7 pr-2 py-2 text-[11px] text-[#C8D8F0] focus:outline-none focus:border-[#4DA6FF]/60 focus:ring-1 focus:ring-[#4DA6FF]/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-[#0A1628] disabled:border-[#1A2848] disabled:text-[#6A80A0]"
               style={{ fontFamily: 'system-ui, -apple-system, sans-serif', colorScheme: 'dark' }}
             />
@@ -430,9 +448,10 @@ export function LeftSidebar({
           onChange={v => onFilterChange('destination', v)}
           options={cityOptions}
         />
-        {(filters.airline || filters.origin || filters.destination) && (
+        {(filters.origin || filters.destination) && (
           <button
-            onClick={() => { onFilterChange('airline', ''); onFilterChange('origin', ''); onFilterChange('destination', ''); }}
+            type="button"
+            onClick={onClearFilters}
             className="flex items-center gap-1 text-[10px] text-[#FF4D4D] hover:text-[#FF4D4D]/80 mt-1"
           >
             <X className="w-3 h-3" />
@@ -449,22 +468,33 @@ export function LeftSidebar({
               <Route className="w-3.5 h-3.5 text-[#4DA6FF]" />
               <span className="text-xs text-[#A8C0E0]">Mostrar Rutas</span>
             </div>
-            <ToggleSwitch checked={toggles.showRoutes} onChange={() => onToggleChange('showRoutes')} />
+            <ToggleSwitch label="Mostrar rutas" checked={toggles.showRoutes} onChange={() => onToggleChange('showRoutes')} />
           </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Warehouse className="w-3.5 h-3.5 text-[#FFC857]" />
               <span className="text-xs text-[#A8C0E0]">Capacidad de Almacén</span>
             </div>
-            <ToggleSwitch checked={toggles.showWarehouseCapacity} onChange={() => onToggleChange('showWarehouseCapacity')} />
+            <ToggleSwitch label="Mostrar capacidad de almacén" checked={toggles.showWarehouseCapacity} onChange={() => onToggleChange('showWarehouseCapacity')} />
           </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Zap className="w-3.5 h-3.5 text-[#FF4D4D]" />
               <span className="text-xs text-[#A8C0E0]">Alertas de Congestión</span>
             </div>
-            <ToggleSwitch checked={toggles.showCongestion} onChange={() => onToggleChange('showCongestion')} />
+            <ToggleSwitch label="Mostrar alertas de congestión" checked={toggles.showCongestion} onChange={() => onToggleChange('showCongestion')} />
           </div>
+          <div className="text-[9px] text-[#4A6080] leading-relaxed">
+            Las barras de capacidad aparecen al acercar el mapa; las UT con carga permanecen visibles con cualquier densidad.
+          </div>
+          <button
+            type="button"
+            onClick={onResetView}
+            className="mt-1 w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-[#1E3058] text-[10px] text-[#7090B0] hover:border-[#4DA6FF]/50 hover:text-[#4DA6FF] transition-colors"
+          >
+            <X className="w-3 h-3" />
+            Restablecer vista y filtros
+          </button>
         </div>
       </Section>
 
