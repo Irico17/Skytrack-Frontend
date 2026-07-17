@@ -124,13 +124,20 @@ export interface BackendConnected {
   simulationId: string;
 }
 
+/** Progreso de warm-up: el backend cargó los envíos y está calculando el ciclo 1. */
+export interface BackendPreparationProgress {
+  type: 'PREPARATION_PROGRESS';
+  simulationId: string;
+  message: string;
+}
+
 export interface BackendSimulationStarted {
   type: 'SIMULATION_STARTED';
   simulationId: string;
   activeSimulation: BackendActiveSimulation;
 }
 
-export type BackendWsMessage = BackendConnected | BackendSimulationStarted | BackendCycleUpdate | BackendStorageUpdate | BackendSimulationFinished | BackendSimulationError;
+export type BackendWsMessage = BackendConnected | BackendSimulationStarted | BackendPreparationProgress | BackendCycleUpdate | BackendStorageUpdate | BackendSimulationFinished | BackendSimulationError;
 
 export interface BackendActiveSimulation {
   simulationId: string;

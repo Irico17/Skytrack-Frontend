@@ -484,7 +484,9 @@ export default function App() {
                   <div className="w-4 h-4 rounded-full border-2 border-[#4DA6FF]/30 border-t-[#4DA6FF] animate-spin" />
                   <div className="flex flex-col">
                     <span className="text-xs text-[#C8D8F0]" style={{ fontWeight: 600 }}>Preparando simulación…</span>
-                    <span className="text-[10px] text-[#4A6080]">Cargando datos y ejecutando la primera planificación</span>
+                    <span className="text-[10px] text-[#4A6080]">
+                      {simulation.preparationMessage ?? 'Cargando datos y ejecutando la primera planificación'}
+                    </span>
                   </div>
                 </div>
               </div>

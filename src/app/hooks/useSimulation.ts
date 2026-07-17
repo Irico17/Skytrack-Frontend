@@ -145,6 +145,8 @@ interface UseSimulationReturn extends SimulationState {
   flightPlanFlights: BackendFlightPlanFlight[];
   /** Último ciclo recibido del backend para KPIs reales */
   lastCycleUpdate: BackendCycleUpdate | null;
+  /** Progreso del warm-up (envíos cargados, ciclo 1 en curso); null fuera del warm-up. */
+  preparationMessage: string | null;
   /** Clientes WebSocket conectados a la simulación activa (NAV-01). */
   viewerCount: number;
   /** IDs de vuelos cancelados (con sufijo -D{n}) para marcar/ocultar en UI y mapa. */
@@ -412,6 +414,8 @@ export function useSimulation(): UseSimulationReturn {
   // TODOS los vuelos del plan de vuelos (independientes del planificador)
   const [flightPlanFlights, setFlightPlanFlights] = useState<BackendFlightPlanFlight[]>([]);
   const [lastCycleUpdate, setLastCycleUpdate] = useState<BackendCycleUpdate | null>(null);
+  // Mensaje de warm-up del backend (PREPARATION_PROGRESS); se limpia al primer ciclo.
+  const [preparationMessage, setPreparationMessage] = useState<string | null>(null);
   // IDs de vuelos cancelados (con sufijo -D{n}) para marcarlos/ocultarlos en UI y mapa.
   const [cancelledFlightIds, setCancelledFlightIds] = useState<Set<string>>(() => new Set());
 
@@ -654,9 +658,21 @@ export function useSimulation(): UseSimulationReturn {
   // ===== MODO 5DAY — WebSocket handler =====
 
   const handle5DayWsMessage = useCallback((msg: any) => {
-    if (msg.type === 'CYCLE_UPDATE') {
+    if (msg.type === 'PREPARATION_PROGRESS') {
+      // Warm-up: los envíos ya están cargados y el ciclo 1 se está calculando.
+      setPreparationMessage(msg.message);
+      setEvents(prev => [{
+        id: `prep-${Date.now()}`,
+        type: 'info',
+        message: msg.message,
+        time: new Date(),
+        severity: 'info',
+      }, ...prev.slice(0, 19)]);
+
+    } else if (msg.type === 'CYCLE_UPDATE') {
       const update = msg as BackendCycleUpdate;
       setIsRunning(true);
+      setPreparationMessage(null);
       // El tiempo de ejecución comienza con la solución inicial lista, no mientras
       // el backend todavía está preparando el primer ciclo.
       setRealStartedAt(previous => previous ?? new Date());
@@ -702,6 +718,7 @@ export function useSimulation(): UseSimulationReturn {
       const failed = msg as BackendSimulationError;
       setIsRunning(false);
       setIsPaused(false);
+      setPreparationMessage(null);
       setSimulationComplete(false);
       clockBaseRef.current = null;
       clearStoredActiveSimulation();
@@ -723,6 +740,7 @@ export function useSimulation(): UseSimulationReturn {
       const finished = msg as BackendSimulationFinished;
       setIsRunning(false);
       setIsPaused(false);
+      setPreparationMessage(null);
       setSimulationComplete(mode === '5day');
       setCollapseComplete(mode === 'collapse');
       setDaysElapsed(mode === '5day'
@@ -1106,11 +1124,36 @@ export function useSimulation(): UseSimulationReturn {
           .catch(err => console.warn('No se pudo recargar el plan de vuelos:', err));
       }
     } catch (err) {
-      console.warn('No se pudo resincronizar la simulación activa:', err);
+      // 404 = el backend ya no conoce esta simulación (típicamente se reinició, p. ej.
+      // OOM-kill en la VM). Sin esto el frontend queda spameando /status para siempre
+      // y la pantalla "Preparando…" nunca sale.
+      if (err instanceof Error && err.message.startsWith('HTTP 404')) {
+        console.warn('La simulación ya no existe en el backend (¿reinicio del servidor?):', err);
+        setIsRunning(false);
+        setIsPaused(false);
+        setPreparationMessage(null);
+        clockBaseRef.current = null;
+        wsRef.current?.disconnect();
+        wsSimulationIdRef.current = null;
+        simIdRef.current = null;
+        setSimulationId(null);
+        clearStoredActiveSimulation();
+        cancelScheduledSolutionRefresh();
+        resetPlaybackBuffer();
+        setEvents(prev => [{
+          id: `sim-lost-${Date.now()}`,
+          type: 'alert',
+          message: 'Se perdió la simulación: el backend ya no la reconoce (posible reinicio del servidor). Vuelve a iniciarla.',
+          time: new Date(),
+          severity: 'critical',
+        }, ...prev.slice(0, 19)]);
+      } else {
+        console.warn('No se pudo resincronizar la simulación activa:', err);
+      }
     } finally {
       isResyncingRef.current = false;
     }
-  }, [mode, startDate, flightPlanFlights.length, applyBackendStatusClock, connectSimulationStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, pushPlaybackFrame]);
+  }, [mode, startDate, flightPlanFlights.length, applyBackendStatusClock, connectSimulationStream, ensureBackendAirports, loadProjectedFlightPlan, recoverFinishedSimulation, pushPlaybackFrame, cancelScheduledSolutionRefresh, resetPlaybackBuffer]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -1739,6 +1782,7 @@ export function useSimulation(): UseSimulationReturn {
     simClock, simClockRef, activeFlights, flightPlanFlights,
     simulationK,
     lastCycleUpdate,
+    preparationMessage,
     viewerCount,
     cancelledFlightIds,
     realStartedAt,
