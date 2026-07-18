@@ -2,9 +2,11 @@ import type { Shipment } from '../data/mockData';
 
 export const DELIVERED_WINDOW_MS = 4 * 60 * 60 * 1000;
 
-/** Resolves delivery instant from backend/mapped fields or estimated delivery fallback. */
+/** Resolves delivery instant from backend/mapped fields or estimated delivery fallback.
+ *  Prioriza el instante REAL de entrega (deliveredTime/deliveredAt) sobre finalArrivalTime,
+ *  que solo marca cuándo aterriza el avión — difieren por la ventana de recojo del cliente. */
 export function getShipmentDeliveryTimeMs(shipment: Shipment): number | null {
-  const candidates = [shipment.finalArrivalTime, shipment.deliveredAt];
+  const candidates = [shipment.deliveredTime, shipment.deliveredAt, shipment.finalArrivalTime];
   for (const value of candidates) {
     if (!value) continue;
     const ms = new Date(value).getTime();

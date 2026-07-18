@@ -233,7 +233,8 @@ export interface BackendBagItem {
   nextEvent: string | null;
   ingressTime: string;
   deadline: string;
-  finalArrivalTime: string | null;
+  finalArrivalTime: string | null; // aterrizaje del último vuelo, NO la entrega al cliente
+  deliveredTime: string | null;    // instante real de entrega (finalArrivalTime + ventana de recojo)
   meetsSla: boolean;
   progress: number;
   events: BackendBagEvent[];
@@ -352,7 +353,8 @@ export interface BackendRoute {
   quantity: number;
   meetsSLA: boolean;
   slaSlack: string;
-  finalArrivalTime: string;
+  finalArrivalTime: string; // aterrizaje del último vuelo, NO la entrega al cliente
+  deliveredTime: string;    // instante real de entrega (finalArrivalTime + ventana de recojo)
   flights: BackendFlightSegment[];
 }
 

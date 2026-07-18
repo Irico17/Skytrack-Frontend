@@ -432,8 +432,24 @@ function UtCard({ unit, nowMs, mapActive, onOpen, onMapFilter }: {
  * avance suave entre refrescos de la solución, sin recargar nada. Cae al valor del backend si
  * falta el timing. No reordena ni filtra (solo el valor mostrado), así no hay reflujo de la lista.
  */
+/**
+ * Instante real de entrega (aterrizaje + ventana de recojo), no el aterrizaje crudo —
+ * ver AssignedRoute.getDeliveredTime() en el backend. Cae a finalArrivalTime si el
+ * backend aún no manda deliveredTime (compatibilidad con datos viejos/mock).
+ */
+function deliveredAtMs(s: Shipment): number {
+  try {
+    if (s.deliveredTime) return parseApiInstant(s.deliveredTime).getTime();
+    if (s.finalArrivalTime) return parseApiInstant(s.finalArrivalTime).getTime();
+  } catch {
+    // fall through
+  }
+  return NaN;
+}
+
 function liveJourneyProgress(s: Shipment, nowMs: number): number {
-  if (s.progress >= 1 || s.deliveredAt) return 1;
+  const deliveredMs = deliveredAtMs(s);
+  if (Number.isFinite(deliveredMs) ? nowMs >= deliveredMs : (s.progress >= 1 || s.deliveredAt)) return 1;
   const firstLeg = s.legs?.[0];
   const lastLeg = s.legs?.[s.legs.length - 1];
   let start = firstLeg?.dep ?? NaN;
@@ -462,16 +478,18 @@ function liveShipmentState(s: Shipment, nowMs: number, currentFlightAirborne = f
   state: LiveState; flightId: string | null; airportId: string | null; progress: number;
 } {
   const progress = liveJourneyProgress(s, nowMs);
+  const deliveredMs = deliveredAtMs(s);
+  const isDelivered = Number.isFinite(deliveredMs) ? nowMs >= deliveredMs : (s.progress >= 1 || !!s.deliveredAt);
   const legs = s.legs;
   if (!legs || legs.length === 0) {
     const hasUt = s.currentFlightId && s.currentFlightId !== 'PENDING';
-    if (s.progress >= 1 || s.deliveredAt) return { state: 'delivered', flightId: null, airportId: s.destination, progress: 1 };
+    if (isDelivered) return { state: 'delivered', flightId: null, airportId: s.destination, progress: 1 };
     if (hasUt && currentFlightAirborne) return { state: 'in_flight', flightId: s.currentFlightId, airportId: null, progress };
     return { state: hasUt ? 'scheduled' : 'pending', flightId: hasUt ? s.currentFlightId : null, airportId: hasUt ? null : s.origin, progress };
   }
   const first = legs[0];
   const last = legs[legs.length - 1];
-  if (nowMs >= last.arr) return { state: 'delivered', flightId: null, airportId: last.to, progress: 1 };
+  if (isDelivered) return { state: 'delivered', flightId: null, airportId: last.to, progress: 1 };
   if (nowMs < first.dep) return { state: 'at_origin', flightId: null, airportId: first.from, progress: 0 };
   for (let i = 0; i < legs.length; i++) {
     const leg = legs[i];

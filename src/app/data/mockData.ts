@@ -47,8 +47,11 @@ export interface Shipment {
   status: ShipmentStatus;
   progress: number;
   estimatedDelivery: string;
-  /** ISO-8601 delivery instant from backend route (ENV-03). */
+  /** ISO-8601 de aterrizaje del último vuelo (ENV-03). NO es la entrega al cliente —
+   *  usar {@link deliveredTime} para eso; este campo solo sirve para animar el tramo final. */
   finalArrivalTime?: string | null;
+  /** ISO-8601 del instante real de entrega al cliente (aterrizaje + ventana de recojo). */
+  deliveredTime?: string | null;
   /** ISO-8601 de la PRIMERA salida del viaje. Permite interpolar el progreso en vivo
    *  en el panel (misma fórmula que el backend) sin recargar la solución. */
   journeyStartTime?: string | null;

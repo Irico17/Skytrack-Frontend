@@ -300,8 +300,8 @@ export function ShipmentDetailPanel({ shipment, flights, airports, onClose, simu
                 <Calendar className="w-3 h-3 text-[#00FF9C]" />
                 <span className="text-[9px] text-[#4A6080]">ENTREGA ESTIMADA</span>
               </div>
-              {bag?.finalArrivalTime ? (
-                <div className="text-sm text-[#00FF9C]" style={{ fontWeight: 600 }}>{fmtIso(bag.finalArrivalTime)}</div>
+              {bag?.deliveredTime ?? bag?.finalArrivalTime ? (
+                <div className="text-sm text-[#00FF9C]" style={{ fontWeight: 600 }}>{fmtIso(bag.deliveredTime ?? bag.finalArrivalTime)}</div>
               ) : (
                 <>
                   <div className="text-sm text-[#00FF9C]" style={{ fontWeight: 600 }}>{fmtTime(estDeliveryDate)}</div>

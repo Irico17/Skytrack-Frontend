@@ -205,8 +205,13 @@ export function mapSolutionToShipments(solution: BackendSolution, simulatedTime:
       }))
       .sort((a, b) => a.depMs - b.depMs);
     const finalArrival = route.finalArrivalTime;
+    const deliveredTime = route.deliveredTime;
     const startMs = orderedFlights[0]?.depMs ?? now;
-    const endMs = parseApiInstant(finalArrival).getTime();
+    const deliveredMs = parseApiInstant(deliveredTime).getTime();
+    // Denominador = ENTREGA real (aterrizaje + ventana de recojo), no el aterrizaje crudo:
+    // así "progress >= 1" en cualquier lugar del frontend significa "entregado de verdad",
+    // no "el avión ya aterrizó" (los dos difieren por AssignedRoute.FINAL_PICKUP_WINDOW).
+    const endMs = Number.isFinite(deliveredMs) ? deliveredMs : parseApiInstant(finalArrival).getTime();
     const progress = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
       ? clamp((now - startMs) / (endMs - startMs))
       : 0;
@@ -224,13 +229,14 @@ export function mapSolutionToShipments(solution: BackendSolution, simulatedTime:
       luggageCount: route.quantity,
       status: route.meetsSLA ? 'on-time' : 'delayed',
       progress,
-      estimatedDelivery: formatDelivery(finalArrival),
+      estimatedDelivery: formatDelivery(deliveredTime),
       finalArrivalTime: finalArrival,
+      deliveredTime,
       journeyStartTime: orderedFlights[0]?.departureTime ?? null,
       legs: orderedFlights.map(f => ({
         id: f.flightId, from: f.originId, to: f.destinationId, dep: f.depMs, arr: f.arrMs,
       })),
-      deliveredAt: progress >= 1 ? finalArrival : null,
+      deliveredAt: Number.isFinite(deliveredMs) && now >= deliveredMs ? deliveredTime : null,
       isReplanned: false,
     };
   });
