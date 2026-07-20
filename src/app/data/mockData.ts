@@ -142,7 +142,7 @@ export function getOccupancyPercent(occupancy: number, capacity: number): number
 }
 
 export function getOccupancyStatus(percent: number): AirportStatus {
-  if (percent >= 90) return 'critical';
-  if (percent >= 70) return 'warning';
+  if (percent >= 80) return 'critical';
+  if (percent >= 50) return 'warning';
   return 'normal';
 }

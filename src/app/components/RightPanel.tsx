@@ -2212,7 +2212,7 @@ export function RightPanel({
                       {warehouseData.map((entry) => (
                         <Cell
                           key={`bar-cell-${entry.id}`}
-                          fill={entry.pct >= 90 ? '#FF4D4D' : entry.pct >= 70 ? '#FFC857' : '#00FF9C'}
+                          fill={entry.pct >= 80 ? '#FF4D4D' : entry.pct >= 50 ? '#FFC857' : '#00FF9C'}
                         />
                       ))}
                     </Bar>
@@ -2328,7 +2328,7 @@ export function RightPanel({
                   { label: hasBackendStats ? 'Aeropuertos Sobrecap.' : 'Críticos', value: criticalCount, color: '#FF4D4D' },
                   { label: 'Replanificados', value: replanCount, color: '#A855F7' },
                   { label: 'Total Maletas', value: typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags, color: '#4DA6FF' },
-                  { label: 'Ocupación Prom.', value: `${avgOccupancy}%`, color: getStatusColor(avgOccupancy >= 90 ? 'critical' : avgOccupancy >= 70 ? 'warning' : 'normal') },
+                  { label: 'Ocupación Prom.', value: `${avgOccupancy}%`, color: getStatusColor(avgOccupancy >= 80 ? 'critical' : avgOccupancy >= 50 ? 'warning' : 'normal') },
                   { label: 'Pico de Aeropuerto', value: backendMetrics?.peakAirportId ? `${backendMetrics.peakAirportId} · ${Math.round(backendMetrics.peakAirportOccupancyRatio * 100)}%` : DASH, color: backendMetrics?.peakAirportId ? '#4DA6FF' : '#4A6080' },
                 ].map(row => (
                   <ReportRow key={row.label} label={row.label} value={row.value} color={row.color} />
