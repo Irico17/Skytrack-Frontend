@@ -1419,7 +1419,7 @@ export function RightPanel({
               </div>
               <div className="flex items-center gap-2 mt-2">
                 <div className="flex-1 h-2 rounded-full bg-[#1E3058] overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: color }} />
+                  <div className="h-full rounded-full transition-[width] duration-[600ms] ease-linear" style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: color }} />
                 </div>
                 <span className="text-[11px] font-mono" style={{ color }}>{pct}%</span>
               </div>
@@ -2247,7 +2247,7 @@ export function RightPanel({
                       <span className="text-[11px] text-[#A8C0E0] w-8" style={{ fontWeight: 600 }}>{a.id}</span>
                       <span className="text-[10px] text-[#4A6080] flex-1 truncate">{a.city}</span>
                       <div className="w-16 h-1.5 rounded-full bg-[#1E3058] overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
+                        <div className="h-full rounded-full transition-[width] duration-[600ms] ease-linear" style={{ width: `${pct}%`, backgroundColor: color }} />
                       </div>
                       <span className="text-[11px] font-mono w-8 text-right" style={{ color }}>{pct}%</span>
                       <button

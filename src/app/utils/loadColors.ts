@@ -1,11 +1,11 @@
-/** Colores UT por % de carga (spec PO: ≥90 rojo, ≥70 ámbar, con carga azul, vacío gris). */
+/** Colores UT por % de carga (spec PO: ≥90 rojo, ≥70 ámbar, con carga verde, vacío gris-azulado). */
 export function getUtLoadColor(bagsCount: number, capacity: number): string {
-  if (bagsCount <= 0) return '#3A4A5E';
-  if (capacity <= 0) return '#4DA6FF';
+  if (bagsCount <= 0) return '#5E7699';
+  if (capacity <= 0) return '#4ADE80';
   const pct = bagsCount / capacity;
   if (pct >= 0.9) return '#FF4D4D';
   if (pct >= 0.7) return '#FFC857';
-  return '#4DA6FF';
+  return '#4ADE80';
 }
 
 export function getLoadPercent(bagsCount: number, capacity: number): number {

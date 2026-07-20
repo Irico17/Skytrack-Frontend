@@ -290,7 +290,7 @@ export interface BackendDaySnapshot {
 }
 
 export interface BackendCollapseInfo {
-  causeCode: string;        // WAREHOUSE_SATURATION | UNSERVICEABLE_BATCHES | CAPACITY_SATURATION | ALGORITHM_FITNESS
+  causeCode: string;        // WAREHOUSE_OVER_CAPACITY | SLA_VIOLATION | UNSERVICEABLE_BATCHES | CAPACITY_SATURATION | ALGORITHM_FITNESS
   causeLabel: string;
   reason: string;
   detectedAtReal: string | null;  // ISO-8601 (reloj real)
@@ -300,6 +300,11 @@ export interface BackendCollapseInfo {
   criticalAirports: number;
   totalAirports: number;
   cycle: number;
+  lastCycleBatches: number;
+  lastCycleBags: number;
+  lastCycleBatchesUnrouted: number;
+  lastCycleBagsUnrouted: number;
+  lastCycleSlaExpired: number;
 }
 
 export interface BackendSimulationResults {

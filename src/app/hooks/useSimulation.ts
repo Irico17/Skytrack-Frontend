@@ -63,6 +63,11 @@ export interface CollapseConditions {
   criticalAirports: number;
   totalAirports: number;
   cycle: number;
+  lastCycleBatches: number;
+  lastCycleBags: number;
+  lastCycleBatchesUnrouted: number;
+  lastCycleBagsUnrouted: number;
+  lastCycleSlaExpired: number;
 }
 
 export interface CollapseMetrics {
@@ -159,7 +164,7 @@ interface UseSimulationReturn extends SimulationState {
 
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
 const PLAYBACK_DELAY_MS = 100;
-// El backend envía reloj cada 1 s (2 s durante planning). Entre frames el navegador
+// El backend envía reloj cada ~0.5 s (1 s durante planning). Entre frames el navegador
 // extrapola con K para que el canvas conserve movimiento continuo.
 const PLAYBACK_MAX_EXTRAPOLATION_REAL_MS = 3_000;
 const PLAYBACK_BACKWARD_JITTER_TOLERANCE_MS = 5_000;
@@ -262,6 +267,55 @@ async function mapSolutionToShipmentsCooperatively(solution: BackendSolution, si
   return mapped;
 }
 
+type MappedSolutionResult = { mapped: Shipment[]; empty: boolean };
+
+/** Fallback en hilo principal si el Worker no está disponible. */
+async function fetchAndMapSolutionOnMainThread(
+  simId: string,
+  simulatedTime: Date,
+): Promise<MappedSolutionResult> {
+  const solution = await getSimulationSolution(simId);
+  if (solution.routes.length === 0 && (solution.totalRoutes ?? 0) === 0) {
+    return { mapped: [], empty: true };
+  }
+  const mapped = await mapSolutionToShipmentsCooperatively(solution, simulatedTime);
+  return { mapped, empty: false };
+}
+
+function fetchAndMapSolutionViaWorker(
+  worker: Worker,
+  seq: number,
+  simId: string,
+  simulatedTimeMs: number,
+): Promise<MappedSolutionResult> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; seq?: number; mapped?: Shipment[]; empty?: boolean; message?: string };
+      if (!data || data.seq !== seq) return;
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+      if (data.type === 'error') {
+        reject(new Error(data.message || 'Error en solutionWorker'));
+        return;
+      }
+      resolve({ mapped: data.mapped ?? [], empty: Boolean(data.empty) });
+    };
+    const onError = (event: ErrorEvent) => {
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+      reject(event.error instanceof Error ? event.error : new Error(event.message || 'Worker error'));
+    };
+    worker.addEventListener('message', onMessage);
+    worker.addEventListener('error', onError);
+    worker.postMessage({
+      type: 'fetch',
+      seq,
+      simId,
+      simulatedTimeMs,
+    });
+  });
+}
+
 function stripProjectedDaySuffix(flightId: string): string {
   return flightId.replace(/-D\d+$/, '');
 }
@@ -334,6 +388,11 @@ function buildCollapseMetricsFromResults(
           criticalAirports: ci.criticalAirports,
           totalAirports: ci.totalAirports,
           cycle: ci.cycle,
+          lastCycleBatches: ci.lastCycleBatches,
+          lastCycleBags: ci.lastCycleBags,
+          lastCycleBatchesUnrouted: ci.lastCycleBatchesUnrouted,
+          lastCycleBagsUnrouted: ci.lastCycleBagsUnrouted,
+          lastCycleSlaExpired: ci.lastCycleSlaExpired,
         }
       : null,
   };
@@ -402,6 +461,8 @@ export function useSimulation(): UseSimulationReturn {
   const hasFirstCycleRef = useRef(false);
   const solutionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const solutionRefreshSeqRef = useRef(0);
+  const solutionWorkerRef = useRef<Worker | null>(null);
+  const solutionWorkerUnavailableRef = useRef(false);
   const backendAirportsRef = useRef<Airport[]>([]);
   const backendAirportsLoadedRef = useRef(false);
   const lastClockStateCommitRef = useRef(0);
@@ -568,6 +629,63 @@ export function useSimulation(): UseSimulationReturn {
     }
   }, []);
 
+  const terminateSolutionWorker = useCallback(() => {
+    if (solutionWorkerRef.current) {
+      solutionWorkerRef.current.terminate();
+      solutionWorkerRef.current = null;
+    }
+  }, []);
+
+  const ensureSolutionWorker = useCallback((): Worker | null => {
+    if (solutionWorkerUnavailableRef.current) return null;
+    if (typeof Worker === 'undefined') {
+      solutionWorkerUnavailableRef.current = true;
+      return null;
+    }
+    if (solutionWorkerRef.current) return solutionWorkerRef.current;
+    try {
+      const worker = new Worker(
+        new URL('../workers/solutionWorker.ts', import.meta.url),
+        { type: 'module' },
+      );
+      worker.onerror = () => {
+        // Fallo de carga/runtime: marcar unavailable y volver al hilo principal.
+        solutionWorkerUnavailableRef.current = true;
+        terminateSolutionWorker();
+      };
+      solutionWorkerRef.current = worker;
+      return worker;
+    } catch (err) {
+      console.warn('Solution worker no disponible; se usa el hilo principal:', err);
+      solutionWorkerUnavailableRef.current = true;
+      return null;
+    }
+  }, [terminateSolutionWorker]);
+
+  const fetchAndMapSolution = useCallback(async (
+    simId: string,
+    simulatedTime: Date,
+    seq: number,
+  ): Promise<MappedSolutionResult> => {
+    const worker = ensureSolutionWorker();
+    if (!worker) {
+      return fetchAndMapSolutionOnMainThread(simId, simulatedTime);
+    }
+    try {
+      return await fetchAndMapSolutionViaWorker(
+        worker,
+        seq,
+        simId,
+        simulatedTime.getTime(),
+      );
+    } catch (err) {
+      console.warn('Fallo del solution worker; fallback al hilo principal:', err);
+      solutionWorkerUnavailableRef.current = true;
+      terminateSolutionWorker();
+      return fetchAndMapSolutionOnMainThread(simId, simulatedTime);
+    }
+  }, [ensureSolutionWorker, terminateSolutionWorker]);
+
   const scheduleSolutionRefresh = useCallback((simulatedTime: Date) => {
     const id = simIdRef.current;
     if (!id) return;
@@ -576,25 +694,24 @@ export function useSimulation(): UseSimulationReturn {
     const seq = solutionRefreshSeqRef.current;
     solutionRefreshTimerRef.current = setTimeout(() => {
       solutionRefreshTimerRef.current = null;
-      getSimulationSolution(id)
-        .then(async solution => {
+      const clockTime = new Date(simClockRef.current.getTime() || simulatedTime.getTime());
+      fetchAndMapSolution(id, clockTime, seq)
+        .then(result => {
           if (seq !== solutionRefreshSeqRef.current) return;
-          if (solution.routes.length === 0 && solution.totalRoutes === 0) {
+          if (result.empty) {
             startTransition(() => setShipments(prev => prev.length > 0 ? prev : []));
             return;
           }
-          const mapped = await mapSolutionToShipmentsCooperatively(
-            solution,
-            new Date(simClockRef.current.getTime() || simulatedTime.getTime()),
-          );
-          if (seq !== solutionRefreshSeqRef.current) return;
-          applyMappedShipments(mapped);
+          applyMappedShipments(result.mapped);
         })
         .catch(err => console.warn('No se pudo refrescar la solución:', err));
     }, SOLUTION_REFRESH_DELAY_MS);
-  }, [applyMappedShipments, cancelScheduledSolutionRefresh]);
+  }, [applyMappedShipments, cancelScheduledSolutionRefresh, fetchAndMapSolution]);
 
-  useEffect(() => () => cancelScheduledSolutionRefresh(), [cancelScheduledSolutionRefresh]);
+  useEffect(() => () => {
+    cancelScheduledSolutionRefresh();
+    terminateSolutionWorker();
+  }, [cancelScheduledSolutionRefresh, terminateSolutionWorker]);
 
   // ===== CARGAR AEROPUERTOS REALES PARA MODOS BACKEND =====
   useEffect(() => {
@@ -785,11 +902,12 @@ export function useSimulation(): UseSimulationReturn {
         const finalTime = mode === '5day'
           ? new Date(startDate.getTime() + FIVE_DAYS_MS)
           : simClockRef.current;
-        getSimulationSolution(id)
-          .then(async solution => {
-            if (solution.routes.length === 0) return;
-            const mapped = await mapSolutionToShipmentsCooperatively(solution, finalTime);
-            applyMappedShipments(mapped);
+        const seq = solutionRefreshSeqRef.current;
+        fetchAndMapSolution(id, finalTime, seq)
+          .then(result => {
+            if (seq !== solutionRefreshSeqRef.current) return;
+            if (result.empty) return;
+            applyMappedShipments(result.mapped);
           })
           .catch(err => console.warn('No se pudo cargar la solución final para el reporte:', err));
       }
@@ -798,7 +916,7 @@ export function useSimulation(): UseSimulationReturn {
       wsRef.current?.disconnect();
       wsSimulationIdRef.current = null;
     }
-  }, [startDate, mode, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, refreshCollapseFlightPlanIfNeeded, cancelScheduledSolutionRefresh, commitClockState, applyMappedShipments]);
+  }, [startDate, mode, pushPlaybackFrame, resetPlaybackBuffer, scheduleSolutionRefresh, refreshCollapseFlightPlanIfNeeded, cancelScheduledSolutionRefresh, commitClockState, applyMappedShipments, fetchAndMapSolution]);
 
   const connectSimulationStream = useCallback((simulationId = simIdRef.current) => {
     if (!simulationId) return;
@@ -867,10 +985,15 @@ export function useSimulation(): UseSimulationReturn {
     const id = simIdRef.current;
     if (!id) return;
 
-    const solution = await getSimulationSolution(id);
-    const mapped = await mapSolutionToShipmentsCooperatively(solution, time);
-    applyMappedShipments(mapped);
-  }, [applyMappedShipments]);
+    const seq = ++solutionRefreshSeqRef.current;
+    const result = await fetchAndMapSolution(id, time, seq);
+    if (seq !== solutionRefreshSeqRef.current) return;
+    if (result.empty) {
+      startTransition(() => setShipments(prev => prev.length > 0 ? prev : []));
+      return;
+    }
+    applyMappedShipments(result.mapped);
+  }, [applyMappedShipments, fetchAndMapSolution]);
 
   const restoreBackendSession = useCallback(async (session: StoredActiveSimulation, sourceLabel: string) => {
     disconnectActiveDiscoveryStream();

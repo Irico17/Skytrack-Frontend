@@ -59,7 +59,7 @@ function CapacityBar({ value, max, color }: { value: number; max: number; color:
     <div className="flex items-center gap-2 mt-1">
       <div className="flex-1 h-1.5 rounded-full bg-[#1E3058] overflow-hidden">
         <div
-          className="h-full rounded-full transition-all"
+          className="h-full rounded-full transition-[width] duration-[600ms] ease-linear"
           style={{ width: `${pct}%`, backgroundColor: color }}
         />
       </div>

@@ -260,6 +260,12 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
       lines.push(reportLine('Aeropuertos críticos', `${conditions.criticalAirports}/${conditions.totalAirports}`));
       lines.push(reportLine('Ciclo', conditions.cycle));
       lines.push(`\nMotivo: ${conditions.reason}`);
+      lines.push(reportSection('ÚLTIMO CICLO EJECUTADO (AL DETENERSE)'));
+      lines.push(reportLine('Lotes consumidos', conditions.lastCycleBatches));
+      lines.push(reportLine('Maletas consumidas', conditions.lastCycleBags));
+      lines.push(reportLine('Lotes sin ruta', conditions.lastCycleBatchesUnrouted));
+      lines.push(reportLine('Maletas sin ruta', conditions.lastCycleBagsUnrouted));
+      lines.push(reportLine('Lotes con SLA vencido', conditions.lastCycleSlaExpired));
     }
     lines.push(reportSection('MÉTRICAS'));
     lines.push(reportLine('Tiempo al colapso', m.timeToCollapse));
@@ -442,6 +448,14 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
                     <span className="text-[#FF7070]">{conditions.criticalAirports}/{conditions.totalAirports}</span>
                     <span className="text-[#4A6080]"> · </span>
                     <span className="text-[#C8D8F0]">#{conditions.cycle}</span>
+                  </div>
+                </div>
+                <div className="bg-[#0D1E38] rounded-lg p-2.5 border border-[#1E3058] col-span-2">
+                  <div className="text-[9px] text-[#4A6080] mb-1">ÚLTIMO CICLO: LOTES/MALETAS SIN RUTA · SLA VENCIDO</div>
+                  <div className="text-[11px]" style={{ fontWeight: 600 }}>
+                    <span className="text-[#FF7070]">{conditions.lastCycleBatchesUnrouted} lotes / {conditions.lastCycleBagsUnrouted.toLocaleString()} maletas</span>
+                    <span className="text-[#4A6080]"> · </span>
+                    <span className="text-[#FF4D4D]">{conditions.lastCycleSlaExpired} con SLA vencido</span>
                   </div>
                 </div>
               </div>

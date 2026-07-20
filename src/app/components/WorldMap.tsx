@@ -317,7 +317,7 @@ function drawPlaneMarker(
     ctx.fill();
     ctx.stroke();
   } else if (denseMode) {
-    ctx.globalAlpha = 0.32;
+    ctx.globalAlpha = 0.5;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.moveTo(0, -3.1);
@@ -327,7 +327,7 @@ function drawPlaneMarker(
     ctx.closePath();
     ctx.fill();
   } else {
-    ctx.globalAlpha = 0.62;
+    ctx.globalAlpha = 0.8;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.moveTo(0, -3.4);
@@ -1675,8 +1675,8 @@ function WorldMapComponent({
             <span className="text-[9px] text-[#4A6080] px-1" style={{ letterSpacing: '0.08em' }}>UT</span>
             {([
               { id: 'all', label: 'Todos', c: '#A8C0E0' },
-              { id: 'empty', label: 'Vacío', c: '#3A4A5E' },
-              { id: 'normal', label: 'Normal', c: '#4DA6FF' },
+              { id: 'empty', label: 'Vacío', c: '#5E7699' },
+              { id: 'normal', label: 'Normal', c: '#4ADE80' },
               { id: 'warning', label: 'Adv.', c: '#FFC857' },
               { id: 'critical', label: 'Crít.', c: '#FF4D4D' },
             ] as { id: string; label: string; c: string }[]).map(opt => {
