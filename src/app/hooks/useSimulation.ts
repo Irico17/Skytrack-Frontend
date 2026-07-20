@@ -1530,6 +1530,8 @@ export function useSimulation(): UseSimulationReturn {
           message: isFiveDay
             // res.Sa/res.Ta llegan en SEGUNDOS desde el backend; res.Sc en minutos simulados.
             ? `Simulación iniciada — K=${K}× — Sa=${res.Sa ?? '?'}s — Sc=${res.Sc ? `${(res.Sc / 60).toFixed(1).replace(/\.0$/, '')} h` : '?'} — Duración: ${res.totalRealMinutes?.toFixed(0) ?? '?'} min reales`
+            : mode === 'collapse'
+            ? `Simulación de colapso iniciada — ${formatLocalDateTime(runDate)} — K=${K}×`
             : `Operación día a día iniciada — ${formatLocalDateTime(runDate)} — K=${K}×`,
           time: new Date(),
           severity: 'info',

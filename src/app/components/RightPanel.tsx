@@ -514,8 +514,9 @@ const LIVE_STATE_META: Record<LiveState, { label: string; color: string }> = {
   delivered: { label: 'Entregado', color: '#00FF9C' },
 };
 
-function ShipmentCard({ shipment, mapActive, onOpen, onMapFilter, nowMs, currentFlightAirborne = false }: {
+function ShipmentCard({ shipment, familySize = 1, mapActive, onOpen, onMapFilter, nowMs, currentFlightAirborne = false }: {
   shipment: Shipment;
+  familySize?: number;
   mapActive: boolean;
   onOpen?: () => void;
   onMapFilter?: () => void;
@@ -527,6 +528,8 @@ function ShipmentCard({ shipment, mapActive, onOpen, onMapFilter, nowMs, current
   const pct = Math.round(live.progress * 100);
   const liveMeta = LIVE_STATE_META[live.state];
   const liveWhere = live.flightId ? `Vuelo ${live.flightId}` : live.airportId ? `Almacén ${live.airportId}` : '';
+  const splitMatch = shipment.id.match(/-S(\d+)$/);
+  const isSplit = familySize > 1 || !!splitMatch;
   return (
     <div
       onClick={onOpen}
@@ -537,6 +540,15 @@ function ShipmentCard({ shipment, mapActive, onOpen, onMapFilter, nowMs, current
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-white truncate" style={{ fontWeight: 700 }}>{shipment.id}</span>
+            {isSplit && (
+              <span
+                className="text-[9px] px-1 rounded flex-shrink-0"
+                style={{ backgroundColor: '#B78CFF1F', color: '#B78CFF', fontWeight: 600 }}
+                title="Este envío se dividió por capacidad — sus partes pueden tomar rutas distintas. Selecciónalo en el mapa para ver la familia completa."
+              >
+                Dividido · {familySize}
+              </span>
+            )}
             <span className="text-[9px] text-[#4A6080] border border-[#1E3058] rounded px-1 flex-shrink-0">{shipment.luggageCount} maletas</span>
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
@@ -1108,6 +1120,20 @@ export function RightPanel({
         return getOccupancyPercent(b.occupancy, b.capacity) - getOccupancyPercent(a.occupancy, a.capacity);
       });
   }, [activeTab, airports, opsSearch, warehouseFilter, warehouseContinent, warehouseSort, warehouseNextUtTimes]);
+
+  // Un envío que se dividió por capacidad aparece como varias filas independientes
+  // ("B16-S1", "B16-S2"...), cada una con su propia ruta. Este mapa (id BASE -> cuántas
+  // filas comparten ese base) deja marcar en la tarjeta cuáles son parte de una división,
+  // sin tener que tocar cómo se listan (mismo criterio de sufijo "-S<n>" que usa el mapa
+  // en selectedShipmentGeometry para dibujar la familia completa).
+  const splitFamilySizeById = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of shipments) {
+      const base = s.id.replace(/(-S\d+)+$/, '');
+      counts.set(base, (counts.get(base) ?? 0) + 1);
+    }
+    return counts;
+  }, [shipments]);
 
   const operationalShipments = useMemo(() => {
     if (activeTab !== 'shipments') return [];
@@ -1901,6 +1927,7 @@ export function RightPanel({
                 <ShipmentCard
                   key={shipment.id}
                   shipment={shipment}
+                  familySize={splitFamilySizeById.get(shipment.id.replace(/(-S\d+)+$/, '')) ?? 1}
                   mapActive={isFilterActive('shipment', shipment.id)}
                   onOpen={() => openInspector({ kind: 'shipment', id: shipment.id })}
                   onMapFilter={() => handleMapFilterClick({ type: 'shipment', id: shipment.id }, () => onSelectShipment?.(shipment.id))}
@@ -2004,6 +2031,10 @@ export function RightPanel({
                     {bagTraceability.bags.map(bag => {
                       const color = bagStateColor(bag.state);
                       const selected = selectedBagId === bag.bagId;
+                      // "-S<n>" en el batchId = esta maleta viajó en un sub-lote (el envío se
+                      // dividió por capacidad); dos maletas del MISMO cliente/lote original con
+                      // batchId distinto tomaron rutas distintas.
+                      const isSplitLot = /-S\d+$/.test(bag.batchId);
                       return (
                         <button
                           key={bag.bagId}
@@ -2016,6 +2047,15 @@ export function RightPanel({
                               <div className="flex items-center gap-2">
                                 <span className="text-[11px] text-white truncate" style={{ fontWeight: 700 }}>{bag.bagId}</span>
                                 <span className="text-[9px] border rounded px-1" style={{ color, borderColor: `${color}55` }}>{bagStateLabel(bag.state)}</span>
+                                {isSplitLot && (
+                                  <span
+                                    className="text-[9px] px-1 rounded flex-shrink-0"
+                                    style={{ backgroundColor: '#B78CFF1F', color: '#B78CFF', fontWeight: 600 }}
+                                    title="Esta maleta viajó en un sub-lote de un envío dividido por capacidad"
+                                  >
+                                    {bag.batchId}
+                                  </span>
+                                )}
                               </div>
                               <div className="text-[10px] text-[#4A6080] mt-0.5 truncate">
                                 {bag.clientId} · {bag.originId} → {bag.destinationId}
