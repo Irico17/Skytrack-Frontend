@@ -12,6 +12,7 @@ import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercen
 import { getBagTraceability } from '../services/api';
 import { isDeliveredInSimWindow } from '../utils/shipmentFilters';
 import { parseApiInstant } from '../utils/simulationTime';
+import { SUBLOT_COLORS } from '../utils/loadColors';
 import type { BackendActiveFlight, BackendBagItem, BackendBagTraceability, BackendCycleUpdate, BackendFlightPlanFlight } from '../types/backend';
 
 interface MapEntityFilter {
@@ -609,6 +610,29 @@ function BagListSection({ simulationId, query, clientId, batchId, title, refresh
   const [stateFilter, setStateFilter] = useState('ALL');
   const [expandedBagId, setExpandedBagId] = useState<string | null>(null);
 
+  // Sub-lotes ("-S<n>") presentes en la página: un envío dividido por capacidad viaja en
+  // varias rutas — cada batchId distinto ES una ruta distinta. Mismo orden numérico y misma
+  // paleta que usa el mapa para dibujar la familia (ver SUBLOT_COLORS en utils/loadColors),
+  // así el grupo de maletas "S2" de esta lista se corresponde 1:1 con la línea de ese color
+  // en el mapa. Solo se señaliza cuando hay MÁS de un sub-lote (si no, no hay nada que
+  // distinguir). La etiqueta corta es el sufijo del sub-lote (estable ante paginación, a
+  // diferencia de un "Ruta 1/2" posicional que cambiaría de página a página).
+  const sublotIds = useMemo(() => {
+    if (!data) return [] as string[];
+    const ids = [...new Set(data.bags.map(b => b.batchId))];
+    ids.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return ids;
+  }, [data]);
+  const sublotBase = useMemo(
+    () => (sublotIds.length > 0 ? sublotIds[0].replace(/(-S\d+)+$/, '') : ''),
+    [sublotIds],
+  );
+  const sublotColor = (id: string) => SUBLOT_COLORS[sublotIds.indexOf(id) % SUBLOT_COLORS.length];
+  const sublotShortLabel = (id: string) => {
+    const suffix = id.slice(sublotBase.length).replace(/^-/, '');
+    return suffix === '' ? 'Principal' : suffix;
+  };
+
   useEffect(() => {
     setPage(0);
   }, [simulationId, query, clientId, batchId, stateFilter]);
@@ -658,10 +682,28 @@ function BagListSection({ simulationId, query, clientId, batchId, title, refresh
 
       {simulationId && data && (
         <>
+          {sublotIds.length > 1 && (
+            <div className="flex items-center gap-2 flex-wrap mt-2 px-1">
+              <span className="text-[9px] text-[#B78CFF]" style={{ fontWeight: 600 }}>
+                Envío dividido · {sublotIds.length} rutas:
+              </span>
+              {sublotIds.map(id => (
+                <span
+                  key={id}
+                  className="text-[9px] px-1 rounded border flex-shrink-0"
+                  style={{ color: sublotColor(id), borderColor: `${sublotColor(id)}55`, backgroundColor: `${sublotColor(id)}14`, fontWeight: 600 }}
+                  title={`Sub-lote ${id} — mismo color que su ruta en el mapa`}
+                >
+                  {sublotShortLabel(id)}
+                </span>
+              ))}
+            </div>
+          )}
           <div className="max-h-[280px] overflow-y-auto flex flex-col gap-2 mt-2">
             {data.bags.map(bag => {
               const color = bagStateColor(bag.state);
               const expanded = expandedBagId === bag.bagId;
+              const routeColor = sublotColor(bag.batchId);
               return (
                 <div key={bag.bagId} className={`rounded-lg border bg-[#081426] transition-colors ${expanded ? 'border-[#4DA6FF]' : 'border-[#1E3058] hover:border-[#4DA6FF]/40'}`}>
                   <button
@@ -674,6 +716,15 @@ function BagListSection({ simulationId, query, clientId, batchId, title, refresh
                         <div className="flex items-center gap-2">
                           <span className="text-[11px] text-white truncate" style={{ fontWeight: 700 }}>{bag.bagId}</span>
                           <span className="text-[9px] border rounded px-1 flex-shrink-0" style={{ color, borderColor: `${color}55` }}>{bagStateLabel(bag.state)}</span>
+                          {sublotIds.length > 1 && (
+                            <span
+                              className="text-[9px] px-1 rounded flex-shrink-0"
+                              style={{ color: routeColor, backgroundColor: `${routeColor}1F`, fontWeight: 600 }}
+                              title={`Esta maleta viaja en el sub-lote ${bag.batchId} — su ruta se dibuja de este color en el mapa`}
+                            >
+                              ⬤ {sublotShortLabel(bag.batchId)}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[10px] text-[#4A6080] mt-0.5 truncate">
                           {bag.clientId} · {bag.originId} → {bag.destinationId}
@@ -1616,7 +1667,7 @@ export function RightPanel({
 
         <BagListSection
           simulationId={simulationId}
-          batchId={id}
+          batchId={id.replace(/(-S\d+)+$/, '')}
           title="MALETAS DEL ENVÍO"
           refreshKey={lastCycleUpdate?.cycle}
           onOpenUt={flightId => openInspector({ kind: 'ut', id: flightId })}

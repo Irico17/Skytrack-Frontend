@@ -13,6 +13,15 @@ export function getLoadPercent(bagsCount: number, capacity: number): number {
   return Math.round((bagsCount / capacity) * 100);
 }
 
+/**
+ * Paleta de colores por SUB-LOTE de un envío dividido por capacidad (ids "-S<n>").
+ * La comparten el mapa (rutas de la familia + leyenda, WorldMap.selectedShipmentGeometry)
+ * y el detalle del envío (badge de ruta por maleta, RightPanel.BagListSection): el mismo
+ * sub-lote, ordenado numéricamente dentro de su familia, recibe el mismo color en ambos —
+ * así el grupo "S2" ámbar de la lista de maletas es la misma ruta ámbar del mapa.
+ */
+export const SUBLOT_COLORS = ['#00FF9C', '#4DA6FF', '#FFC857', '#FF7AD9', '#B78CFF', '#FF9060'];
+
 /** Tinte continental aproximado por longitud (visual mapa).
  *  Tonos oscuros y fríos: se evita el marrón/naranja que generaba la "franja"
  *  visual en latitudes altas (MAP-REG-01) manteniendo diferenciación sutil. */

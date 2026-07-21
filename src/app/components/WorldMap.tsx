@@ -6,7 +6,7 @@ import {
   getStatusColor, getRouteColor, getOccupancyPercent
 } from '../data/mockData';
 import type { BackendActiveFlight, BackendFlightPlanFlight } from '../types/backend';
-import { getContinentFill, getLoadPercent, getUtLoadColor } from '../utils/loadColors';
+import { getContinentFill, getLoadPercent, getUtLoadColor, SUBLOT_COLORS } from '../utils/loadColors';
 import { parseApiInstant } from '../utils/simulationTime';
 
 const GEO_JSON_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
@@ -784,8 +784,6 @@ function WorldMapComponent({
    * sub-lotes del mismo envío base), con un color por sub-lote para distinguirlas.
    * Si el envío aún no tiene ruta asignada (PENDING), no hay tramos que dibujar.
    */
-  const SUBLOT_COLORS = ['#00FF9C', '#4DA6FF', '#FFC857', '#FF7AD9', '#B78CFF', '#FF9060'];
-
   const selectedShipmentGeometry = useMemo(() => {
     if (selectedEntity?.type !== 'shipment') return null;
     const stripSublot = (id: string) => id.replace(/(-S\d+)+$/, '');
