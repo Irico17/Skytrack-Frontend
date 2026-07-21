@@ -109,11 +109,11 @@ test.describe('Operación día a día — ensayo E2E completo', () => {
       log('PREP', 'Abriendo centro de operaciones');
       await page.goto('/');
 
-      // Si quedó una operación previa corriendo (de pruebas anteriores), resetear primero.
-      const resetBtn = page.getByRole('button', { name: /Reiniciar|Reset/i });
-      if (await resetBtn.isVisible().catch(() => false)) {
-        log('PREP', 'Reseteando operación previa');
-        await resetBtn.click();
+      // Si quedó una operación previa corriendo (de pruebas anteriores), cancelarla primero.
+      const cancelBtn = page.getByRole('button', { name: 'Cancelar simulación' });
+      if (await cancelBtn.isVisible().catch(() => false)) {
+        log('PREP', 'Cancelando operación previa');
+        await cancelBtn.click();
         await page.waitForTimeout(1500);
       }
 
@@ -122,7 +122,7 @@ test.describe('Operación día a día — ensayo E2E completo', () => {
       await page.getByRole('button', { name: 'Operación Día a Día' }).click();
 
       log('PREP', 'Iniciando operación');
-      // exact: true — "Iniciar" es substring de "Reiniciar" (botón de reset siempre visible).
+      // exact: true — "Iniciar" es substring de otros botones posibles.
       await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
 
       const simId = await waitForActiveOperation(request);
@@ -175,6 +175,12 @@ test.describe('Operación día a día — ensayo E2E completo', () => {
     // ───────────────────── Carga de archivo de envíos ─────────────────────
     await test.step('Carga de archivo de envíos DURANTE la ejecución', async () => {
       log('UPLOAD', 'Abriendo modal de carga de archivo desde el centro de operaciones');
+      // Al iniciar, App.tsx colapsa el panel izquierdo (mapa a foco) — reabrirlo
+      // antes de buscar acciones operativas (Cargar Archivo / Cancelar Vuelo).
+      const showLeft = page.getByTitle('Mostrar panel izquierdo');
+      if (await showLeft.isVisible().catch(() => false)) {
+        await showLeft.click();
+      }
       await page.getByRole('button', { name: 'Cargar Archivo de Envíos' }).click();
       const fileInput = page.locator('input[type="file"]');
       // El nombre del archivo DEBE seguir el patrón _envios_XXXX_.txt: el backend deduce
@@ -202,7 +208,9 @@ test.describe('Operación día a día — ensayo E2E completo', () => {
       // Forzar un resync (recarga) por si la página quedó desactualizada tras estar en
       // segundo plano — más robusto que confiar solo en el evento 'focus' del navegador.
       await page.reload();
-      await expect(page.getByRole('button', { name: 'Pausar' })).toBeVisible({ timeout: 20_000 });
+      // TopBar ya no expone "Pausar": el control activo es "Cancelar simulación".
+      await expect(page.getByRole('button', { name: 'Cancelar simulación' })).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByText('EN CURSO')).toBeVisible({ timeout: 20_000 });
 
       const bottomToggle = page.getByTitle('Mostrar panel inferior');
       if (await bottomToggle.isVisible().catch(() => false)) await bottomToggle.click();
@@ -241,6 +249,11 @@ test.describe('Operación día a día — ensayo E2E completo', () => {
       const flightId: string = routeWithFlight.flights[0].flightId.replace(/-D\d+$/, '');
       log('CANCEL', `Cancelando vuelo en uso: ${flightId}`);
 
+      // Tras reload el panel izquierdo vuelve a colapsarse al detectar isRunning.
+      const showLeft = page.getByTitle('Mostrar panel izquierdo');
+      if (await showLeft.isVisible().catch(() => false)) {
+        await showLeft.click();
+      }
       await page.getByRole('button', { name: 'Cancelar Vuelo' }).click();
       const searchInput = page.getByPlaceholder('Buscar por código, origen o destino…');
       await searchInput.fill(flightId);
@@ -260,8 +273,8 @@ test.describe('Operación día a día — ensayo E2E completo', () => {
     await test.step('Cierre: detener la operación', async () => {
       log('CLOSE', 'Deteniendo la operación día a día');
       for (const p of stationPages) await p.context().close();
-      const resetBtn = page.getByRole('button', { name: /Reiniciar|Reset/i });
-      await resetBtn.click();
+      await page.getByRole('button', { name: 'Cancelar simulación' }).click();
+      await expect(page.getByRole('button', { name: 'Iniciar', exact: true })).toBeVisible({ timeout: 20_000 });
       log('CLOSE', 'Ensayo completo ✅');
     });
   });
