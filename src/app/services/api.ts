@@ -234,7 +234,12 @@ export async function uploadShipmentsFileToSimulation(
   return await res.json();
 }
 
-const SHIPMENT_BATCH_SIZE = 5;
+// Antes en 5: con archivos de envíos de hasta ~270 MB c/u (dataset del profesor), un lote
+// de 5 podía superar 1 GB por petición, sobre el límite de 512 MB (nginx/Spring) que este
+// batching por sesión existe para evitar en primer lugar. 1 = un archivo por request, muy
+// por debajo del límite incluso en el peor caso — debe coincidir con
+// StaticDataStorageService.MAX_SHIPMENTS_PER_BATCH en el backend (que además lo hace cumplir).
+export const SHIPMENT_BATCH_SIZE = 1;
 
 async function postMultipart<T>(url: string, form: FormData): Promise<T> {
   const res = await fetch(`${BASE}${url}`, { method: 'POST', body: form });

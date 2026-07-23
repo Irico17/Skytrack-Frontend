@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, CheckCircle2, Database, FileText, Loader2, Upload, X } from 'lucide-react';
 import type { BackendStaticDataUploadResponse, StaticDataUploadProgress } from '../types/backend';
+import { SHIPMENT_BATCH_SIZE } from '../services/api';
 
 interface StaticDataUploadModalProps {
   onClose: () => void;
@@ -62,7 +63,6 @@ export function StaticDataUploadModal({ onClose, onUpload, onUploadPartial }: St
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState<StaticDataUploadProgress | null>(null);
 
-  const SHIPMENT_BATCH_SIZE = 5;
   const totalBatches = Math.max(1, Math.ceil(shipmentFiles.length / SHIPMENT_BATCH_SIZE));
 
   const handleSubmit = async (e: React.FormEvent) => {
