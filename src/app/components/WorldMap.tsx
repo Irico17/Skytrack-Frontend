@@ -1670,7 +1670,7 @@ function WorldMapComponent({
             style={{ background: 'rgba(10,20,45,0.92)', border: '1px solid #1E3058', backdropFilter: 'blur(6px)' }}
             title="Filtro de UTs por semáforo (% de carga)"
           >
-            <span className="text-[9px] text-[#4A6080] px-1" style={{ letterSpacing: '0.08em' }}>UT</span>
+            <span className="text-[9px] text-white px-1" style={{ letterSpacing: '0.08em', fontWeight: 700 }}>UT</span>
             {([
               { id: 'all', label: 'Todos', c: '#A8C0E0' },
               { id: 'empty', label: 'Vacío', c: '#5E7699' },
@@ -1685,8 +1685,8 @@ function WorldMapComponent({
                   onClick={() => onUtFilterChange?.(opt.id)}
                   className="h-6 px-2 rounded-md text-[10px] transition-colors flex items-center gap-1"
                   style={{
-                    fontWeight: active ? 700 : 500,
-                    color: active ? '#0A1628' : '#A8C0E0',
+                    fontWeight: 700,
+                    color: active ? '#0A1628' : '#FFFFFF',
                     background: active ? opt.c : 'transparent',
                   }}
                 >
@@ -1703,7 +1703,7 @@ function WorldMapComponent({
               style={{ background: 'rgba(10,20,45,0.92)', border: '1px solid #1E3058', backdropFilter: 'blur(6px)' }}
               title="Filtro de almacenes por semáforo"
             >
-              <span className="text-[9px] text-[#4A6080] px-1" style={{ letterSpacing: '0.08em' }}>ALM.</span>
+              <span className="text-[9px] text-white px-1" style={{ letterSpacing: '0.08em', fontWeight: 700 }}>ALM.</span>
               {([
                 { id: 'all', label: 'Todos', c: '#A8C0E0' },
                 { id: 'empty', label: 'Vacío', c: '#4A6080' },
@@ -1718,8 +1718,8 @@ function WorldMapComponent({
                     onClick={() => onWarehouseFilterChange(opt.id)}
                     className="h-6 px-2 rounded-md text-[10px] transition-colors flex items-center gap-1"
                     style={{
-                      fontWeight: active ? 700 : 500,
-                      color: active ? '#0A1628' : '#A8C0E0',
+                      fontWeight: 700,
+                      color: active ? '#0A1628' : '#FFFFFF',
                       background: active ? opt.c : 'transparent',
                     }}
                   >
@@ -1736,7 +1736,7 @@ function WorldMapComponent({
             style={{ background: 'rgba(10,20,45,0.92)', border: '1px solid #1E3058', backdropFilter: 'blur(6px)' }}
             title="Densidad de aviones en el mapa (para fluidez). Las UTs con carga siempre se muestran."
           >
-            <span className="text-[9px] text-[#4A6080] px-1" style={{ letterSpacing: '0.08em' }}>DENSIDAD</span>
+            <span className="text-[9px] text-white px-1" style={{ letterSpacing: '0.08em', fontWeight: 700 }}>DENSIDAD</span>
             {([
               { v: 1, label: '100%' },
               { v: 0.5, label: '50%' },
@@ -1749,8 +1749,8 @@ function WorldMapComponent({
                   onClick={() => setMapDensity(opt.v)}
                   className="h-6 px-2 rounded-md text-[10px] transition-colors"
                   style={{
-                    fontWeight: active ? 700 : 500,
-                    color: active ? '#0A1628' : '#A8C0E0',
+                    fontWeight: 700,
+                    color: active ? '#0A1628' : '#FFFFFF',
                     background: active ? '#4DA6FF' : 'transparent',
                   }}
                 >
@@ -1766,8 +1766,8 @@ function WorldMapComponent({
             style={{ background: 'rgba(10,20,45,0.92)', border: `1px solid ${mapFiltersOpen ? '#4DA6FF55' : '#1E3058'}` }}
             title="Pasa el mouse para mostrar/ocultar los filtros del mapa (UT · almacenes · densidad)"
           >
-            <span style={{ color: mapFiltersOpen ? '#4DA6FF' : '#7090B0', fontWeight: 600 }}>⚙ Filtros</span>
-            <span className="font-mono" style={{ color: '#7090B0' }}>· ✈ {flightCounts.visible} en vuelo · {flightCounts.loaded} con carga</span>
+            <span style={{ color: mapFiltersOpen ? '#4DA6FF' : '#FFFFFF', fontWeight: 700 }}>⚙ Filtros</span>
+            <span className="font-mono text-white" style={{ fontWeight: 700 }}>· ✈ {flightCounts.visible} en vuelo · {flightCounts.loaded} con carga</span>
           </div>
         </div>
       )}
