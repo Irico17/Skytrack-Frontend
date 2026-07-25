@@ -632,6 +632,21 @@ function BagListSection({ simulationId, query, clientId, batchId, title, refresh
     () => (sublotIds.length > 0 ? sublotIds[0].replace(/(-S\d+)+$/, '') : ''),
     [sublotIds],
   );
+  /**
+   * True solo cuando TODOS los lotes de la vista son sub-lotes del MISMO envío.
+   *
+   * La lista de maletas se reutiliza en dos contextos muy distintos: el detalle de un ENVÍO
+   * (donde los lotes sí son la familia "-S1/-S2…" de ese envío) y el detalle de una UT, que
+   * transporta lotes de MUCHOS envíos sin relación. Sin esta comprobación, la UT anunciaba
+   * "Envío dividido · 7 rutas" para siete envíos distintos, y como la etiqueta se calculaba
+   * recortando el prefijo del PRIMER id, a todos les quedaba el sufijo vacío y salían los
+   * siete rotulados "Principal".
+   */
+  const isSingleShipmentFamily = useMemo(() => {
+    if (sublotIds.length < 2) return false;
+    const bases = new Set(sublotIds.map(id => id.replace(/(-S\d+)+$/, '')));
+    return bases.size === 1;
+  }, [sublotIds]);
   const sublotColor = (id: string) => SUBLOT_COLORS[sublotIds.indexOf(id) % SUBLOT_COLORS.length];
   const sublotShortLabel = (id: string) => {
     const suffix = id.slice(sublotBase.length).replace(/^-/, '');
@@ -687,7 +702,7 @@ function BagListSection({ simulationId, query, clientId, batchId, title, refresh
 
       {simulationId && data && (
         <>
-          {sublotIds.length > 1 && (
+          {isSingleShipmentFamily && (
             <div className="flex items-center gap-2 flex-wrap mt-2 px-1">
               <span className="text-[9px] text-[#B78CFF]" style={{ fontWeight: 600 }}>
                 Envío dividido · {sublotIds.length} rutas:
@@ -702,6 +717,11 @@ function BagListSection({ simulationId, query, clientId, batchId, title, refresh
                   {sublotShortLabel(id)}
                 </span>
               ))}
+            </div>
+          )}
+          {!isSingleShipmentFamily && sublotIds.length > 1 && (
+            <div className="text-[9px] text-[#4A6080] mt-2 px-1" style={{ fontWeight: 600 }}>
+              {sublotIds.length} lotes de envíos distintos
             </div>
           )}
           <div className="max-h-[280px] overflow-y-auto flex flex-col gap-2 mt-2">
