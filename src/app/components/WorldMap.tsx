@@ -841,11 +841,17 @@ function WorldMapComponent({
         return {
           shipmentId: shipment.id,
           quantity: shipment.luggageCount,
-          color: SUBLOT_COLORS[sublotIndex % SUBLOT_COLORS.length],
           legs,
         };
       })
-      .filter(sublot => sublot.legs.length > 0);
+      .filter(sublot => sublot.legs.length > 0)
+      // El color se asigna DESPUÉS de descartar los que no tienen ruta: si no, el lote base
+      // (que al partirse se queda sin tramos propios) gastaba el primer color y los sub-lotes
+      // dibujados empezaban por el segundo, descuadrando mapa y leyenda respecto a la paleta.
+      .map((sublot, sublotIndex) => ({
+        ...sublot,
+        color: SUBLOT_COLORS[sublotIndex % SUBLOT_COLORS.length],
+      }));
 
     if (sublots.length === 0) return null;
     return { baseId, sublots };

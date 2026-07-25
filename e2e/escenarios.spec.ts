@@ -1,4 +1,5 @@
 import { test, expect, Page, APIRequestContext } from '@playwright/test';
+import { appendFileSync } from 'node:fs';
 
 /**
  * ENSAYO E2E POR ESCENARIO — cancelación, escalas (hops) y sub-lotes.
@@ -28,6 +29,8 @@ const SCENARIO = (process.env.E2E_SCENARIO ?? 'realtime') as 'realtime' | '5day'
 const API_BASE = process.env.E2E_API_BASE ?? 'http://localhost:18301/api';
 const START_DATE = process.env.E2E_START_DATE ?? '';
 const KEEP_RUNNING = process.env.E2E_KEEP_RUNNING === '1';
+/** Ruta opcional donde volcar la traza EN VIVO (la salida del runner sale toda al final). */
+const LIVE_LOG = process.env.E2E_LIVE_LOG ?? '';
 /**
  * Día a día: la cola arranca vacía, así que los envíos se registran por interfaz. Un lote de
  * 400 maletas supera la capacidad de cualquier UT del plan (obliga al split) y los dos
@@ -48,7 +51,13 @@ const MODE_LABEL: Record<typeof SCENARIO, string> = {
 };
 
 function log(step: string, msg: string) {
-  console.log(`\n[${new Date().toISOString().slice(11, 19)}] ▶ ${step}: ${msg}`);
+  const line = `[${new Date().toISOString().slice(11, 19)}] ▶ ${step}: ${msg}`;
+  console.log(`\n${line}`);
+  // Traza en vivo: la salida estándar del runner queda en buffer hasta que el proceso
+  // termina, así que un ensayo largo no deja ver por dónde va (ni dónde se quedó colgado).
+  if (LIVE_LOG) {
+    try { appendFileSync(LIVE_LOG, `${line}\n`); } catch { /* la traza nunca debe romper el test */ }
+  }
 }
 
 async function apiGet(request: APIRequestContext, path: string) {
@@ -106,6 +115,15 @@ async function closeShipmentDetail(page: Page) {
     await close.click();
     await expect(close).toBeHidden({ timeout: 10_000 });
   }
+}
+
+/** Abre el panel inferior en la lista de envíos. Idempotente: el paso de escalas puede
+ *  haberlo abierto ya, o haberse saltado por completo si la red iba sin escalas. */
+async function openShipmentsPanel(page: Page) {
+  const bottomToggle = page.getByTitle('Mostrar panel inferior');
+  if (await bottomToggle.isVisible().catch(() => false)) await bottomToggle.click();
+  await page.getByRole('button', { name: 'Todos los Envíos' }).click();
+  await expect(page.getByPlaceholder('Buscar por código, cliente, UT o ruta')).toBeVisible({ timeout: 20_000 });
 }
 
 /** Registra un envío desde el modal "Registrar Maletas" del centro de operaciones. */
@@ -204,7 +222,16 @@ test.describe(`Escenario ${SCENARIO} — cancelación, escalas y sub-lotes`, () 
     await test.step('Verificar que existen rutas con escalas y verlas en el detalle del envío', async () => {
       const multiLeg = (solution.routes as any[]).filter(r => (r.flights ?? []).length >= 2);
       log('HOPS', `Rutas con escala: ${multiLeg.length} de ${solution.routes.length}`);
-      expect(multiLeg.length, 'debe existir al menos una ruta con escalas').toBeGreaterThan(0);
+
+      if (multiLeg.length === 0) {
+        // En el plan del curso TODOS los aeropuertos tienen vuelo directo entre sí (29 de 29),
+        // así que una escala solo aparece cuando el directo se queda sin sitio o no llega a
+        // tiempo — es decir, bajo carga. En 5 días y colapso pasa masivamente; en un día a día
+        // recién arrancado, con cuatro envíos registrados a mano, no tiene por qué pasar.
+        expect(REGISTER_SHIPMENTS, 'la red cargada debe producir rutas con escalas').toBe(true);
+        log('HOPS', 'ℹ️  Sin escalas: la red vacía rutea todo directo (todos los pares tienen vuelo directo)');
+        return;
+      }
 
       const maxHops = Math.max(...(solution.routes as any[]).map(r => (r.flights ?? []).length));
       log('HOPS', `Máximo de tramos en una ruta: ${maxHops}`);
@@ -214,10 +241,7 @@ test.describe(`Escenario ${SCENARIO} — cancelación, escalas y sub-lotes`, () 
       const target = multiLeg[0];
       log('HOPS', `Envío con escalas: ${target.batchId} (${target.originId} → ${target.destinationId}, ${target.flights.length} tramos)`);
 
-      const bottomToggle = page.getByTitle('Mostrar panel inferior');
-      if (await bottomToggle.isVisible().catch(() => false)) await bottomToggle.click();
-      await page.getByRole('button', { name: 'Todos los Envíos' }).click();
-
+      await openShipmentsPanel(page);
       const bottomSearch = page.getByPlaceholder('Buscar por código, cliente, UT o ruta');
       await bottomSearch.fill(target.batchId);
       const rows = page.getByTestId('shipment-row');
@@ -256,6 +280,7 @@ test.describe(`Escenario ${SCENARIO} — cancelación, escalas y sub-lotes`, () 
       // Seleccionar cualquiera de los sub-lotes debe dibujar la FAMILIA completa, con
       // un color por sub-lote y la leyenda "id · N maletas".
       await closeShipmentDetail(page);
+      await openShipmentsPanel(page);
       const search = page.getByPlaceholder('Buscar por código, cliente, UT o ruta');
       await search.fill(baseId);
       const rows = page.getByTestId('shipment-row');
