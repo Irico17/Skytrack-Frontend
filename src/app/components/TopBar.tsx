@@ -3,7 +3,7 @@ import {
   Activity, AlertTriangle, Bell, Layers, Play, XCircle,
   Globe, Wifi, Zap, ChevronDown, Warehouse, Plane
 } from 'lucide-react';
-import { SimulationMode, SimEvent } from '../data/mockData';
+import { SimulationMode, SimEvent, occupancyColor } from '../data/mockData';
 
 interface TopBarProps {
   isRunning: boolean;
@@ -34,12 +34,6 @@ const MODE_ICONS: Record<SimulationMode, React.ReactNode> = {
   '5day': <Layers className="w-3 h-3" />,
   collapse: <Zap className="w-3 h-3" />,
 };
-
-function occupancyColor(pct: number): string {
-  if (pct >= 90) return '#FF4D4D';
-  if (pct >= 70) return '#FFC857';
-  return '#00FF9C';
-}
 
 export function TopBar({
   isRunning, isPaused, isStarting = false, mode, events, onStart, onReset,
@@ -131,23 +125,32 @@ export function TopBar({
           <span className="text-[#A8C0E0]">{totalShipments} Envíos</span>
         </div>
 
+        {/* Ocupación de almacenes y de UT: es el dato que el jurado mira desde lejos en la
+            proyección, así que va a tamaño de titular (no en 11px como el resto de chips). */}
         {kpis && (
-          <div className="flex items-center gap-3 px-2.5 py-1 rounded-lg bg-[#0D1E38] border border-[#1E3058]">
+          <div className="flex items-center gap-3 px-3 py-1 rounded-lg bg-[#0D1E38] border border-[#1E3058]">
             <span
-              className="text-[11px] flex items-center gap-1"
+              className="flex items-center gap-1.5"
               style={{ color: occupancyColor(kpis.warehouseOccupancyPct) }}
               title="Ocupación promedio de almacenes"
             >
-              <Warehouse className="w-3 h-3" />
-              Alm. {kpis.warehouseOccupancyPct}%
+              <Warehouse className="w-4 h-4" />
+              <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.08em', fontWeight: 600 }}>ALM.</span>
+              <span className="text-lg font-mono tabular-nums leading-none" style={{ fontWeight: 700 }}>
+                {kpis.warehouseOccupancyPct}%
+              </span>
             </span>
+            <div className="w-px h-5 bg-[#1E3058]" />
             <span
-              className="text-[11px] flex items-center gap-1"
+              className="flex items-center gap-1.5"
               style={{ color: occupancyColor(kpis.flightOccupancyPct) }}
-              title="Ocupación promedio de aviones"
+              title="Ocupación promedio de unidades de transporte"
             >
-              <Plane className="w-3 h-3" />
-              Av. {kpis.flightOccupancyPct}%
+              <Plane className="w-4 h-4" />
+              <span className="text-[10px] text-[#4A6080]" style={{ letterSpacing: '0.08em', fontWeight: 600 }}>UT</span>
+              <span className="text-lg font-mono tabular-nums leading-none" style={{ fontWeight: 700 }}>
+                {kpis.flightOccupancyPct}%
+              </span>
             </span>
           </div>
         )}

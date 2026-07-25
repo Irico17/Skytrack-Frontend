@@ -141,8 +141,27 @@ export function getOccupancyPercent(occupancy: number, capacity: number): number
   return Math.round((occupancy / capacity) * 100);
 }
 
+/**
+ * Umbrales del semáforo de ocupación (almacenes y UT). ÚNICA fuente de verdad.
+ *
+ * Antes convivían dos escalas: `getOccupancyStatus` pintaba crítico a partir de 80%
+ * y advertencia a partir de 50%, mientras que el mapeo del backend (`mapper.ts`),
+ * el mapa, los filtros y la barra superior usaban 90/70. Resultado: en la pestaña
+ * Almacén la barra de un aeropuerto al 82% salía roja en la gráfica y verde en la
+ * lista de abajo, con el mismo dato. Se deja 90/70 (el criterio del backend) en un
+ * solo sitio para que no se vuelva a desincronizar.
+ */
+export const OCCUPANCY_CRITICAL_PCT = 90;
+export const OCCUPANCY_WARNING_PCT = 70;
+
 export function getOccupancyStatus(percent: number): AirportStatus {
-  if (percent >= 80) return 'critical';
-  if (percent >= 50) return 'warning';
+  if (percent >= OCCUPANCY_CRITICAL_PCT) return 'critical';
+  if (percent >= OCCUPANCY_WARNING_PCT) return 'warning';
   return 'normal';
+}
+
+/** Color del semáforo de ocupación. `empty` se pinta gris para distinguir 0% de "carga baja". */
+export function occupancyColor(percent: number, empty = false): string {
+  if (empty) return '#4A6080';
+  return getStatusColor(getOccupancyStatus(percent));
 }

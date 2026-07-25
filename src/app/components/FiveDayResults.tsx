@@ -10,7 +10,7 @@ import {
   AlertOctagon, FileText, Calendar,
 } from 'lucide-react';
 import { DaySnapshot } from '../hooks/useSimulation';
-import { Shipment, SimEvent, Airport } from '../data/mockData';
+import { Shipment, SimEvent, Airport, occupancyColor } from '../data/mockData';
 import type { BackendCycleUpdate, BackendSimulationResults } from '../types/backend';
 import { LastCycleSnapshot } from './LastCycleSnapshot';
 import { downloadTextFile, reportLine, reportSection } from '../utils/exportReport';
@@ -92,7 +92,7 @@ function buildAirportImpactFromAirports(airports: Airport[]) {
         city: a.city,
         peakOccupancy,
         daysOverloaded,
-        color: peakOccupancy >= 90 ? '#FF4D4D' : peakOccupancy >= 70 ? '#FFC857' : '#00FF9C',
+        color: occupancyColor(peakOccupancy),
       };
     })
     .sort((a, b) => b.peakOccupancy - a.peakOccupancy)
@@ -521,7 +521,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                 value={peakOccupancy}
                 unit="%"
                 subtext={`${peakAirportId} — pico`}
-                color={peakOccupancy >= 90 ? '#FF4D4D' : peakOccupancy >= 75 ? '#FFC857' : '#00FF9C'}
+                color={occupancyColor(peakOccupancy)}
                 icon={<Warehouse className="w-3.5 h-3.5" />}
                 trend="neutral"
                 trendValue={`${overloadedAirports} sobre capacidad`}
@@ -622,7 +622,7 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
               <SectionTitle icon={<Warehouse className="w-3.5 h-3.5" />}>IMPACTO DE CONGESTIÓN EN AEROPUERTOS — OCUPACIÓN MÁXIMA EN 5 DÍAS</SectionTitle>
               <div className="grid grid-cols-6 gap-3">
                 {airportImpact.map(a => {
-                  const fill = a.peakOccupancy >= 90 ? '#FF4D4D' : a.peakOccupancy >= 80 ? '#FFC857' : '#00FF9C';
+                  const fill = occupancyColor(a.peakOccupancy);
                   return (
                     <div key={a.id} className="bg-[#0D1E38] rounded-lg p-3 border border-[#1E3058]">
                       <div className="flex items-center justify-between mb-2">
@@ -729,11 +729,11 @@ export function FiveDayResults({ startDate, daySnapshots, shipments, events, air
                               className="h-full rounded-full"
                               style={{
                                 width: `${snap.avgOccupancy}%`,
-                                backgroundColor: snap.avgOccupancy >= 85 ? '#FF4D4D' : snap.avgOccupancy >= 75 ? '#FFC857' : '#00FF9C'
+                                backgroundColor: occupancyColor(snap.avgOccupancy)
                               }}
                             />
                           </div>
-                          <span className="text-[10px] font-mono" style={{ color: snap.avgOccupancy >= 85 ? '#FF4D4D' : snap.avgOccupancy >= 75 ? '#FFC857' : '#00FF9C', fontWeight: 600 }}>
+                          <span className="text-[10px] font-mono" style={{ color: occupancyColor(snap.avgOccupancy), fontWeight: 600 }}>
                             {snap.avgOccupancy}%
                           </span>
                         </div>

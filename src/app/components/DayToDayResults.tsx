@@ -6,7 +6,7 @@ import {
   Globe, X, RotateCcw, CheckCircle, AlertTriangle, Package,
   Clock, Warehouse, Plane, Users, Activity, Download,
 } from 'lucide-react';
-import { Shipment, SimEvent, Airport, getOccupancyPercent } from '../data/mockData';
+import { Shipment, SimEvent, Airport, getOccupancyPercent, occupancyColor, OCCUPANCY_CRITICAL_PCT } from '../data/mockData';
 import type { BackendCycleUpdate, BackendSimulationResults } from '../types/backend';
 import { LastCycleSnapshot } from './LastCycleSnapshot';
 import { downloadTextFile, reportLine, reportSection } from '../utils/exportReport';
@@ -51,7 +51,7 @@ export function DayToDayResults({ results, lastCycleUpdate, airports, shipments,
   const avgOccupancy = airports.length > 0
     ? Math.round(airports.reduce((acc, a) => acc + getOccupancyPercent(a.occupancy, a.capacity), 0) / airports.length)
     : 0;
-  const overloaded = airports.filter(a => getOccupancyPercent(a.occupancy, a.capacity) >= 90).length;
+  const overloaded = airports.filter(a => getOccupancyPercent(a.occupancy, a.capacity) >= OCCUPANCY_CRITICAL_PCT).length;
 
   const occupancyData = React.useMemo(() => airports
     .map(a => ({ id: a.id, pct: getOccupancyPercent(a.occupancy, a.capacity) }))
@@ -178,7 +178,7 @@ export function DayToDayResults({ results, lastCycleUpdate, airports, shipments,
                   <ReTooltip cursor={{ fill: 'rgba(77,166,255,0.05)' }} />
                   <Bar dataKey="pct" radius={[3, 3, 0, 0]}>
                     {occupancyData.map(e => (
-                      <Cell key={e.id} fill={e.pct >= 90 ? '#FF4D4D' : e.pct >= 70 ? '#FFC857' : '#00FF9C'} />
+                      <Cell key={e.id} fill={occupancyColor(e.pct)} />
                     ))}
                   </Bar>
                 </BarChart>

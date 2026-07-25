@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { downloadTextFile, reportLine, reportSection } from '../utils/exportReport';
 import { CollapseMetrics } from '../hooks/useSimulation';
-import { Shipment, SimEvent, Airport, getOccupancyPercent } from '../data/mockData';
+import { Shipment, SimEvent, Airport, getOccupancyPercent, occupancyColor, OCCUPANCY_CRITICAL_PCT } from '../data/mockData';
 import type { BackendCycleUpdate } from '../types/backend';
 import { LastCycleSnapshot } from './LastCycleSnapshot';
 import {
@@ -180,7 +180,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
     for (const a of airports) {
       const peakVal = a.peakOccupancy !== undefined ? a.peakOccupancy : a.occupancy;
       const pct = Math.round((peakVal / Math.max(a.capacity, 1)) * 100);
-      if (pct >= 90) affectedAirports += 1;
+      if (pct >= OCCUPANCY_CRITICAL_PCT) affectedAirports += 1;
       if (pct > peakCongestion) { peakCongestion = pct; peakAirport = a.id; }
     }
     return { totalAirports, affectedAirports, peakCongestion, peakAirport };
@@ -207,7 +207,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
       const currentPct = getOccupancyPercent(a.occupancy, a.capacity);
       const peakVal = a.peakOccupancy !== undefined ? a.peakOccupancy : a.occupancy;
       const peakPct = Math.round((peakVal / Math.max(a.capacity, 1)) * 100);
-      const color = peakPct >= 90 ? '#FF4D4D' : peakPct >= 75 ? '#FFC857' : '#00FF9C';
+      const color = occupancyColor(peakPct);
       return {
         id: a.id,
         city: a.city,
@@ -644,7 +644,7 @@ export function CollapseResults({ collapseMetrics, shipments, events, airports, 
           <div className="grid grid-cols-4 gap-3">
             {airportOverload.map(a => {
               const delta = a.peak - a.normal;
-              const severity = a.peak >= 95 ? '#FF4D4D' : a.peak >= 90 ? '#FF4D4D' : a.peak >= 85 ? '#FFC857' : '#00FF9C';
+              const severity = occupancyColor(a.peak);
               return (
                 <div key={a.id} className="bg-[#0D1E38] rounded-lg p-3 border border-[#1E3058]">
                   <div className="flex items-center justify-between mb-2">
