@@ -407,7 +407,12 @@ function UtCard({ unit, nowMs, mapActive, onOpen, onMapFilter }: {
             <div className="flex-1 h-1.5 rounded bg-[#1E3058] overflow-hidden">
               <div className="h-full rounded" style={{ width: `${Math.min(unit.pct, 100)}%`, backgroundColor: color }} />
             </div>
-            <span className="text-[10px] font-mono" style={{ color }}>{unit.capacity > 0 ? `${unit.bags}/${unit.capacity}` : `${unit.bags}`}</span>
+            {/* Ocupación en NÚMERO y en % a la vez: la rúbrica pide ambos formatos visibles
+                en la propia lista (antes solo se veía "120/340" y el % quedaba implícito en
+                la barra, o había que abrir el inspector para leerlo). */}
+            <span className="text-[10px] font-mono" style={{ color }}>
+              {unit.capacity > 0 ? `${unit.bags}/${unit.capacity} · ${unit.pct}%` : `${unit.bags}`}
+            </span>
           </div>
         </div>
         {onMapFilter && (
@@ -838,7 +843,7 @@ export function RightPanel({
   const [transportDestFilter, setTransportDestFilter] = useState('');
   const [shipmentOriginFilter, setShipmentOriginFilter] = useState('');
   const [shipmentDestFilter, setShipmentDestFilter] = useState('');
-  const [transportSort, setTransportSort] = useState<'load' | 'loadAsc' | 'departure' | 'arrival' | 'destination' | 'route'>('load');
+  const [transportSort, setTransportSort] = useState<'load' | 'loadAsc' | 'departure' | 'arrival' | 'origin' | 'destination' | 'route'>('load');
   const [utFilterLocal, setUtFilterLocal] = useState('all');
   const [warehouseFilterLocal, setWarehouseFilterLocal] = useState('all');
   const utFilter = utFilterProp ?? utFilterLocal;
@@ -1122,6 +1127,7 @@ export function RightPanel({
         if (transportSort === 'arrival') {
           return a.arrivalMs - b.arrivalMs;
         }
+        if (transportSort === 'origin') return a.originId.localeCompare(b.originId) || a.flightId.localeCompare(b.flightId);
         if (transportSort === 'destination') return a.destinationId.localeCompare(b.destinationId) || a.flightId.localeCompare(b.flightId);
         if (transportSort === 'route') return `${a.originId}-${a.destinationId}`.localeCompare(`${b.originId}-${b.destinationId}`);
         if (transportSort === 'loadAsc') return a.bags - b.bags;
@@ -1470,8 +1476,14 @@ export function RightPanel({
       .filter(u => !localQuery || `${u.flightId} ${u.originId} ${u.destinationId}`.toLowerCase().includes(localQuery))
       .sort((a, b) => b.bags - a.bags);
 
+    // Envíos del almacén: origen/destino final Y LOS QUE SOLO TRANSITAN por él (escala
+    // intermedia). Antes se filtraba solo por origin/destination, así que un envío que hace
+    // escala aquí — y que SÍ ocupa este almacén mientras espera su conexión — era invisible
+    // en la lista, aunque sus maletas sí aparecían en "MALETAS EN ESTE ALMACÉN".
+    const touchesAsTransit = (s: Shipment) =>
+      (s.legs ?? []).some(leg => leg.from === id || leg.to === id);
     const relatedShipments = shipments
-      .filter(s => s.origin === id || s.destination === id)
+      .filter(s => s.origin === id || s.destination === id || touchesAsTransit(s))
       .filter(s => !localQuery || `${s.id} ${s.origin} ${s.destination} ${s.airlineId}`.toLowerCase().includes(localQuery));
 
     return (
@@ -1909,6 +1921,7 @@ export function RightPanel({
                   { value: 'loadAsc', label: 'Menos carga' },
                   { value: 'departure', label: 'Salida' },
                   { value: 'arrival', label: 'Llegada' },
+                  { value: 'origin', label: 'Origen' },
                   { value: 'destination', label: 'Destino' },
                   { value: 'route', label: 'Ruta' },
                 ]}
@@ -2326,7 +2339,11 @@ export function RightPanel({
               <div className="max-h-72 overflow-y-auto">
                 {filteredWarehouses.map(a => {
                   const pct = getOccupancyPercent(a.occupancy, a.capacity);
-                  const color = getStatusColor(a.status);
+                  // Semáforo con estado VACÍO propio (gris), igual que las UT: getStatusColor
+                  // pinta 0% de verde ("normal"), que es indistinguible de un almacén con
+                  // carga baja pero activa — la rúbrica pide que el vacío se vea distinto.
+                  const isEmpty = a.occupancy <= 0;
+                  const color = isEmpty ? '#4A6080' : getStatusColor(a.status);
                   const active = isFilterActive('airport', a.id);
                   return (
                     <div
@@ -2337,10 +2354,16 @@ export function RightPanel({
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                       <span className="text-[11px] text-[#A8C0E0] w-8" style={{ fontWeight: 600 }}>{a.id}</span>
                       <span className="text-[10px] text-[#4A6080] flex-1 truncate">{a.city}</span>
+                      {isEmpty && (
+                        <span className="text-[9px] text-[#4A6080] border border-[#1E3058] rounded px-1 flex-shrink-0">VACÍO</span>
+                      )}
                       <div className="w-16 h-1.5 rounded-full bg-[#1E3058] overflow-hidden">
                         <div className="h-full rounded-full transition-[width] duration-[600ms] ease-linear" style={{ width: `${pct}%`, backgroundColor: color }} />
                       </div>
-                      <span className="text-[11px] font-mono w-8 text-right" style={{ color }}>{pct}%</span>
+                      {/* Ocupación en NÚMERO y en %: antes solo se veía el %, y el número
+                          absoluto exigía abrir el inspector del almacén. */}
+                      <span className="text-[10px] font-mono text-[#4A6080] w-16 text-right tabular-nums">{a.occupancy}/{a.capacity}</span>
+                      <span className="text-[11px] font-mono w-9 text-right" style={{ color }}>{pct}%</span>
                       <button
                         onClick={e => { e.stopPropagation(); handleMapFilterClick({ type: 'airport', id: a.id }, () => onSelectAirport?.(a.id)); }}
                         className={mapFilterButtonClass(active, 'w-6 h-6')}
