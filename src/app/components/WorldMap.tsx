@@ -579,9 +579,13 @@ function WorldMapComponent({
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
-    const padding = 70;
-    const boxW = Math.max(maxX - minX + padding * 2, 260);
-    const boxH = Math.max(maxY - minY + padding * 2, 150);
+    // Margen ajustado: 70 unidades dejaban el encuadre inicial en ~1.7× con mucho vacío
+    // alrededor. 32 basta para que el glifo del almacén y su etiqueta (que se dibujan por
+    // encima del punto) no queden cortados en los aeropuertos del borde, y sube el zoom
+    // inicial a ~2.1× — la red se ve tan cerca como permite el aeropuerto más extremo.
+    const padding = 32;
+    const boxW = Math.max(maxX - minX + padding * 2, 220);
+    const boxH = Math.max(maxY - minY + padding * 2, 130);
     // Usar la relación de aspecto REAL del contenedor para evitar bandas vacías y el
     // recorte de vuelos arriba/abajo (antes se fijaba a 2:1 y dejaba letterbox).
     const rect = containerRef.current?.getBoundingClientRect();
@@ -701,10 +705,13 @@ function WorldMapComponent({
                 key={`${ri}-${ri2}`}
                 d={d}
                 fill={fill}
-                stroke={isHovered ? '#1E3558' : '#13203A'}
-                strokeWidth={isHovered ? 0.8 : 0.5}
+                // Frontera clara: el gris azulado anterior (#13203A) apenas se separaba del
+                // relleno del continente y los países se leían como una mancha única.
+                stroke={isHovered ? '#FFFFFF' : '#8FA8C8'}
+                strokeWidth={isHovered ? 0.7 : 0.4}
+                strokeOpacity={isHovered ? 0.95 : 0.55}
                 strokeLinejoin="round"
-                style={{ transition: 'fill 0.15s, stroke 0.15s' }}
+                style={{ transition: 'fill 0.15s, stroke 0.15s, stroke-opacity 0.15s' }}
               />
             );
           })
@@ -712,6 +719,48 @@ function WorldMapComponent({
       </g>
     );
   }), [geoFeatures, hoveredCountry]);
+
+  /**
+   * Nombre y posición de cada país, para rotularlos al acercar el mapa.
+   *
+   * Se toma el anillo MÁS GRANDE de cada país (evita que el nombre de Francia caiga sobre una
+   * isla del Pacífico) y su centro de caja. Se calcula una sola vez con la geometría: el
+   * render solo decide, según el zoom, cuáles caben.
+   */
+  const countryLabels = useMemo(() => {
+    const labels: { id: string; name: string; x: number; y: number; span: number }[] = [];
+    for (const geo of geoFeatures as any[]) {
+      const name = geo?.properties?.name;
+      if (!name || !geo.geometry?.coordinates) continue;
+      const polygons = geo.geometry.type === 'Polygon'
+        ? [geo.geometry.coordinates]
+        : geo.geometry.coordinates;
+
+      let best: { x: number; y: number; span: number } | null = null;
+      for (const ringSet of polygons) {
+        const ring = ringSet?.[0];
+        if (!Array.isArray(ring) || ring.length === 0) continue;
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const point of ring) {
+          const [lng, lat] = point;
+          if (lng === undefined || lat === undefined) continue;
+          const [x, y] = project(lng, lat);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+        if (!Number.isFinite(minX) || maxX - minX > BASE_W / 2) continue; // ignora saltos de antimeridiano
+        const span = Math.min(maxX - minX, maxY - minY);
+        if (!best || span > best.span) {
+          best = { x: (minX + maxX) / 2, y: (minY + maxY) / 2, span };
+        }
+      }
+      if (best) labels.push({ id: String(geo.id), name, ...best });
+    }
+    return labels;
+  }, [geoFeatures]);
 
   // ===== GEOMETRÍA ESTÁTICA DEL PLAN (calculada una sola vez al cambiar vuelos o aeropuertos) =====
   const geometryFlights = flightPlanFlights.length > 0 ? flightPlanFlights : activeFlights;
@@ -1310,7 +1359,7 @@ function WorldMapComponent({
   const viewBoxStr = `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`;
   const zoomLevel = BASE_W / viewBox.w;
   const showLabels = zoomLevel > 1.2;
-  const showWarehouseBars = zoomLevel > 1.8;
+  const showCountryNames = zoomLevel > 2.2;
 
   return (
     <div
@@ -1384,6 +1433,39 @@ function WorldMapComponent({
 
         {/* Continent fills from TopoJSON */}
         {countryLayers}
+
+        {/* Nombres de país: aparecen al acercar y solo en los países que tienen sitio para
+            el texto al zoom actual, así no se amontonan sobre los países pequeños. Van
+            debajo de rutas y aviones para no competir con la operación. */}
+        {showCountryNames && (
+          <g style={{ pointerEvents: 'none' }}>
+            {countryLabels.map(label => {
+              if (label.span * zoomLevel < 26) return null;
+              return (
+                <text
+                  key={label.id}
+                  x={label.x}
+                  y={label.y}
+                  textAnchor="middle"
+                  style={{
+                    fill: '#C8D8F0',
+                    fontSize: Math.max(2.6, 5.5 / zoomLevel),
+                    fontFamily: 'system-ui, sans-serif',
+                    letterSpacing: '0.04em',
+                    opacity: 0.5,
+                    userSelect: 'none',
+                    paintOrder: 'stroke',
+                    stroke: '#040814',
+                    strokeWidth: Math.max(0.4, 1.1 / zoomLevel),
+                    strokeLinejoin: 'round',
+                  }}
+                >
+                  {label.name}
+                </text>
+              );
+            })}
+          </g>
+        )}
 
         {/* ── Route Lines (fallback estático: solo cuando no hay datos del backend) ── */}
         {toggles.showRoutes && shouldShowStaticFallback && flightPaths.map(f => {
@@ -1619,8 +1701,11 @@ function WorldMapComponent({
                   {a.id}
                 </text>
               )}
-              {/* Warehouse capacity bar */}
-              {showWarehouseBars && toggles.showWarehouseCapacity && showLabels && (
+              {/* Barra de capacidad de almacén: visible SIEMPRE que el toggle esté activo.
+                  Antes exigía además zoom > 1.8 (y etiquetas), así que en la vista inicial
+                  —que arranca a ~1.7×— no se veía ninguna: el dato más importante del mapa
+                  obligaba a acercarse para existir. */}
+              {toggles.showWarehouseCapacity && (
                 <g transform="translate(-8,5)">
                   <rect width={16} height={2.5} rx={1} fill="#081225" />
                   <rect width={16 * Math.min(pct / 100, 1)} height={2.5} rx={1}
