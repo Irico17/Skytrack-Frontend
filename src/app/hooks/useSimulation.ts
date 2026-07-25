@@ -1430,56 +1430,54 @@ export function useSimulation(): UseSimulationReturn {
           severity: 'info',
         }, ...prev.slice(0, 19)]);
 
-        // 1. Cargar datos base en paralelo, pero pintar cada uno apenas llegue.
+        // 1. Cargar datos base EN SERIE (no en paralelo con startSimulation).
+        //    Tras un deploy, JVM fría + proyectar ~15k vuelos + cargar 12k lotes + Dijkstra
+        //    a la vez cruzaba MemoryMax en la VM de 2 GB → kill → "se perdió la simulación".
+        //    El 2.º intento "magicamente" funcionaba porque parte ya estaba en caché FE/OS.
         //    Día a día proyecta 1 día; 5 días y colapso proyectan una ventana de 5 días.
         const flightPlanDays = mode === 'realtime' ? 1 : 5;
-        void ensureBackendAirports()
-          .then(mappedAirports => {
-            setEvents(prev => [{
-              id: `progress-airports-${Date.now()}`,
-              type: 'info',
-              message: `✓ Aeropuertos listos (${mappedAirports.length})`,
-              time: new Date(),
-              severity: 'info',
-            }, ...prev.slice(0, 19)]);
-            return mappedAirports;
-          })
-          .catch(err => {
-            console.warn('No se pudieron cargar aeropuertos del backend:', err);
-            setEvents(prev => [{
-              id: `progress-airports-error-${Date.now()}`,
-              type: 'alert',
-              message: 'No se pudieron cargar aeropuertos reales todavía; se reintentará al recibir datos',
-              time: new Date(),
-              severity: 'warning',
-            }, ...prev.slice(0, 19)]);
-          });
-        const flightPlanPromise = fetchFlightPlan(startDateTimeStr, flightPlanDays)
-          .then(projectedFlights => {
-            setFlightPlanFlights(projectedFlights);
-            setFlights(mapFlightPlanFlights(projectedFlights));
-            if (mode === 'collapse') {
-              flightPlanWindowEndRef.current = new Date(
-                parseApiInstant(startDateTimeStr).getTime() + flightPlanDays * 24 * 60 * 60 * 1000
-              );
-            }
-            console.log(`✓ Cargados ${projectedFlights.length} vuelos del plan de vuelos`);
-            setEvents(prev => [{
-              id: `progress-flights-${Date.now()}`,
-              type: 'info',
-              message: `✓ Plan de vuelos cargado (${projectedFlights.length})`,
-              time: new Date(),
-              severity: 'info',
-            }, ...prev.slice(0, 19)]);
-            return projectedFlights;
-          })
-          .catch(err => {
-            console.warn('No se pudo cargar el plan de vuelos proyectado:', err);
-            setFlightPlanFlights([]);
-            setFlights([]);
-            return [];
-          });
-        void flightPlanPromise;
+        try {
+          const mappedAirports = await ensureBackendAirports();
+          setEvents(prev => [{
+            id: `progress-airports-${Date.now()}`,
+            type: 'info',
+            message: `✓ Aeropuertos listos (${mappedAirports.length})`,
+            time: new Date(),
+            severity: 'info',
+          }, ...prev.slice(0, 19)]);
+        } catch (err) {
+          console.warn('No se pudieron cargar aeropuertos del backend:', err);
+          setEvents(prev => [{
+            id: `progress-airports-error-${Date.now()}`,
+            type: 'alert',
+            message: 'No se pudieron cargar aeropuertos reales todavía; se reintentará al recibir datos',
+            time: new Date(),
+            severity: 'warning',
+          }, ...prev.slice(0, 19)]);
+        }
+
+        try {
+          const projectedFlights = await fetchFlightPlan(startDateTimeStr, flightPlanDays);
+          setFlightPlanFlights(projectedFlights);
+          setFlights(mapFlightPlanFlights(projectedFlights));
+          if (mode === 'collapse') {
+            flightPlanWindowEndRef.current = new Date(
+              parseApiInstant(startDateTimeStr).getTime() + flightPlanDays * 24 * 60 * 60 * 1000
+            );
+          }
+          console.log(`✓ Cargados ${projectedFlights.length} vuelos del plan de vuelos`);
+          setEvents(prev => [{
+            id: `progress-flights-${Date.now()}`,
+            type: 'info',
+            message: `✓ Plan de vuelos cargado (${projectedFlights.length})`,
+            time: new Date(),
+            severity: 'info',
+          }, ...prev.slice(0, 19)]);
+        } catch (err) {
+          console.warn('No se pudo cargar el plan de vuelos proyectado:', err);
+          setFlightPlanFlights([]);
+          setFlights([]);
+        }
 
         setEvents(prev => [{
           id: `progress-sim-${Date.now()}`,
