@@ -1387,7 +1387,7 @@ export function RightPanel({
       ?? null;
     const unitInFlight = unit ? isTransportUnitInFlight(unit, nowMs) : false;
     const utShipments = shipments.filter(s => sameFlightId(s.currentFlightId, id));
-    // Mismo semáforo que la tarjeta de UT en la lista (antes aquí faltaba la banda ámbar 70-89%).
+    // Mismo semáforo que la tarjeta de UT en la lista (ámbar 50–79%, crítico ≥80%).
     const utColor = unit ? (!unit.meetsSla ? '#FFC857' : occupancyColor(unit.pct, unit.empty)) : '#4A6080';
     const originAirport = unit ? airports.find(a => a.id === unit.originId) : null;
     const destAirport = unit ? airports.find(a => a.id === unit.destinationId) : null;

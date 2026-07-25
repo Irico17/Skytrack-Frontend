@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback, Dispatch, SetStateAction, sta
 import {
   Airport, Flight, Shipment, SimEvent, SimulationMode,
   getOccupancyStatus,
+  OCCUPANCY_CRITICAL_PCT,
+  OCCUPANCY_WARNING_PCT,
 } from '../data/mockData';
 import {
   fetchAirports,
@@ -493,14 +495,14 @@ export function useSimulation(): UseSimulationReturn {
         const cap = capacityMap.get(a.id);
         if (!cap) return a;
         const pct = cap.occupancyRatio;
-        const status = pct >= 0.9 ? 'critical' as const
-                     : pct >= 0.7 ? 'warning' as const : 'normal' as const;
+        const status = pct >= OCCUPANCY_CRITICAL_PCT / 100 ? 'critical' as const
+                     : pct >= OCCUPANCY_WARNING_PCT / 100 ? 'warning' as const : 'normal' as const;
         const currentOccupancy = cap.currentBags;
         const previousPeak = a.peakOccupancy ?? 0;
         const peakOccupancy = Math.max(previousPeak, currentOccupancy);
 
         const overloadedDaysSet = new Set(a.overloadedDaysList ?? []);
-        if (pct >= 0.9) {
+        if (pct >= OCCUPANCY_CRITICAL_PCT / 100) {
           overloadedDaysSet.add(currentDay);
         }
         const overloadedDaysList = Array.from(overloadedDaysSet);

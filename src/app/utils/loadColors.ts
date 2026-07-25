@@ -1,10 +1,12 @@
-/** Colores UT por % de carga (spec PO: ≥90 rojo, ≥70 ámbar, con carga verde, vacío gris-azulado). */
+import { OCCUPANCY_CRITICAL_PCT, OCCUPANCY_WARNING_PCT } from '../data/mockData';
+
+/** Colores UT por % de carga (≥80 rojo, ≥50 ámbar, con carga verde, vacío gris-azulado). */
 export function getUtLoadColor(bagsCount: number, capacity: number): string {
   if (bagsCount <= 0) return '#5E7699';
   if (capacity <= 0) return '#4ADE80';
   const pct = bagsCount / capacity;
-  if (pct >= 0.9) return '#FF4D4D';
-  if (pct >= 0.7) return '#FFC857';
+  if (pct >= OCCUPANCY_CRITICAL_PCT / 100) return '#FF4D4D';
+  if (pct >= OCCUPANCY_WARNING_PCT / 100) return '#FFC857';
   return '#4ADE80';
 }
 

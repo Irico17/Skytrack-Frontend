@@ -8,6 +8,7 @@ import type {
   BackendSolution,
 } from '../types/backend';
 import type { Airport, Flight, Shipment } from '../data/mockData';
+import { OCCUPANCY_CRITICAL_PCT, OCCUPANCY_WARNING_PCT } from '../data/mockData';
 import type { DaySnapshot } from '../hooks/useSimulation';
 import { parseApiInstant } from '../utils/simulationTime';
 
@@ -188,7 +189,8 @@ export function mergeActiveFlightLoads(flights: Flight[], activeFlights: Backend
     return {
       ...f,
       load,
-      status: occupancy >= 0.9 ? 'critical' : occupancy >= 0.7 ? 'warning' : 'normal',
+      status: occupancy >= OCCUPANCY_CRITICAL_PCT / 100 ? 'critical'
+        : occupancy >= OCCUPANCY_WARNING_PCT / 100 ? 'warning' : 'normal',
     };
   });
 }

@@ -165,7 +165,7 @@ function passesUtMapFilter(
     case 'inflight': return true;
     case 'loaded': return !empty;
     case 'empty': return empty;
-    case 'normal': return !empty && pct < 70;       // semáforo verde
+    case 'normal': return !empty && pct < OCCUPANCY_WARNING_PCT;       // semáforo verde
     case 'warning': return !empty && pct >= OCCUPANCY_WARNING_PCT && pct < OCCUPANCY_CRITICAL_PCT; // ámbar
     case 'critical': return !empty && pct >= OCCUPANCY_CRITICAL_PCT;     // rojo
     case 'sla': return !empty && !meetsSla;

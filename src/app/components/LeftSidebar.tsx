@@ -504,8 +504,8 @@ export function LeftSidebar({
           <div className="text-[9px] text-[#4A6080]" style={{ letterSpacing: '0.1em' }}>ALMACENES (PUNTOS)</div>
           {[
             { color: '#00FF9C', label: 'Ocupación normal' },
-            { color: '#FFC857', label: 'Advertencia (≥70%)' },
-            { color: '#FF4D4D', label: 'Crítico (≥90%)' },
+            { color: '#FFC857', label: 'Advertencia (≥50%)' },
+            { color: '#FF4D4D', label: 'Crítico (≥80%)' },
           ].map(item => (
             <div key={item.label} className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
@@ -515,9 +515,9 @@ export function LeftSidebar({
           <div className="mt-2 pt-2 border-t border-[#1E3058] flex flex-col gap-1.5">
             <div className="text-[9px] text-[#4A6080]" style={{ letterSpacing: '0.1em' }}>UNIDADES DE TRANSPORTE (LÍNEAS)</div>
             {[
-              { color: '#4DA6FF', label: 'Con carga (<70%)' },
-              { color: '#FFC857', label: 'Advertencia carga (≥70%)' },
-              { color: '#FF4D4D', label: 'Crítico carga (≥90%)' },
+              { color: '#4DA6FF', label: 'Con carga (<50%)' },
+              { color: '#FFC857', label: 'Advertencia carga (≥50%)' },
+              { color: '#FF4D4D', label: 'Crítico carga (≥80%)' },
               { color: '#3A4A5E', label: 'Vacía (0 maletas)' },
             ].map(item => (
               <div key={item.label} className="flex items-center gap-2">
