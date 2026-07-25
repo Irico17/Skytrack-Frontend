@@ -76,6 +76,46 @@ export function startDayToDaySimulation(startDateTime: string): Promise<BackendS
   return startSimulation('DAY_TO_DAY', startDateTime);
 }
 
+/**
+ * Espera a que el backend acepte peticiones antes de operar contra él.
+ *
+ * <p>Tras un redeploy (`systemctl restart`), nginx sigue sirviendo el frontend estático de
+ * inmediato mientras la JVM todavía arranca (Spring + Flyway + warm-up del plan de vuelos
+ * tardan decenas de segundos). El usuario carga la página al instante, pulsa "Iniciar" y ese
+ * primer clic llega antes de que el backend escuche: nginx responde 502 y en pantalla aparece
+ * un error del backend. Al segundo intento ya está arriba y "funciona sin hacer nada" — el
+ * síntoma clásico reportado en la máquina de la universidad.</p>
+ *
+ * <p>Sondea un endpoint barato hasta que responda (cualquier respuesta HTTP vale: incluso 204
+ * significa que el servidor está vivo) o hasta agotar {@code timeoutMs}.</p>
+ *
+ * @returns true si el backend respondió; false si se agotó el tiempo
+ */
+export async function waitForBackendReady(
+  timeoutMs = 90_000,
+  onWaiting?: (elapsedMs: number) => void
+): Promise<boolean> {
+  const startedAt = Date.now();
+  let notified = false;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const res = await fetch(`${BASE}/simulations/active`, { method: 'GET' });
+      // 5xx = el proxy está arriba pero el backend aún no; cualquier otra cosa = listo.
+      if (res.status < 500) {
+        return true;
+      }
+    } catch {
+      // Error de red: backend todavía no escucha.
+    }
+    if (!notified) {
+      notified = true;
+      onWaiting?.(Date.now() - startedAt);
+    }
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+  return false;
+}
+
 export async function getActiveSimulation(): Promise<BackendActiveSimulation | null> {
   const res = await fetch(`${BASE}/simulations/active`, {
     headers: { 'Content-Type': 'application/json' },

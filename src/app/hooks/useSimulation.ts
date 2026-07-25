@@ -7,6 +7,7 @@ import {
   fetchAirports,
   fetchFlightPlan,
   startSimulation,
+  waitForBackendReady,
   stopSimulation,
   pauseSimulation,
   resumeSimulation,
@@ -1487,8 +1488,31 @@ export function useSimulation(): UseSimulationReturn {
           severity: 'info',
         }, ...prev.slice(0, 19)]);
 
-        // 2. Iniciar simulación en el backend (retorna K, simStartTime, etc.)
-        const res = await startSimulation(modeToScenario(mode), startDateTimeStr);
+        // 2. Iniciar simulación en el backend (retorna K, simStartTime, etc.).
+        //    Antes se esperaba a que el backend ESTÉ ARRIBA: tras un redeploy, nginx sirve el
+        //    frontend al instante mientras la JVM sigue arrancando, así que el primer clic en
+        //    "Iniciar" llegaba a un backend que aún no escucha (502) y salía error; el segundo
+        //    intento funcionaba solo porque para entonces ya había terminado de levantar.
+        await waitForBackendReady(90_000, () => {
+          setEvents(prev => [{
+            id: `progress-wait-backend-${Date.now()}`,
+            type: 'info',
+            message: 'Esperando a que el servidor termine de iniciar…',
+            time: new Date(),
+            severity: 'info',
+          }, ...prev.slice(0, 19)]);
+        });
+
+        // Un reintento ante fallo transitorio (el servidor puede aceptar la conexión y aún
+        // estar terminando de inicializar sus servicios internos).
+        let res: Awaited<ReturnType<typeof startSimulation>>;
+        try {
+          res = await startSimulation(modeToScenario(mode), startDateTimeStr);
+        } catch (startErr) {
+          console.warn('Primer intento de inicio falló, reintentando:', startErr);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          res = await startSimulation(modeToScenario(mode), startDateTimeStr);
+        }
         simIdRef.current = res.simulationId;
         setSimulationId(res.simulationId);
 
