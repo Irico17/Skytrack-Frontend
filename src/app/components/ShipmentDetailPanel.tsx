@@ -187,6 +187,8 @@ export function ShipmentDetailPanel({ shipment, flights, airports, onClose, simu
         </div>
         <button
           onClick={onClose}
+          title="Cerrar detalle del envío"
+          aria-label="Cerrar detalle del envío"
           className="w-8 h-8 rounded-lg bg-[#1A2E4A] border border-[#1E3058] flex items-center justify-center hover:border-[#FF4D4D]/40 hover:text-[#FF4D4D] text-[#A8C0E0] transition-colors"
         >
           <X className="w-4 h-4" />

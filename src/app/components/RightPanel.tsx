@@ -8,7 +8,7 @@ import {
   FileText, Zap, CheckCircle, Activity,
   Plane, Search, MapPin, Luggage, Users, ArrowLeft, X, ChevronDown
 } from 'lucide-react';
-import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercent } from '../data/mockData';
+import { Airport, Flight, Shipment, SimEvent, getStatusColor, getOccupancyPercent, occupancyColor, OCCUPANCY_CRITICAL_PCT, OCCUPANCY_WARNING_PCT } from '../data/mockData';
 import { getBagTraceability } from '../services/api';
 import { isDeliveredInSimWindow } from '../utils/shipmentFilters';
 import { parseApiInstant } from '../utils/simulationTime';
@@ -262,7 +262,7 @@ function ReportRow({ label, value, color = '#C8D8F0' }: { label: string; value: 
 function CustomBarTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   const val = payload[0].value;
-  const color = val >= 90 ? '#FF4D4D' : val >= 70 ? '#FFC857' : '#00FF9C';
+  const color = occupancyColor(val);
   return (
     <div style={CUSTOM_TOOLTIP_STYLE}>
       <div style={{ fontWeight: 600, marginBottom: 2 }}>{label}</div>
@@ -384,7 +384,7 @@ function UtCard({ unit, nowMs, mapActive, onOpen, onMapFilter }: {
   onMapFilter?: () => void;
 }) {
   const inFlight = isTransportUnitInFlight(unit, nowMs);
-  const color = unit.cancelled ? '#FF4D4D' : !unit.meetsSla ? '#FFC857' : unit.pct >= 90 ? '#FF4D4D' : unit.pct >= 70 ? '#FFC857' : unit.empty ? '#4A6080' : '#00FF9C';
+  const color = unit.cancelled ? '#FF4D4D' : !unit.meetsSla ? '#FFC857' : occupancyColor(unit.pct, unit.empty);
   return (
     <div
       onClick={onOpen}
@@ -1113,9 +1113,9 @@ export function RightPanel({
         if (f.cancelled) return false;
         if (utFilter === 'inflight') return isTransportUnitInFlight(f, transportClockMs);
         if (utFilter === 'empty') return f.empty;
-        if (utFilter === 'normal') return !f.empty && f.pct < 70;     // semáforo verde
-        if (utFilter === 'warning') return !f.empty && f.pct >= 70 && f.pct < 90; // ámbar
-        if (utFilter === 'critical') return !f.empty && f.pct >= 90;  // rojo
+        if (utFilter === 'normal') return !f.empty && f.pct < OCCUPANCY_WARNING_PCT;     // semáforo verde
+        if (utFilter === 'warning') return !f.empty && f.pct >= OCCUPANCY_WARNING_PCT && f.pct < OCCUPANCY_CRITICAL_PCT; // ámbar
+        if (utFilter === 'critical') return !f.empty && f.pct >= OCCUPANCY_CRITICAL_PCT;  // rojo
         if (utFilter === 'loaded') return f.bags > 0;
         if (utFilter === 'sla') return !f.meetsSla;
         return true;
@@ -1387,7 +1387,8 @@ export function RightPanel({
       ?? null;
     const unitInFlight = unit ? isTransportUnitInFlight(unit, nowMs) : false;
     const utShipments = shipments.filter(s => sameFlightId(s.currentFlightId, id));
-    const utColor = unit ? (!unit.meetsSla ? '#FFC857' : unit.pct >= 90 ? '#FF4D4D' : unit.empty ? '#4A6080' : '#00FF9C') : '#4A6080';
+    // Mismo semáforo que la tarjeta de UT en la lista (antes aquí faltaba la banda ámbar 70-89%).
+    const utColor = unit ? (!unit.meetsSla ? '#FFC857' : occupancyColor(unit.pct, unit.empty)) : '#4A6080';
     const originAirport = unit ? airports.find(a => a.id === unit.originId) : null;
     const destAirport = unit ? airports.find(a => a.id === unit.destinationId) : null;
 
@@ -1753,7 +1754,7 @@ export function RightPanel({
   }
 
   return (
-    <div className="w-80 bg-[#080F1E] border-l border-[#1E3058] flex flex-col h-full overflow-hidden">
+    <div data-testid="right-panel" className="w-80 bg-[#080F1E] border-l border-[#1E3058] flex flex-col h-full overflow-hidden">
       {/* Tab bar */}
       <div className="flex border-b border-[#1E3058] px-2 pt-2 gap-1 flex-shrink-0 overflow-x-auto">
         {tabs.map(tab => (
@@ -1840,8 +1841,8 @@ export function RightPanel({
                 label="Ocupación Promedio de Almacén"
                 value={avgOccupancy}
                 max={100}
-                thresholdWarn={70}
-                thresholdCrit={90}
+                thresholdWarn={OCCUPANCY_WARNING_PCT}
+                thresholdCrit={OCCUPANCY_CRITICAL_PCT}
               />
             </div>
 
@@ -2276,7 +2277,7 @@ export function RightPanel({
                       {warehouseData.map((entry) => (
                         <Cell
                           key={`bar-cell-${entry.id}`}
-                          fill={entry.pct >= 80 ? '#FF4D4D' : entry.pct >= 50 ? '#FFC857' : '#00FF9C'}
+                          fill={occupancyColor(entry.pct, entry.occupancy <= 0)}
                         />
                       ))}
                     </Bar>
@@ -2402,7 +2403,7 @@ export function RightPanel({
                   { label: hasBackendStats ? 'Aeropuertos Sobrecap.' : 'Críticos', value: criticalCount, color: '#FF4D4D' },
                   { label: 'Replanificados', value: replanCount, color: '#A855F7' },
                   { label: 'Total Maletas', value: typeof totalBags === 'number' ? totalBags.toLocaleString() : totalBags, color: '#4DA6FF' },
-                  { label: 'Ocupación Prom.', value: `${avgOccupancy}%`, color: getStatusColor(avgOccupancy >= 80 ? 'critical' : avgOccupancy >= 50 ? 'warning' : 'normal') },
+                  { label: 'Ocupación Prom.', value: `${avgOccupancy}%`, color: occupancyColor(avgOccupancy) },
                   { label: 'Pico de Aeropuerto', value: backendMetrics?.peakAirportId ? `${backendMetrics.peakAirportId} · ${Math.round(backendMetrics.peakAirportOccupancyRatio * 100)}%` : DASH, color: backendMetrics?.peakAirportId ? '#4DA6FF' : '#4A6080' },
                 ].map(row => (
                   <ReportRow key={row.label} label={row.label} value={row.value} color={row.color} />

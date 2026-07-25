@@ -273,7 +273,13 @@ export default function App() {
       return simulation.flightPlanFlights.filter(f => f.originId === mapFilter.id || f.destinationId === mapFilter.id);
     }
     if (mapFilter.type === 'flight') {
-      return simulation.flightPlanFlights.filter(f => sameFlightId(f.flightId, mapFilter.id));
+      // Si el id trae sufijo de día (-D{n}) se filtra por ESA instancia y no por el código
+      // base: el plan proyecta un vuelo por día y la cancelación afecta a un día concreto,
+      // así que filtrar por base mostraba la UT de otro día como si fuera la seleccionada.
+      const exact = /-D\d+$/.test(mapFilter.id);
+      return simulation.flightPlanFlights.filter(f => exact
+        ? f.flightId === mapFilter.id
+        : sameFlightId(f.flightId, mapFilter.id));
     }
     if (mapFilter.type === 'shipment' && mapFilterShipment?.currentFlightId && mapFilterShipment.currentFlightId !== 'PENDING') {
       return simulation.flightPlanFlights.filter(f => sameFlightId(f.flightId, mapFilterShipment.currentFlightId));

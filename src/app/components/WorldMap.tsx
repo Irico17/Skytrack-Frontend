@@ -3,7 +3,8 @@ import { feature } from 'topojson-client';
 import { LocateFixed, Maximize2, Minimize2 } from 'lucide-react';
 import {
   Airport, Flight, Shipment,
-  getStatusColor, getRouteColor, getOccupancyPercent
+  getStatusColor, getRouteColor, getOccupancyPercent,
+  OCCUPANCY_CRITICAL_PCT, OCCUPANCY_WARNING_PCT
 } from '../data/mockData';
 import type { BackendActiveFlight, BackendFlightPlanFlight } from '../types/backend';
 import { getContinentFill, getLoadPercent, getUtLoadColor, SUBLOT_COLORS } from '../utils/loadColors';
@@ -165,8 +166,8 @@ function passesUtMapFilter(
     case 'loaded': return !empty;
     case 'empty': return empty;
     case 'normal': return !empty && pct < 70;       // semáforo verde
-    case 'warning': return !empty && pct >= 70 && pct < 90; // ámbar
-    case 'critical': return !empty && pct >= 90;     // rojo
+    case 'warning': return !empty && pct >= OCCUPANCY_WARNING_PCT && pct < OCCUPANCY_CRITICAL_PCT; // ámbar
+    case 'critical': return !empty && pct >= OCCUPANCY_CRITICAL_PCT;     // rojo
     case 'sla': return !empty && !meetsSla;
     default: return true;
   }
@@ -721,8 +722,14 @@ function WorldMapComponent({
     if (source.length === 0) return [];
 
     const geometry: PlannedFlightGeometry[] = [];
+    const cancelled = cancelledFlightIds ?? EMPTY_CANCELLED_SET_WM;
 
     for (const f of source) {
+      // Un vuelo cancelado no opera: no debe aparecer en el mapa NI como avión NI como ruta.
+      // Antes solo se filtraba al pintar los aviones en canvas (computeFlightDots), así que al
+      // seleccionar la UT cancelada o filtrar el mapa por ella su ruta se seguía dibujando
+      // como si volara — justo lo que la prueba de cancelación debe demostrar que no pasa.
+      if (cancelled.size > 0 && cancelled.has(f.flightId)) continue;
       const origin = airportGeometryById[f.originId];
       const dest   = airportGeometryById[f.destinationId];
       if (!origin || !dest) continue;
@@ -752,7 +759,7 @@ function WorldMapComponent({
 
     geometry.sort((a, b) => a.dep - b.dep);
     return geometry;
-  }, [geometryFlights, airportGeometryById]);
+  }, [geometryFlights, airportGeometryById, cancelledFlightIds]);
 
   const flightCapacityById = useMemo(() => {
     const m = new Map<string, number>();
@@ -766,6 +773,12 @@ function WorldMapComponent({
   const selectedFlightGeometry = useMemo(() => {
     if (selectedEntity?.type !== 'flight') return null;
     const selectedId = selectedEntity.id;
+    // Con sufijo de día se exige coincidencia EXACTA: el respaldo por código base dibujaba la
+    // instancia de otro día cuando la seleccionada estaba cancelada (y por tanto fuera de la
+    // geometría), de modo que una UT cancelada seguía "teniendo ruta" en el mapa.
+    if (/-D\d+$/.test(selectedId)) {
+      return flightPlanGeometry.find(f => f.flightId === selectedId) ?? null;
+    }
     const selectedBaseId = selectedId.replace(/-D\d+$/, '');
     return flightPlanGeometry.find(f =>
       f.flightId === selectedId || f.flightId.replace(/-D\d+$/, '') === selectedBaseId
